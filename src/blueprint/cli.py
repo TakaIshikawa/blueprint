@@ -2,7 +2,13 @@
 
 import click
 
+from pathlib import Path
+
 from blueprint.config import get_config
+from blueprint.exporters.claude_code import ClaudeCodeExporter
+from blueprint.exporters.codex import CodexExporter
+from blueprint.exporters.relay import RelayExporter
+from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.generators.brief_generator import BriefGenerator
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.importers.max_importer import MaxImporter
@@ -509,8 +515,82 @@ def export():
               help="Target execution engine")
 def run(plan_id: str, target: str):
     """Export execution plan to target engine."""
-    click.echo(f"Exporting plan {plan_id} to {target}...")
-    click.echo("TODO: Implement export")
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        # Get execution plan
+        plan = store.get_execution_plan(plan_id)
+        if not plan:
+            click.echo(f"✗ Execution plan not found: {plan_id}", err=True)
+            return
+
+        # Get implementation brief
+        brief = store.get_implementation_brief(plan['implementation_brief_id'])
+        if not brief:
+            click.echo(f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True)
+            return
+
+        # Ensure export directory exists
+        export_dir = Path(config.export_dir)
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        # Export to target(s)
+        targets = ["relay", "smoothie", "codex", "claude-code"] if target == "all" else [target]
+
+        for target_name in targets:
+            click.echo(f"\nExporting to {target_name}...")
+
+            # Get exporter
+            exporter = _get_exporter(target_name)
+            if not exporter:
+                click.echo(f"  ✗ Unknown target: {target_name}", err=True)
+                continue
+
+            # Build output path
+            output_filename = f"{plan_id}-{target_name}{exporter.get_extension()}"
+            output_path = str(export_dir / output_filename)
+
+            # Export
+            try:
+                result_path = exporter.export(plan, brief, output_path)
+
+                # Record export
+                export_record = {
+                    "id": f"exp-{plan_id[:12]}-{target_name}",
+                    "execution_plan_id": plan_id,
+                    "target_engine": target_name,
+                    "export_format": exporter.get_format(),
+                    "output_path": result_path,
+                    "export_metadata": {
+                        "brief_id": brief['id'],
+                        "brief_title": brief['title'],
+                    },
+                }
+                store.insert_export_record(export_record)
+
+                click.echo(f"  ✓ Exported to: {result_path}")
+
+            except Exception as e:
+                click.echo(f"  ✗ Export failed: {e}", err=True)
+
+        click.echo(f"\n✓ Export complete")
+        click.echo(f"  Output directory: {export_dir}")
+
+    except Exception as e:
+        click.echo(f"✗ Export failed: {e}", err=True)
+        import traceback
+        click.echo(traceback.format_exc(), err=True)
+
+def _get_exporter(target: str):
+    """Get exporter instance for target."""
+    exporters = {
+        "relay": RelayExporter(),
+        "smoothie": SmoothieExporter(),
+        "codex": CodexExporter(),
+        "claude-code": ClaudeCodeExporter(),
+    }
+    return exporters.get(target)
 
 
 @export.command()
