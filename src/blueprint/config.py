@@ -57,6 +57,7 @@ class Config:
                     "codex": "markdown",
                     "claude_code": "markdown",
                     "csv-tasks": "csv",
+                    "status-report": "markdown",
                 },
                 "templates": {
                     "smoothie": {},

@@ -17,6 +17,7 @@ from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
+from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.domain import ImplementationBrief
 from blueprint.generators.brief_generator import (
     BriefGenerator,
@@ -1290,7 +1291,18 @@ def export():
 @click.option(
     "--target",
     required=True,
-    type=click.Choice(["relay", "smoothie", "codex", "claude-code", "mermaid", "csv-tasks", "all"]),
+    type=click.Choice(
+        [
+            "relay",
+            "smoothie",
+            "codex",
+            "claude-code",
+            "mermaid",
+            "csv-tasks",
+            "status-report",
+            "all",
+        ]
+    ),
     help="Target execution engine",
 )
 def run(plan_id: str, target: str):
@@ -1319,7 +1331,15 @@ def run(plan_id: str, target: str):
 
         # Export to target(s)
         targets = (
-            ["relay", "smoothie", "codex", "claude-code", "mermaid", "csv-tasks"]
+            [
+                "relay",
+                "smoothie",
+                "codex",
+                "claude-code",
+                "mermaid",
+                "csv-tasks",
+                "status-report",
+            ]
             if target == "all"
             else [target]
         )
@@ -1431,6 +1451,7 @@ def _get_exporter(target: str):
         "claude-code": ClaudeCodeExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
+        "status-report": StatusReportExporter(),
     }
     return exporters.get(target)
 
