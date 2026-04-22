@@ -3,6 +3,7 @@
 import json
 
 import click
+from pydantic import ValidationError
 
 from pathlib import Path
 
@@ -13,13 +14,30 @@ from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
-from blueprint.generators.brief_generator import BriefGenerator
+from blueprint.domain import ImplementationBrief
+from blueprint.generators.brief_generator import (
+    BriefGenerator,
+    generate_implementation_brief_id,
+)
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
 from blueprint.store import Store, init_db
+
+
+BRIEF_STATUS_CHOICES = (
+    "draft",
+    "ready_for_planning",
+    "planned",
+    "queued",
+    "in_progress",
+    "implemented",
+    "validated",
+    "paused",
+    "rejected",
+)
 
 
 @click.group()
@@ -423,6 +441,72 @@ def create(source_id: str, model: str):
         click.echo(traceback.format_exc(), err=True)
 
 
+@brief.command(name="import")
+@click.argument(
+    "file_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--source-id",
+    "source_brief_id",
+    required=True,
+    help="Source brief ID to link this implementation brief to",
+)
+def import_brief(file_path: Path, source_brief_id: str):
+    """Import a hand-authored implementation brief JSON file."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    source_brief = store.get_source_brief(source_brief_id)
+    if not source_brief:
+        raise click.ClickException(f"Source brief not found: {source_brief_id}")
+
+    try:
+        brief_payload = json.loads(file_path.read_text())
+    except json.JSONDecodeError as e:
+        raise click.ClickException(f"Invalid JSON in {file_path}: {e}") from e
+
+    if not isinstance(brief_payload, dict):
+        raise click.ClickException("Implementation brief JSON must be an object")
+
+    brief_payload = _prepare_imported_implementation_brief(
+        brief_payload,
+        source_brief_id=source_brief_id,
+    )
+    try:
+        implementation_brief = ImplementationBrief.model_validate(brief_payload).model_dump(
+            mode="python",
+            exclude_none=True,
+        )
+    except ValidationError as e:
+        raise click.ClickException(f"Invalid implementation brief: {e}") from e
+
+    brief_id = store.insert_implementation_brief(implementation_brief)
+
+    click.echo(f"✓ Imported implementation brief {brief_id}")
+    click.echo(f"  Source Brief: {source_brief_id}")
+    click.echo(f"  Title: {implementation_brief['title']}")
+    click.echo(f"  Status: {implementation_brief['status']}")
+
+
+def _prepare_imported_implementation_brief(
+    brief_payload: dict,
+    *,
+    source_brief_id: str,
+) -> dict:
+    """Apply CLI-owned defaults before validating an imported implementation brief."""
+    prepared = dict(brief_payload)
+    prepared["source_brief_id"] = source_brief_id
+
+    if not prepared.get("id"):
+        prepared["id"] = generate_implementation_brief_id()
+
+    if prepared.get("status") not in BRIEF_STATUS_CHOICES:
+        prepared["status"] = "draft"
+
+    return prepared
+
+
 @brief.command()
 @click.option("--status", help="Filter by status")
 @click.option("--limit", default=50, help="Maximum number of briefs to show")
@@ -492,8 +576,7 @@ def inspect(brief_id: str):
 @brief.command()
 @click.argument("brief_id")
 @click.option("--status", required=True,
-              type=click.Choice(["draft", "ready_for_planning", "planned", "queued",
-                               "in_progress", "implemented", "validated", "paused", "rejected"]))
+              type=click.Choice(BRIEF_STATUS_CHOICES))
 def update(brief_id: str, status: str):
     """Update implementation brief status."""
     config = get_config()
