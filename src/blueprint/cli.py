@@ -993,6 +993,64 @@ def list(plan_id: str, status: str | None, milestone: str | None, limit: int):
 
 
 @task.command()
+@click.option("--plan-id", help="Filter by execution plan ID")
+@click.option("--engine", help="Filter by suggested execution engine")
+@click.option("--limit", default=50, help="Maximum number of ready tasks to show")
+@click.option("--json", "json_output", is_flag=True, help="Output ready tasks as JSON")
+def queue(plan_id: str | None, engine: str | None, limit: int, json_output: bool):
+    """Show pending execution tasks ready for an autonomous agent."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    if limit < 1:
+        raise click.UsageError("--limit must be greater than zero")
+
+    if plan_id:
+        plan = store.get_execution_plan(plan_id)
+        if not plan:
+            raise click.ClickException(f"Execution plan not found: {plan_id}")
+        tasks = plan.get("tasks", [])
+    else:
+        tasks = store.list_execution_tasks(limit=10000)
+
+    ready_tasks = [
+        _task_with_ready_reason(current_task)
+        for current_task in _ready_execution_tasks(tasks)
+        if engine is None or current_task.get("suggested_engine") == engine
+    ][:limit]
+
+    if json_output:
+        click.echo(json.dumps(ready_tasks, indent=2, sort_keys=True))
+        return
+
+    if not ready_tasks:
+        click.echo("No ready execution tasks found")
+        return
+
+    click.echo(
+        f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} "
+        f"{'Complexity':<12} {'Title':<35} Files"
+    )
+    click.echo("-" * 120)
+
+    for current_task in ready_tasks:
+        engine_name = current_task.get("suggested_engine") or "N/A"
+        milestone_name = current_task.get("milestone") or "N/A"
+        complexity = current_task.get("estimated_complexity") or "N/A"
+        files = ", ".join(current_task.get("files_or_modules") or []) or "none"
+        click.echo(
+            f"{current_task['id']:<15} "
+            f"{milestone_name[:16]:<18} "
+            f"{engine_name:<15} "
+            f"{complexity:<12} "
+            f"{current_task['title'][:33]:<35} "
+            f"{files}"
+        )
+
+    click.echo(f"\nTotal: {len(ready_tasks)} ready tasks")
+
+
+@task.command()
 @click.argument("task_id")
 def inspect(task_id: str):
     """Inspect an execution task in detail."""
@@ -1049,6 +1107,43 @@ def update(task_id: str, status: str, blocked_reason: str | None, reason: str | 
             click.echo(f"  Blocked reason: {blocked_reason}")
     else:
         click.echo(f"Execution task not found: {task_id}", err=True)
+
+
+def _ready_execution_tasks(tasks: list[dict]) -> list[dict]:
+    """Return tasks whose dependencies are satisfied within their execution plan."""
+    tasks_by_plan: dict[str | None, dict[str, dict]] = {}
+    for current_task in tasks:
+        plan_tasks = tasks_by_plan.setdefault(current_task.get("execution_plan_id"), {})
+        plan_tasks[current_task["id"]] = current_task
+
+    ready_tasks = []
+    for current_task in tasks:
+        if current_task.get("status") != "pending":
+            continue
+
+        dependencies = current_task.get("depends_on") or []
+        plan_tasks = tasks_by_plan.get(current_task.get("execution_plan_id"), {})
+        if all(
+            dependency_id in plan_tasks
+            and plan_tasks[dependency_id].get("status") in {"completed", "skipped"}
+            for dependency_id in dependencies
+        ):
+            ready_tasks.append(current_task)
+
+    return ready_tasks
+
+
+def _task_with_ready_reason(current_task: dict) -> dict:
+    """Copy a ready task and attach a human-readable readiness reason."""
+    task_payload = dict(current_task)
+    dependencies = current_task.get("depends_on") or []
+    if dependencies:
+        task_payload["ready_reason"] = (
+            "All dependencies are completed or skipped: " + ", ".join(dependencies)
+        )
+    else:
+        task_payload["ready_reason"] = "Task is pending and has no dependencies"
+    return task_payload
 
 
 def _echo_task_metadata(current_task: dict, indent: str = ""):
