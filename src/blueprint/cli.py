@@ -11,6 +11,7 @@ from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.generators.brief_generator import BriefGenerator
 from blueprint.generators.plan_generator import PlanGenerator
+from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
 from blueprint.store import Store, init_db
@@ -372,7 +373,9 @@ def plan():
 @click.argument("brief_id")
 @click.option("--model", type=click.Choice(["opus", "sonnet"]), default="opus",
               help="LLM model to use")
-def create(brief_id: str, model: str):
+@click.option("--staged", is_flag=True, default=False,
+              help="Use staged generation (fixes JSON parsing issues)")
+def create(brief_id: str, model: str, staged: bool):
     """Generate execution plan from implementation brief."""
     config = get_config()
     store = Store(config.db_path)
@@ -389,12 +392,24 @@ def create(brief_id: str, model: str):
             api_key=config.anthropic_api_key,
             default_model=config.default_model,
         )
-        generator = PlanGenerator(llm_client)
+
+        if staged:
+            generator = StagedPlanGenerator(llm_client)
+            click.echo(f"Using STAGED generation (fixes JSON parsing issues)")
+        else:
+            generator = PlanGenerator(llm_client)
 
         # Generate plan
         click.echo(f"Generating execution plan for {brief_id} using {model}...")
         click.echo(f"Brief: {implementation_brief['title']}")
-        click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 15-45 seconds)\n")
+
+        if staged:
+            click.echo(f"\n⏳ Stage 1: Generating milestones...")
+            click.echo(f"⏳ Stage 2: Generating tasks per milestone...")
+            click.echo(f"⏳ Stage 3: Generating plan metadata...")
+            click.echo(f"(This may take 30-90 seconds total)\n")
+        else:
+            click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 15-45 seconds)\n")
 
         execution_plan, tasks = generator.generate(
             implementation_brief=implementation_brief,
