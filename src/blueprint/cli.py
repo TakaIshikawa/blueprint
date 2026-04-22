@@ -13,6 +13,7 @@ from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
+from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.relay import RelayExporter
@@ -1348,6 +1349,7 @@ def export():
             "claude-code",
             "mermaid",
             "csv-tasks",
+            "junit-tasks",
             "status-report",
             "all",
         ]
@@ -1387,6 +1389,7 @@ def run(plan_id: str, target: str):
                 "claude-code",
                 "mermaid",
                 "csv-tasks",
+                "junit-tasks",
                 "status-report",
             ]
             if target == "all"
@@ -1500,6 +1503,7 @@ def _get_exporter(target: str):
         "claude-code": ClaudeCodeExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
+        "junit-tasks": JUnitTasksExporter(),
         "status-report": StatusReportExporter(),
     }
     return exporters.get(target)

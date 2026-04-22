@@ -19,7 +19,7 @@ BriefStatus = Literal[
 ]
 PlanStatus = Literal["draft", "ready", "queued", "in_progress", "completed", "failed"]
 TaskStatus = Literal["pending", "in_progress", "completed", "blocked", "skipped"]
-ExportFormat = Literal["json", "yaml", "markdown", "mermaid", "dot", "csv"]
+ExportFormat = Literal["json", "yaml", "markdown", "mermaid", "dot", "csv", "xml"]
 
 
 class DomainModel(BaseModel):
