@@ -33,6 +33,10 @@ class ClaudeCodeExporter(TargetExporter):
         - Constraints and guidelines
         """
         self.ensure_output_dir(output_path)
+        execution_plan, implementation_brief = self.validate_export_payload(
+            execution_plan,
+            implementation_brief,
+        )
 
         # Build Markdown content
         content = self._build_claude_code_prompt(execution_plan, implementation_brief)

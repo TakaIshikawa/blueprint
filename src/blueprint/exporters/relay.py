@@ -34,6 +34,10 @@ class RelayExporter(TargetExporter):
         - validation_commands: Commands to verify completion
         """
         self.ensure_output_dir(output_path)
+        execution_plan, implementation_brief = self.validate_export_payload(
+            execution_plan,
+            implementation_brief,
+        )
 
         # Build Relay-compatible structure
         relay_export = {

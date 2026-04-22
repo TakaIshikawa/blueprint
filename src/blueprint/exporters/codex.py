@@ -28,6 +28,10 @@ class CodexExporter(TargetExporter):
         Similar to Claude Code but optimized for Codex's interface.
         """
         self.ensure_output_dir(output_path)
+        execution_plan, implementation_brief = self.validate_export_payload(
+            execution_plan,
+            implementation_brief,
+        )
 
         # Build Markdown content
         content = self._build_codex_prompt(execution_plan, implementation_brief)

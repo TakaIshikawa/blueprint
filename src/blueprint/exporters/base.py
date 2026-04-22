@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from blueprint.domain import ExecutionPlan, ImplementationBrief
+
 
 class TargetExporter(ABC):
     """Abstract base class for target engine exporters."""
@@ -44,3 +46,15 @@ class TargetExporter(ABC):
     def ensure_output_dir(self, output_path: str) -> None:
         """Ensure output directory exists."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def validate_export_payload(
+        self,
+        execution_plan: dict[str, Any],
+        implementation_brief: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Validate exporter input dictionaries before rendering."""
+        plan = ExecutionPlan.model_validate(execution_plan).model_dump(mode="python")
+        brief = ImplementationBrief.model_validate(implementation_brief).model_dump(
+            mode="python"
+        )
+        return plan, brief

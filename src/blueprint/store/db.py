@@ -10,6 +10,13 @@ from sqlalchemy import inspect as inspect_db
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from blueprint.domain import (
+    ExecutionPlan,
+    ExecutionTask,
+    ExportRecord,
+    ImplementationBrief,
+    SourceBrief,
+)
 from blueprint.store.models import (
     Base,
     ExecutionPlanModel,
@@ -61,8 +68,9 @@ class Store:
 
     def insert_source_brief(self, brief_dict: dict[str, Any]) -> str:
         """Insert a source brief and return its ID."""
+        brief_payload = self._validated_source_brief_payload(brief_dict)
         with self.get_session() as session:
-            brief = SourceBriefModel(**brief_dict)
+            brief = SourceBriefModel(**brief_payload)
             session.add(brief)
             session.commit()
             return brief.id
@@ -114,9 +122,10 @@ class Store:
         if replace and skip_existing:
             raise ValueError("replace and skip_existing cannot both be true")
 
-        source_project = brief_dict["source_project"]
-        source_entity_type = brief_dict["source_entity_type"]
-        source_id = brief_dict["source_id"]
+        brief_payload = self._validated_source_brief_payload(brief_dict)
+        source_project = brief_payload["source_project"]
+        source_entity_type = brief_payload["source_entity_type"]
+        source_id = brief_payload["source_id"]
 
         with self.get_session() as session:
             existing = (
@@ -131,7 +140,7 @@ class Store:
             )
 
             if not existing:
-                brief = SourceBriefModel(**brief_dict)
+                brief = SourceBriefModel(**brief_payload)
                 session.add(brief)
                 session.commit()
                 return brief.id
@@ -144,8 +153,8 @@ class Store:
                     "source_payload",
                     "source_links",
                 ):
-                    setattr(existing, field, brief_dict[field])
-                existing.updated_at = brief_dict.get("updated_at") or datetime.utcnow()
+                    setattr(existing, field, brief_payload[field])
+                existing.updated_at = brief_payload.get("updated_at") or datetime.utcnow()
                 session.commit()
 
             return existing.id
@@ -185,8 +194,9 @@ class Store:
 
     def insert_implementation_brief(self, brief_dict: dict[str, Any]) -> str:
         """Insert an implementation brief and return its ID."""
+        brief_payload = self._validated_implementation_brief_payload(brief_dict)
         with self.get_session() as session:
-            brief = ImplementationBriefModel(**brief_dict)
+            brief = ImplementationBriefModel(**brief_payload)
             session.add(brief)
             session.commit()
             return brief.id
@@ -259,17 +269,18 @@ class Store:
         self, plan_dict: dict[str, Any], tasks: list[dict[str, Any]]
     ) -> str:
         """Insert an execution plan with tasks and return plan ID."""
+        plan_payload = self._validated_execution_plan_payload(plan_dict)
         with self.get_session() as session:
-            plan = ExecutionPlanModel(**plan_dict)
+            plan = ExecutionPlanModel(**plan_payload)
             session.add(plan)
             session.flush()  # Get plan ID
 
             # Insert tasks
             for task_dict in tasks:
-                task_payload = dict(task_dict)
-                task_payload["execution_plan_id"] = plan.id
-                if "metadata" in task_payload:
-                    task_payload["task_metadata"] = task_payload.pop("metadata")
+                task_payload = self._validated_execution_task_payload(
+                    task_dict,
+                    execution_plan_id=plan.id,
+                )
                 task = ExecutionTaskModel(**task_payload)
                 session.add(task)
 
@@ -409,8 +420,9 @@ class Store:
 
     def insert_export_record(self, export_dict: dict[str, Any]) -> str:
         """Insert an export record and return its ID."""
+        export_payload = self._validated_export_record_payload(export_dict)
         with self.get_session() as session:
-            export = ExportRecordModel(**export_dict)
+            export = ExportRecordModel(**export_payload)
             session.add(export)
             session.commit()
             return export.id
@@ -439,6 +451,56 @@ class Store:
             "exported_at": export.exported_at.isoformat() if export.exported_at else None,
             "export_metadata": export.export_metadata,
         }
+
+    def _validated_source_brief_payload(self, brief_dict: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize a SourceBrief for database insertion."""
+        return SourceBrief.model_validate(brief_dict).model_dump(
+            mode="python",
+            exclude_none=True,
+        )
+
+    def _validated_implementation_brief_payload(
+        self,
+        brief_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and normalize an ImplementationBrief for database insertion."""
+        return ImplementationBrief.model_validate(brief_dict).model_dump(
+            mode="python",
+            exclude_none=True,
+        )
+
+    def _validated_execution_plan_payload(self, plan_dict: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize an ExecutionPlan for database insertion."""
+        return ExecutionPlan.model_validate(plan_dict).model_dump(
+            mode="python",
+            exclude={"tasks"},
+            exclude_none=True,
+        )
+
+    def _validated_execution_task_payload(
+        self,
+        task_dict: dict[str, Any],
+        *,
+        execution_plan_id: str,
+    ) -> dict[str, Any]:
+        """Validate and normalize an ExecutionTask for database insertion."""
+        task_payload = dict(task_dict)
+        task_payload["execution_plan_id"] = execution_plan_id
+        task = ExecutionTask.model_validate(task_payload)
+        payload = task.model_dump(
+            mode="python",
+            exclude={"blocked_reason"},
+            exclude_none=True,
+        )
+        payload["task_metadata"] = payload.pop("metadata", {})
+        return payload
+
+    def _validated_export_record_payload(self, export_dict: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize an ExportRecord for database insertion."""
+        return ExportRecord.model_validate(export_dict).model_dump(
+            mode="python",
+            exclude_none=True,
+        )
 
 
 def init_db(db_path: str):

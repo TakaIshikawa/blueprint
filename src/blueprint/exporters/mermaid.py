@@ -25,6 +25,10 @@ class MermaidExporter(TargetExporter):
     ) -> str:
         """Export to Mermaid flowchart format."""
         self.ensure_output_dir(output_path)
+        execution_plan, implementation_brief = self.validate_export_payload(
+            execution_plan,
+            implementation_brief,
+        )
         content = self._build_flowchart(execution_plan)
 
         with open(output_path, "w") as f:
