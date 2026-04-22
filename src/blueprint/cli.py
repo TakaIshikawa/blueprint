@@ -7,6 +7,7 @@ from pathlib import Path
 from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
+from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.generators.brief_generator import BriefGenerator
@@ -526,7 +527,7 @@ def export():
 @export.command()
 @click.argument("plan_id")
 @click.option("--target", required=True,
-              type=click.Choice(["relay", "smoothie", "codex", "claude-code", "all"]),
+              type=click.Choice(["relay", "smoothie", "codex", "claude-code", "mermaid", "all"]),
               help="Target execution engine")
 def run(plan_id: str, target: str):
     """Export execution plan to target engine."""
@@ -551,7 +552,11 @@ def run(plan_id: str, target: str):
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # Export to target(s)
-        targets = ["relay", "smoothie", "codex", "claude-code"] if target == "all" else [target]
+        targets = (
+            ["relay", "smoothie", "codex", "claude-code", "mermaid"]
+            if target == "all"
+            else [target]
+        )
 
         for target_name in targets:
             click.echo(f"\nExporting to {target_name}...")
@@ -597,6 +602,58 @@ def run(plan_id: str, target: str):
         import traceback
         click.echo(traceback.format_exc(), err=True)
 
+
+@export.command()
+@click.argument("plan_id")
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Output .mmd path",
+)
+def graph(plan_id: str, output: str):
+    """Export an execution plan dependency graph as Mermaid."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        plan = store.get_execution_plan(plan_id)
+        if not plan:
+            click.echo(f"✗ Execution plan not found: {plan_id}", err=True)
+            return
+
+        brief = store.get_implementation_brief(plan["implementation_brief_id"])
+        if not brief:
+            click.echo(
+                f"✗ Implementation brief not found: {plan['implementation_brief_id']}",
+                err=True,
+            )
+            return
+
+        exporter = MermaidExporter()
+        result_path = exporter.export(plan, brief, output)
+
+        export_record = {
+            "id": f"exp-{plan_id[:12]}-mermaid",
+            "execution_plan_id": plan_id,
+            "target_engine": "mermaid",
+            "export_format": exporter.get_format(),
+            "output_path": result_path,
+            "export_metadata": {
+                "brief_id": brief["id"],
+                "brief_title": brief["title"],
+            },
+        }
+        store.insert_export_record(export_record)
+
+        click.echo(f"✓ Exported graph to: {result_path}")
+
+    except Exception as e:
+        click.echo(f"✗ Graph export failed: {e}", err=True)
+        import traceback
+        click.echo(traceback.format_exc(), err=True)
+
+
 def _get_exporter(target: str):
     """Get exporter instance for target."""
     exporters = {
@@ -604,6 +661,7 @@ def _get_exporter(target: str):
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
+        "mermaid": MermaidExporter(),
     }
     return exporters.get(target)
 
