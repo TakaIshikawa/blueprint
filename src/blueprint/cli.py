@@ -3,6 +3,7 @@
 import click
 
 from blueprint.config import get_config
+from blueprint.importers.max_importer import MaxImporter
 from blueprint.store import Store, init_db
 
 
@@ -49,11 +50,75 @@ cli.add_command(import_cmd, name="import")
 
 
 @import_cmd.command()
+@click.option("--status", help="Filter by status (candidate, active, completed, shelved)")
+@click.option("--limit", default=20, help="Maximum number of briefs to show")
+def list_max(status: str | None, limit: int):
+    """List available Max design briefs."""
+    config = get_config()
+
+    try:
+        importer = MaxImporter(config.max_db_path)
+        briefs = importer.list_available(limit=limit, status=status)
+
+        if not briefs:
+            click.echo("No Max design briefs found")
+            return
+
+        click.echo(f"\n{'ID':<15} {'Title':<40} {'Domain':<15} {'Readiness':<10} {'Status':<12}")
+        click.echo("-" * 92)
+
+        for brief in briefs:
+            click.echo(
+                f"{brief['id']:<15} "
+                f"{brief['title'][:38]:<40} "
+                f"{(brief['domain'] or 'N/A')[:13]:<15} "
+                f"{brief['readiness_score']:>7.1f}/100 "
+                f"{brief['status']:<12}"
+            )
+
+        click.echo(f"\nTotal: {len(briefs)} briefs")
+        click.echo(f"\nTo import: blueprint import max <ID>")
+
+    except FileNotFoundError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+        click.echo(f"  Check your Max database path in config: {config.max_db_path}", err=True)
+    except Exception as e:
+        click.echo(f"✗ Failed to list Max briefs: {e}", err=True)
+
+
+@import_cmd.command()
 @click.argument("brief_id")
 def max(brief_id: str):
     """Import a Max design brief by ID."""
-    click.echo(f"Importing Max design brief: {brief_id}")
-    click.echo("TODO: Implement Max import")
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        # Initialize Max importer
+        importer = MaxImporter(config.max_db_path)
+
+        # Check if brief exists in Max
+        if not importer.validate_source(brief_id):
+            click.echo(f"✗ Design brief not found in Max: {brief_id}", err=True)
+            return
+
+        # Import the brief
+        click.echo(f"Importing Max design brief: {brief_id}")
+        source_brief = importer.import_from_source(brief_id)
+
+        # Store in Blueprint database
+        source_brief_id = store.insert_source_brief(source_brief)
+
+        # Success message
+        click.echo(f"✓ Imported source brief {source_brief_id} from Max design brief {brief_id}")
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  Domain: {source_brief['domain']}")
+
+    except FileNotFoundError as e:
+        click.echo(f"✗ Error: {e}", err=True)
+        click.echo(f"  Check your Max database path in config: {config.max_db_path}", err=True)
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
 
 
 @import_cmd.command()
