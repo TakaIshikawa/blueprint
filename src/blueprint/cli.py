@@ -1,5 +1,7 @@
 """Blueprint CLI commands."""
 
+from __future__ import annotations
+
 import json
 
 import click
@@ -1051,6 +1053,51 @@ def queue(plan_id: str | None, engine: str | None, limit: int, json_output: bool
 
 
 @task.command()
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output blocker analysis as JSON")
+def blockers(plan_id: str, json_output: bool):
+    """Show blocked tasks and their downstream impact."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    blocker_analysis = _blocked_task_impact(plan.get("tasks", []))
+
+    if json_output:
+        click.echo(json.dumps(blocker_analysis, indent=2, sort_keys=True))
+        return
+
+    if not blocker_analysis:
+        click.echo(f"No blocked execution tasks found in plan {plan_id}")
+        return
+
+    click.echo(f"\nBlocked tasks in plan {plan_id}:")
+    for blocker in blocker_analysis:
+        click.echo(f"\n{blocker['blocked_task_id']}")
+        click.echo(f"  Reason: {blocker['blocked_reason'] or 'N/A'}")
+        click.echo(
+            "  Direct dependents: "
+            + (
+                ", ".join(blocker["direct_dependents"])
+                if blocker["direct_dependents"]
+                else "none"
+            )
+        )
+        click.echo(
+            "  Transitive dependents: "
+            + (
+                ", ".join(blocker["transitive_dependents"])
+                if blocker["transitive_dependents"]
+                else "none"
+            )
+        )
+        click.echo(f"  Impacted count: {blocker['impacted_count']}")
+
+
+@task.command()
 @click.argument("task_id")
 def inspect(task_id: str):
     """Inspect an execution task in detail."""
@@ -1144,6 +1191,66 @@ def _task_with_ready_reason(current_task: dict) -> dict:
     else:
         task_payload["ready_reason"] = "Task is pending and has no dependencies"
     return task_payload
+
+
+def _blocked_task_impact(tasks: list[dict]) -> list[dict]:
+    """Return blocked tasks with direct and downstream dependents."""
+    dependents_by_task_id: dict[str, list[str]] = {}
+    tasks_by_id = {current_task["id"]: current_task for current_task in tasks}
+    for current_task in tasks:
+        for dependency_id in current_task.get("depends_on") or []:
+            if dependency_id in tasks_by_id:
+                dependents_by_task_id.setdefault(dependency_id, []).append(current_task["id"])
+
+    impact = []
+    for current_task in tasks:
+        if current_task.get("status") != "blocked":
+            continue
+
+        blocked_task_id = current_task["id"]
+        direct_dependents = dependents_by_task_id.get(blocked_task_id, [])
+        downstream_dependents = _downstream_dependents(
+            blocked_task_id,
+            dependents_by_task_id,
+        )
+        direct_dependent_ids = set(direct_dependents)
+        transitive_dependents = [
+            task_id
+            for task_id in downstream_dependents
+            if task_id not in direct_dependent_ids
+        ]
+
+        impact.append(
+            {
+                "blocked_task_id": blocked_task_id,
+                "blocked_reason": current_task.get("blocked_reason"),
+                "direct_dependents": direct_dependents,
+                "transitive_dependents": transitive_dependents,
+                "impacted_count": len(set(direct_dependents + transitive_dependents)),
+            }
+        )
+
+    return impact
+
+
+def _downstream_dependents(
+    task_id: str,
+    dependents_by_task_id: dict[str, list[str]],
+) -> list[str]:
+    """Return all recursive dependents in dependency graph order."""
+    downstream = []
+    seen = {task_id}
+    pending = dependents_by_task_id.get(task_id, [])[:]
+
+    while pending:
+        dependent_id = pending.pop(0)
+        if dependent_id in seen:
+            continue
+        seen.add(dependent_id)
+        downstream.append(dependent_id)
+        pending.extend(dependents_by_task_id.get(dependent_id, []))
+
+    return downstream
 
 
 def _echo_task_metadata(current_task: dict, indent: str = ""):
