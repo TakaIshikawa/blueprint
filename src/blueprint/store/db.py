@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -54,6 +56,81 @@ class Store:
             if not brief:
                 return None
             return self._source_brief_to_dict(brief)
+
+    def get_source_brief_by_source(
+        self,
+        source_project: str,
+        source_entity_type: str,
+        source_id: str,
+    ) -> dict[str, Any] | None:
+        """Get a source brief by its upstream source identity."""
+        with self.get_session() as session:
+            brief = (
+                session.query(SourceBriefModel)
+                .filter_by(
+                    source_project=source_project,
+                    source_entity_type=source_entity_type,
+                    source_id=source_id,
+                )
+                .order_by(SourceBriefModel.created_at.asc())
+                .first()
+            )
+            if not brief:
+                return None
+            return self._source_brief_to_dict(brief)
+
+    def upsert_source_brief(
+        self,
+        brief_dict: dict[str, Any],
+        *,
+        replace: bool = False,
+        skip_existing: bool = False,
+    ) -> str:
+        """
+        Insert or reuse a source brief keyed by its upstream source identity.
+
+        When replace is true, the existing local SourceBrief ID is preserved and
+        all import-owned fields are refreshed from brief_dict. Otherwise the
+        existing row is returned unchanged.
+        """
+        if replace and skip_existing:
+            raise ValueError("replace and skip_existing cannot both be true")
+
+        source_project = brief_dict["source_project"]
+        source_entity_type = brief_dict["source_entity_type"]
+        source_id = brief_dict["source_id"]
+
+        with self.get_session() as session:
+            existing = (
+                session.query(SourceBriefModel)
+                .filter_by(
+                    source_project=source_project,
+                    source_entity_type=source_entity_type,
+                    source_id=source_id,
+                )
+                .order_by(SourceBriefModel.created_at.asc())
+                .first()
+            )
+
+            if not existing:
+                brief = SourceBriefModel(**brief_dict)
+                session.add(brief)
+                session.commit()
+                return brief.id
+
+            if replace:
+                for field in (
+                    "title",
+                    "domain",
+                    "summary",
+                    "source_payload",
+                    "source_links",
+                ):
+                    setattr(existing, field, brief_dict[field])
+                existing.updated_at = brief_dict.get("updated_at") or datetime.utcnow()
+                session.commit()
+
+            return existing.id
 
     def list_source_briefs(
         self,

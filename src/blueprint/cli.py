@@ -156,8 +156,17 @@ def list_max(status: str | None, limit: int):
 
 @import_cmd.command()
 @click.argument("brief_id")
-def max(brief_id: str):
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def max(brief_id: str, replace: bool, skip_existing: bool):
     """Import a Max design brief by ID."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
     config = get_config()
     store = Store(config.db_path)
 
@@ -173,12 +182,32 @@ def max(brief_id: str):
         # Import the brief
         click.echo(f"Importing Max design brief: {brief_id}")
         source_brief = importer.import_from_source(brief_id)
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
 
         # Store in Blueprint database
-        source_brief_id = store.insert_source_brief(source_brief)
+        source_brief_id = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
 
         # Success message
-        click.echo(f"✓ Imported source brief {source_brief_id} from Max design brief {brief_id}")
+        if existing_source_brief and replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from Max design brief {brief_id}"
+            )
+        elif existing_source_brief:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from Max design brief {brief_id}"
+            )
+        else:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Max design brief {brief_id}"
+            )
         click.echo(f"  Title: {source_brief['title']}")
         click.echo(f"  Domain: {source_brief['domain']}")
 

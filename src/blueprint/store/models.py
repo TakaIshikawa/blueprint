@@ -3,7 +3,17 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -14,6 +24,14 @@ class SourceBriefModel(Base):
     """Normalized source brief from any design system."""
 
     __tablename__ = "source_briefs"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_project",
+            "source_entity_type",
+            "source_id",
+            name="uq_source_briefs_source_key",
+        ),
+    )
 
     id = Column(String, primary_key=True)  # sb-{uuid12}
     title = Column(String, nullable=False)
