@@ -10,7 +10,7 @@ sources:
   max:
     db_path: ~/Project/experiments/max/max.db
   graph:
-    db_path: ~/Project/experiments/graph/graph.db
+    path: ~/Project/experiments/graph
   github:
     token_env: GITHUB_TOKEN
     default_owner:

@@ -39,6 +39,9 @@ class Config:
                 "max": {
                     "db_path": str(Path.home() / "Project" / "experiments" / "max" / "max.db"),
                 },
+                "graph": {
+                    "path": str(Path.home() / "Project" / "experiments" / "graph"),
+                },
                 "github": {
                     "token_env": "GITHUB_TOKEN",
                     "default_owner": None,

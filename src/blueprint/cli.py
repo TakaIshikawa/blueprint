@@ -27,6 +27,7 @@ from blueprint.generators.brief_generator import (
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.generators.plan_reviser import PlanReviser
+from blueprint.importers.graph_importer import GraphImporter
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
@@ -349,6 +350,60 @@ def github_issue(issue_ref: str, replace: bool, skip_existing: bool):
             )
         click.echo(f"  Title: {source_brief['title']}")
         click.echo(f"  URL: {source_brief['source_links'].get('html_url') or 'N/A'}")
+
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
+
+
+@import_cmd.command(name="graph-node")
+@click.argument("file_path")
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def graph_node(file_path: str, replace: bool, skip_existing: bool):
+    """Import a Graph node from an exported JSON file."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = GraphImporter()
+
+    try:
+        click.echo(f"Importing Graph node: {file_path}")
+        source_brief = importer.import_from_source(file_path)
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
+
+        source_brief_id = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
+
+        if existing_source_brief and replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from Graph node "
+                f"{source_brief['source_id']}"
+            )
+        elif existing_source_brief:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from Graph node "
+                f"{source_brief['source_id']}"
+            )
+        else:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Graph node "
+                f"{source_brief['source_id']}"
+            )
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  Domain: {source_brief['domain'] or 'N/A'}")
 
     except Exception as e:
         click.echo(f"✗ Import failed: {e}", err=True)
