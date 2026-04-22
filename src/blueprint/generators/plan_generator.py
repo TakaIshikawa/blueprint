@@ -45,7 +45,7 @@ class PlanGenerator:
             Tuple of (plan_dict, tasks_list) ready for insertion into database
         """
         # Build prompt from implementation brief
-        prompt = self._build_prompt(implementation_brief)
+        prompt = self.build_prompt(implementation_brief)
 
         # Generate using LLM
         response = self.llm.generate(
@@ -182,7 +182,8 @@ validation plans. Your task is to:
 
 Output ONLY valid JSON with no additional commentary. Use the exact schema provided in the user prompt."""
 
-    def _build_prompt(self, brief: dict[str, Any]) -> str:
+    @staticmethod
+    def build_prompt(brief: dict[str, Any]) -> str:
         """Build generation prompt from implementation brief."""
         # Extract key fields from brief
         title = brief["title"]
@@ -292,3 +293,7 @@ Requirements for milestones:
 Output ONLY the JSON, no additional text."""
 
         return prompt
+
+    def _build_prompt(self, brief: dict[str, Any]) -> str:
+        """Build generation prompt from implementation brief."""
+        return self.build_prompt(brief)

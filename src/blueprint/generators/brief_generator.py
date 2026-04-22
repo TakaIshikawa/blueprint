@@ -40,7 +40,7 @@ class BriefGenerator:
             Dictionary ready for insertion into implementation_briefs table
         """
         # Build prompt from source brief
-        prompt = self._build_prompt(source_brief)
+        prompt = self.build_prompt(source_brief)
 
         # Generate using LLM
         response = self.llm.generate(
@@ -156,7 +156,8 @@ Your task is to:
 
 Output ONLY valid JSON with no additional commentary. Use the exact schema provided in the user prompt."""
 
-    def _build_prompt(self, source_brief: dict[str, Any]) -> str:
+    @staticmethod
+    def build_prompt(source_brief: dict[str, Any]) -> str:
         """Build generation prompt from source brief."""
         # Extract context from source brief
         title = source_brief["title"]
@@ -281,3 +282,7 @@ Requirements:
 Output ONLY the JSON, no additional text."""
 
         return prompt
+
+    def _build_prompt(self, source_brief: dict[str, Any]) -> str:
+        """Build generation prompt from source brief."""
+        return self.build_prompt(source_brief)

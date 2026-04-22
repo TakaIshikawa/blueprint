@@ -132,6 +132,17 @@ def _flatten_dict(data: dict, prefix: str = ""):
             yield path, value
 
 
+def _emit_prompt_preview(prompt: str, output: Path | None) -> None:
+    """Write a rendered prompt to a file or stdout."""
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(prompt)
+        click.echo(f"✓ Wrote prompt to: {output}")
+        return
+
+    click.echo(prompt, nl=False)
+
+
 def _create_llm_provider(config) -> LLMProvider:
     """Create the configured LLM provider."""
     if config.llm_provider == "anthropic":
@@ -432,6 +443,25 @@ def brief():
     pass
 
 
+@brief.command(name="prompt")
+@click.argument("source_id")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the prompt to a file instead of stdout",
+)
+def brief_prompt(source_id: str, output: Path | None):
+    """Render the implementation brief generation prompt for a source brief."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    source_brief = store.get_source_brief(source_id)
+    if not source_brief:
+        raise click.ClickException(f"Source brief not found: {source_id}")
+
+    _emit_prompt_preview(BriefGenerator.build_prompt(source_brief), output)
+
+
 @brief.command()
 @click.argument("source_id")
 @click.option(
@@ -646,6 +676,25 @@ def update(brief_id: str, status: str, reason: str | None):
 def plan():
     """Manage execution plans."""
     pass
+
+
+@plan.command(name="prompt")
+@click.argument("brief_id")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the prompt to a file instead of stdout",
+)
+def plan_prompt(brief_id: str, output: Path | None):
+    """Render the execution plan generation prompt for an implementation brief."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    implementation_brief = store.get_implementation_brief(brief_id)
+    if not implementation_brief:
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    _emit_prompt_preview(PlanGenerator.build_prompt(implementation_brief), output)
 
 
 @plan.command()
