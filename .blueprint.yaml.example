@@ -30,3 +30,16 @@ exports:
     smoothie: markdown
     codex: markdown
     claude_code: markdown
+  templates:
+    # Optional markdown templates. Paths may be absolute or relative to this config file.
+    # Main templates can use {brief.field}, {plan.field}, and {tasks}.
+    # Task templates can also use {task.field}.
+    smoothie:
+      # path: ./templates/smoothie.md
+      # task_path: ./templates/task.md
+    codex:
+      # path: ./templates/codex.md
+      # task_path: ./templates/task.md
+    claude_code:
+      # path: ./templates/claude-code.md
+      # task_path: ./templates/task.md

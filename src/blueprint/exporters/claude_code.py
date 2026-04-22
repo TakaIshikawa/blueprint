@@ -2,11 +2,17 @@
 
 from typing import Any
 
+from blueprint.config import Config
 from blueprint.exporters.base import TargetExporter
+from blueprint.exporters.templates import MarkdownTemplateRenderer
 
 
 class ClaudeCodeExporter(TargetExporter):
     """Export execution plans to Claude Code-compatible implementation prompts."""
+
+    def __init__(self, config: Config | None = None):
+        """Initialize exporter with optional configuration override."""
+        self.template_renderer = MarkdownTemplateRenderer("claude_code", config=config)
 
     def get_format(self) -> str:
         """Get export format."""
@@ -40,9 +46,14 @@ class ClaudeCodeExporter(TargetExporter):
 
         # Build Markdown content
         content = self._build_claude_code_prompt(execution_plan, implementation_brief)
+        content = self.template_renderer.render(
+            content,
+            execution_plan,
+            implementation_brief,
+        )
 
         # Write to file
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write(content)
 
         return output_path
@@ -63,29 +74,26 @@ class ClaudeCodeExporter(TargetExporter):
         # Context
         sections.append("## Context")
         sections.append("\n### Problem")
-        sections.append(brief['problem_statement'])
+        sections.append(brief["problem_statement"])
 
         sections.append("\n### Goal")
-        sections.append(brief['mvp_goal'])
+        sections.append(brief["mvp_goal"])
 
         # Architecture
-        if brief.get('architecture_notes'):
+        if brief.get("architecture_notes"):
             sections.append("\n### Architecture")
-            sections.append(brief['architecture_notes'])
+            sections.append(brief["architecture_notes"])
 
         # Implementation Plan
         sections.append("\n## Implementation Plan")
 
-        for milestone in plan['milestones']:
+        for milestone in plan["milestones"]:
             sections.append(f"\n### {milestone['name']}")
-            if milestone.get('description'):
-                sections.append(milestone['description'])
+            if milestone.get("description"):
+                sections.append(milestone["description"])
 
             # Get tasks for this milestone
-            milestone_tasks = [
-                t for t in plan['tasks']
-                if t.get('milestone') == milestone['name']
-            ]
+            milestone_tasks = [t for t in plan["tasks"] if t.get("milestone") == milestone["name"]]
 
             if milestone_tasks:
                 sections.append("\n**Tasks:**")
@@ -93,40 +101,40 @@ class ClaudeCodeExporter(TargetExporter):
                     sections.append(f"\n#### {task['title']}")
                     sections.append(f"\n{task['description']}")
 
-                    if task.get('files_or_modules'):
+                    if task.get("files_or_modules"):
                         sections.append("\n**Files to modify:**")
-                        for file in task['files_or_modules']:
+                        for file in task["files_or_modules"]:
                             sections.append(f"- `{file}`")
 
-                    if task.get('acceptance_criteria'):
+                    if task.get("acceptance_criteria"):
                         sections.append("\n**Acceptance Criteria:**")
-                        for ac in task['acceptance_criteria']:
+                        for ac in task["acceptance_criteria"]:
                             sections.append(f"- {ac}")
 
-                    if task.get('depends_on'):
+                    if task.get("depends_on"):
                         sections.append(f"\n**Depends on:** {', '.join(task['depends_on'])}")
 
         # Scope
         sections.append("\n## In Scope")
-        for item in brief.get('scope', []):
+        for item in brief.get("scope", []):
             sections.append(f"- {item}")
 
         # Non-Goals
         sections.append("\n## Out of Scope")
-        for item in brief.get('non_goals', []):
+        for item in brief.get("non_goals", []):
             sections.append(f"- {item}")
 
         # Constraints
         sections.append("\n## Constraints & Guidelines")
 
-        if brief.get('assumptions'):
+        if brief.get("assumptions"):
             sections.append("\n**Assumptions:**")
-            for assumption in brief['assumptions']:
+            for assumption in brief["assumptions"]:
                 sections.append(f"- {assumption}")
 
-        if brief.get('risks'):
+        if brief.get("risks"):
             sections.append("\n**Risks to watch:**")
-            for risk in brief['risks']:
+            for risk in brief["risks"]:
                 sections.append(f"- {risk}")
 
         # Validation
@@ -134,13 +142,13 @@ class ClaudeCodeExporter(TargetExporter):
         sections.append(f"\n**Test Strategy:** {plan.get('test_strategy', 'TBD')}")
 
         sections.append("\n**Definition of Done:**")
-        for item in brief.get('definition_of_done', []):
+        for item in brief.get("definition_of_done", []):
             sections.append(f"- {item}")
 
         # Handoff
-        if plan.get('handoff_prompt'):
+        if plan.get("handoff_prompt"):
             sections.append("\n## Additional Context")
-            sections.append(plan['handoff_prompt'])
+            sections.append(plan["handoff_prompt"])
 
         # Footer
         sections.append("\n---")

@@ -2,11 +2,17 @@
 
 from typing import Any
 
+from blueprint.config import Config
 from blueprint.exporters.base import TargetExporter
+from blueprint.exporters.templates import MarkdownTemplateRenderer
 
 
 class CodexExporter(TargetExporter):
     """Export execution plans to Codex-compatible implementation prompts."""
+
+    def __init__(self, config: Config | None = None):
+        """Initialize exporter with optional configuration override."""
+        self.template_renderer = MarkdownTemplateRenderer("codex", config=config)
 
     def get_format(self) -> str:
         """Get export format."""
@@ -35,9 +41,14 @@ class CodexExporter(TargetExporter):
 
         # Build Markdown content
         content = self._build_codex_prompt(execution_plan, implementation_brief)
+        content = self.template_renderer.render(
+            content,
+            execution_plan,
+            implementation_brief,
+        )
 
         # Write to file
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write(content)
 
         return output_path
@@ -57,60 +68,57 @@ class CodexExporter(TargetExporter):
 
         # Quick Overview
         sections.append("## Overview")
-        sections.append(brief['problem_statement'])
+        sections.append(brief["problem_statement"])
 
         # Technical Spec
         sections.append("\n## Technical Specification")
 
-        if brief.get('architecture_notes'):
+        if brief.get("architecture_notes"):
             sections.append("\n### Architecture")
-            sections.append(brief['architecture_notes'])
+            sections.append(brief["architecture_notes"])
 
-        if brief.get('data_requirements'):
+        if brief.get("data_requirements"):
             sections.append("\n### Data Requirements")
-            sections.append(brief['data_requirements'])
+            sections.append(brief["data_requirements"])
 
-        if brief.get('integration_points'):
+        if brief.get("integration_points"):
             sections.append("\n### Integration Points")
-            for integration in brief['integration_points']:
+            for integration in brief["integration_points"]:
                 sections.append(f"- {integration}")
 
         # Milestones & Tasks
         sections.append("\n## Build Plan")
 
-        for i, milestone in enumerate(plan['milestones'], 1):
+        for i, milestone in enumerate(plan["milestones"], 1):
             sections.append(f"\n### Phase {i}: {milestone['name']}")
 
             # Get tasks for this milestone
-            milestone_tasks = [
-                t for t in plan['tasks']
-                if t.get('milestone') == milestone['name']
-            ]
+            milestone_tasks = [t for t in plan["tasks"] if t.get("milestone") == milestone["name"]]
 
             for j, task in enumerate(milestone_tasks, 1):
                 sections.append(f"\n**Task {i}.{j}: {task['title']}**")
                 sections.append(f"\n{task['description']}")
 
                 # Files
-                if task.get('files_or_modules'):
-                    files_str = ', '.join(f"`{f}`" for f in task['files_or_modules'])
+                if task.get("files_or_modules"):
+                    files_str = ", ".join(f"`{f}`" for f in task["files_or_modules"])
                     sections.append(f"\n*Files:* {files_str}")
 
                 # Acceptance
-                if task.get('acceptance_criteria'):
+                if task.get("acceptance_criteria"):
                     sections.append("\n*Success criteria:*")
-                    for ac in task['acceptance_criteria']:
+                    for ac in task["acceptance_criteria"]:
                         sections.append(f"  - {ac}")
 
         # What to Build
         sections.append("\n## Feature Scope")
 
         sections.append("\n### ✅ In Scope")
-        for item in brief.get('scope', []):
+        for item in brief.get("scope", []):
             sections.append(f"- {item}")
 
         sections.append("\n### ❌ Out of Scope")
-        for item in brief.get('non_goals', []):
+        for item in brief.get("non_goals", []):
             sections.append(f"- {item}")
 
         # Quality Requirements
@@ -119,23 +127,23 @@ class CodexExporter(TargetExporter):
         sections.append(f"\n**Test Strategy:** {plan.get('test_strategy', 'TBD')}")
 
         sections.append("\n**Acceptance:**")
-        for item in brief.get('definition_of_done', []):
+        for item in brief.get("definition_of_done", []):
             sections.append(f"- {item}")
 
         # Implementation Notes
         sections.append("\n## Implementation Notes")
 
-        if brief.get('assumptions'):
+        if brief.get("assumptions"):
             sections.append("\n**Assumptions:**")
-            for assumption in brief['assumptions']:
+            for assumption in brief["assumptions"]:
                 sections.append(f"- {assumption}")
 
-        if brief.get('risks'):
+        if brief.get("risks"):
             sections.append("\n**Watch out for:**")
-            for risk in brief['risks']:
+            for risk in brief["risks"]:
                 sections.append(f"- {risk}")
 
-        if plan.get('handoff_prompt'):
+        if plan.get("handoff_prompt"):
             sections.append(f"\n**Additional context:** {plan['handoff_prompt']}")
 
         # Footer

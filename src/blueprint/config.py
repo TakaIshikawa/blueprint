@@ -37,9 +37,7 @@ class Config:
             },
             "sources": {
                 "max": {
-                    "db_path": str(
-                        Path.home() / "Project" / "experiments" / "max" / "max.db"
-                    ),
+                    "db_path": str(Path.home() / "Project" / "experiments" / "max" / "max.db"),
                 },
                 "github": {
                     "token_env": "GITHUB_TOKEN",
@@ -58,6 +56,11 @@ class Config:
                     "smoothie": "markdown",
                     "codex": "markdown",
                     "claude_code": "markdown",
+                },
+                "templates": {
+                    "smoothie": {},
+                    "codex": {},
+                    "claude_code": {},
                 },
             },
         }
@@ -130,9 +133,7 @@ class Config:
         else:
             db_parent = Path(db_path).expanduser().parent
             if not db_parent.exists():
-                warnings.append(
-                    f"Database path parent directory does not exist: {db_parent}"
-                )
+                warnings.append(f"Database path parent directory does not exist: {db_parent}")
 
         sources = self.get("sources", {})
         if not isinstance(sources, dict):
@@ -191,9 +192,7 @@ class Config:
 
         source_path = Path(path_value).expanduser()
         if not source_path.exists():
-            warnings.append(
-                f"Configured source '{source_name}' path does not exist: {source_path}"
-            )
+            warnings.append(f"Configured source '{source_name}' path does not exist: {source_path}")
 
     def _validate_github_source(
         self,
