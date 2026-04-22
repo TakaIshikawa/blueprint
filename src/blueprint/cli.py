@@ -1,5 +1,7 @@
 """Blueprint CLI commands."""
 
+import json
+
 import click
 
 from pathlib import Path
@@ -23,6 +25,61 @@ from blueprint.store import Store, init_db
 def cli():
     """Blueprint: Implementation planning layer for design briefs."""
     pass
+
+
+# ============================================================================
+# Config Commands
+# ============================================================================
+
+
+@cli.group()
+def config():
+    """Configuration diagnostics."""
+    pass
+
+
+@config.command()
+@click.option("--json", "json_output", is_flag=True, help="Output diagnostics as JSON")
+def inspect(json_output: bool):
+    """Inspect merged configuration and validation warnings."""
+    diagnostics = get_config().diagnostics()
+
+    if json_output:
+        click.echo(json.dumps(diagnostics, indent=2, sort_keys=True))
+        return
+
+    click.echo("Blueprint configuration")
+    click.echo(f"Config path: {diagnostics['config_path'] or 'defaults only'}")
+    click.echo("\nMerged values:")
+    for path, value in _flatten_dict(diagnostics["values"]):
+        click.echo(f"  {path}: {value}")
+
+    key_status = (
+        "set"
+        if diagnostics["environment"]["ANTHROPIC_API_KEY"]["present"]
+        else "missing"
+    )
+    click.echo("\nEnvironment:")
+    click.echo(f"  ANTHROPIC_API_KEY: {key_status}")
+
+    warnings = diagnostics["warnings"]
+    click.echo("\nValidation warnings:")
+    if warnings:
+        for warning in warnings:
+            click.echo(f"  - {warning}")
+    else:
+        click.echo("  none")
+
+
+def _flatten_dict(data: dict, prefix: str = ""):
+    """Yield dot-separated paths for nested config dictionaries."""
+    for key in sorted(data):
+        path = f"{prefix}.{key}" if prefix else key
+        value = data[key]
+        if isinstance(value, dict):
+            yield from _flatten_dict(value, path)
+        else:
+            yield path, value
 
 
 # ============================================================================
