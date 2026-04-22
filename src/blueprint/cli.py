@@ -16,6 +16,7 @@ from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.generators.brief_generator import BriefGenerator
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
+from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
 from blueprint.store import Store, init_db
@@ -215,6 +216,64 @@ def max(brief_id: str, replace: bool, skip_existing: bool):
     except FileNotFoundError as e:
         click.echo(f"✗ Error: {e}", err=True)
         click.echo(f"  Check your Max database path in config: {config.max_db_path}", err=True)
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
+
+
+@import_cmd.command(name="github-issue")
+@click.argument("issue_ref")
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def github_issue(issue_ref: str, replace: bool, skip_existing: bool):
+    """Import a GitHub issue by OWNER/REPO#NUMBER."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = GitHubIssueImporter(
+        token_env=config.github_token_env,
+        default_owner=config.github_default_owner,
+        default_repo=config.github_default_repo,
+    )
+
+    try:
+        click.echo(f"Importing GitHub issue: {issue_ref}")
+        source_brief = importer.import_from_source(issue_ref)
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
+
+        source_brief_id = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
+
+        if existing_source_brief and replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from GitHub issue "
+                f"{source_brief['source_id']}"
+            )
+        elif existing_source_brief:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from GitHub issue "
+                f"{source_brief['source_id']}"
+            )
+        else:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from GitHub issue "
+                f"{source_brief['source_id']}"
+            )
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  URL: {source_brief['source_links'].get('html_url') or 'N/A'}")
+
     except Exception as e:
         click.echo(f"✗ Import failed: {e}", err=True)
 

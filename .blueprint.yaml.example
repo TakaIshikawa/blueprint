@@ -11,6 +11,10 @@ sources:
     db_path: ~/Project/experiments/max/max.db
   graph:
     db_path: ~/Project/experiments/graph/graph.db
+  github:
+    token_env: GITHUB_TOKEN
+    default_owner:
+    default_repo:
 
 # LLM configuration
 llm:

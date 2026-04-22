@@ -41,6 +41,11 @@ class Config:
                         Path.home() / "Project" / "experiments" / "max" / "max.db"
                     ),
                 },
+                "github": {
+                    "token_env": "GITHUB_TOKEN",
+                    "default_owner": None,
+                    "default_repo": None,
+                },
             },
             "llm": {
                 "provider": "anthropic",
@@ -96,12 +101,19 @@ class Config:
         """Return merged config values and validation warnings."""
         warnings = self.validate()
 
+        github_token_env = self.github_token_env
+        if not isinstance(github_token_env, str) or not github_token_env:
+            github_token_env = "GITHUB_TOKEN"
+
         return {
             "config_path": self.config_path,
             "values": self.data,
             "environment": {
                 "ANTHROPIC_API_KEY": {
                     "present": self.has_anthropic_api_key(),
+                },
+                github_token_env: {
+                    "present": self.has_github_token(),
                 },
             },
             "warnings": warnings,
@@ -127,7 +139,10 @@ class Config:
             warnings.append("sources must be a mapping")
         else:
             for source_name, source_config in sources.items():
-                self._validate_source(source_name, source_config, warnings)
+                if source_name == "github":
+                    self._validate_github_source(source_config, warnings)
+                else:
+                    self._validate_source(source_name, source_config, warnings)
 
         export_dir = self.get("exports.output_dir")
         if not isinstance(export_dir, str) or not export_dir:
@@ -180,9 +195,41 @@ class Config:
                 f"Configured source '{source_name}' path does not exist: {source_path}"
             )
 
+    def _validate_github_source(
+        self,
+        source_config: Any,
+        warnings: list[str],
+    ) -> None:
+        """Validate GitHub importer configuration."""
+        if not isinstance(source_config, dict):
+            warnings.append("sources.github must be a mapping")
+            return
+
+        token_env = source_config.get("token_env")
+        if not isinstance(token_env, str) or not token_env:
+            warnings.append("sources.github.token_env must be a non-empty string")
+
+        default_owner = source_config.get("default_owner")
+        default_repo = source_config.get("default_repo")
+        if (default_owner and not default_repo) or (default_repo and not default_owner):
+            warnings.append(
+                "sources.github.default_owner and default_repo must be configured together"
+            )
+        for key, value in (
+            ("default_owner", default_owner),
+            ("default_repo", default_repo),
+        ):
+            if value is not None and not isinstance(value, str):
+                warnings.append(f"sources.github.{key} must be a string when set")
+
     def has_anthropic_api_key(self) -> bool:
         """Return whether the Anthropic API key is present without exposing it."""
         return bool(os.getenv("ANTHROPIC_API_KEY"))
+
+    def has_github_token(self) -> bool:
+        """Return whether the configured GitHub token is present without exposing it."""
+        token_env = self.github_token_env
+        return isinstance(token_env, str) and bool(os.getenv(token_env))
 
     @property
     def db_path(self) -> str:
@@ -193,6 +240,21 @@ class Config:
     def max_db_path(self) -> str:
         """Get Max database path."""
         return self.get("sources.max.db_path")
+
+    @property
+    def github_token_env(self) -> str:
+        """Get GitHub token environment variable name."""
+        return self.get("sources.github.token_env")
+
+    @property
+    def github_default_owner(self) -> str | None:
+        """Get default GitHub repository owner."""
+        return self.get("sources.github.default_owner")
+
+    @property
+    def github_default_repo(self) -> str | None:
+        """Get default GitHub repository name."""
+        return self.get("sources.github.default_repo")
 
     @property
     def default_model(self) -> str:
