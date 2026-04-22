@@ -10,6 +10,7 @@ from pathlib import Path
 from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
+from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.relay import RelayExporter
@@ -71,10 +72,7 @@ def history(entity_id: str, limit: int):
         transition = f"{event['old_status']} -> {event['new_status']}"
         reason = event["reason"] or "N/A"
         click.echo(
-            f"{created_at:<20} "
-            f"{event['entity_type']:<8} "
-            f"{transition:<35} "
-            f"{reason}"
+            f"{created_at:<20} " f"{event['entity_type']:<8} " f"{transition:<35} " f"{reason}"
         )
 
     click.echo(f"\nTotal: {len(events)} events")
@@ -107,11 +105,7 @@ def inspect(json_output: bool):
     for path, value in _flatten_dict(diagnostics["values"]):
         click.echo(f"  {path}: {value}")
 
-    key_status = (
-        "set"
-        if diagnostics["environment"]["ANTHROPIC_API_KEY"]["present"]
-        else "missing"
-    )
+    key_status = "set" if diagnostics["environment"]["ANTHROPIC_API_KEY"]["present"] else "missing"
     click.echo("\nEnvironment:")
     click.echo(f"  ANTHROPIC_API_KEY: {key_status}")
 
@@ -417,9 +411,9 @@ def inspect(brief_id: str):
     click.echo(f"Created:      {brief['created_at']}")
     click.echo(f"\nSummary:\n{brief['summary']}\n")
 
-    if brief['source_links']:
+    if brief["source_links"]:
         click.echo("Source Links:")
-        for key, value in brief['source_links'].items():
+        for key, value in brief["source_links"].items():
             click.echo(f"  {key}: {value}")
         click.echo()
 
@@ -437,8 +431,12 @@ def brief():
 
 @brief.command()
 @click.argument("source_id")
-@click.option("--model", type=click.Choice(["opus", "sonnet"]), default="opus",
-              help="LLM model to use (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)")
+@click.option(
+    "--model",
+    type=click.Choice(["opus", "sonnet"]),
+    default="opus",
+    help="LLM model to use (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)",
+)
 def create(source_id: str, model: str):
     """Generate implementation brief from source brief."""
     config = get_config()
@@ -485,6 +483,7 @@ def create(source_id: str, model: str):
     except Exception as e:
         click.echo(f"✗ Generation failed: {e}", err=True)
         import traceback
+
         click.echo(traceback.format_exc(), err=True)
 
 
@@ -607,23 +606,22 @@ def inspect(brief_id: str):
     click.echo(f"\nProblem Statement:\n{brief['problem_statement']}\n")
     click.echo(f"MVP Goal:\n{brief['mvp_goal']}\n")
 
-    if brief['scope']:
+    if brief["scope"]:
         click.echo("In Scope:")
-        for item in brief['scope']:
+        for item in brief["scope"]:
             click.echo(f"  • {item}")
         click.echo()
 
-    if brief['non_goals']:
+    if brief["non_goals"]:
         click.echo("Non-Goals:")
-        for item in brief['non_goals']:
+        for item in brief["non_goals"]:
             click.echo(f"  • {item}")
         click.echo()
 
 
 @brief.command()
 @click.argument("brief_id")
-@click.option("--status", required=True,
-              type=click.Choice(BRIEF_STATUS_CHOICES))
+@click.option("--status", required=True, type=click.Choice(BRIEF_STATUS_CHOICES))
 @click.option("--reason", help="Reason for the status change")
 def update(brief_id: str, status: str, reason: str | None):
     """Update implementation brief status."""
@@ -649,10 +647,15 @@ def plan():
 
 @plan.command()
 @click.argument("brief_id")
-@click.option("--model", type=click.Choice(["opus", "sonnet"]), default="opus",
-              help="LLM model to use")
-@click.option("--staged", is_flag=True, default=False,
-              help="Use staged generation (fixes JSON parsing issues)")
+@click.option(
+    "--model", type=click.Choice(["opus", "sonnet"]), default="opus", help="LLM model to use"
+)
+@click.option(
+    "--staged",
+    is_flag=True,
+    default=False,
+    help="Use staged generation (fixes JSON parsing issues)",
+)
 def create(brief_id: str, model: str, staged: bool):
     """Generate execution plan from implementation brief."""
     config = get_config()
@@ -685,8 +688,7 @@ def create(brief_id: str, model: str, staged: bool):
             click.echo(f"(This may take 30-90 seconds total)\n")
         else:
             click.echo(
-                f"\n⏳ Calling {_resolve_llm_model(model)}... "
-                f"(this may take 15-45 seconds)\n"
+                f"\n⏳ Calling {_resolve_llm_model(model)}... " f"(this may take 15-45 seconds)\n"
             )
 
         execution_plan, tasks = generator.generate(
@@ -715,6 +717,7 @@ def create(brief_id: str, model: str, staged: bool):
     except Exception as e:
         click.echo(f"✗ Generation failed: {e}", err=True)
         import traceback
+
         click.echo(traceback.format_exc(), err=True)
 
 
@@ -747,8 +750,7 @@ def revise(plan_id: str, feedback: str, model: str):
         )
         if not implementation_brief:
             click.echo(
-                f"✗ Implementation brief not found: "
-                f"{existing_plan['implementation_brief_id']}",
+                f"✗ Implementation brief not found: " f"{existing_plan['implementation_brief_id']}",
                 err=True,
             )
             return
@@ -763,8 +765,7 @@ def revise(plan_id: str, feedback: str, model: str):
         click.echo(f"Revising execution plan {plan_id} using {model}...")
         click.echo(f"Brief: {implementation_brief['title']}")
         click.echo(
-            f"\n⏳ Calling {_resolve_llm_model(model)}... "
-            f"(this may take 15-45 seconds)\n"
+            f"\n⏳ Calling {_resolve_llm_model(model)}... " f"(this may take 15-45 seconds)\n"
         )
 
         revised_plan, tasks = generator.generate(
@@ -797,6 +798,7 @@ def revise(plan_id: str, feedback: str, model: str):
     except Exception as e:
         click.echo(f"✗ Revision failed: {e}", err=True)
         import traceback
+
         click.echo(traceback.format_exc(), err=True)
 
 
@@ -829,7 +831,7 @@ def list(brief_id: str | None, status: str | None, limit: int):
     click.echo("-" * 80)
 
     for plan in plans:
-        target = plan['target_engine'] or 'N/A'
+        target = plan["target_engine"] or "N/A"
         click.echo(
             f"{plan['id']:<15} "
             f"{plan['implementation_brief_id']:<15} "
@@ -923,20 +925,20 @@ def inspect(plan_id: str):
     if lineage.get("revised_from_plan_id"):
         click.echo(f"Revised From:         {lineage['revised_from_plan_id']}")
 
-    if plan['milestones']:
+    if plan["milestones"]:
         click.echo(f"\nMilestones ({len(plan['milestones'])}):")
-        for i, milestone in enumerate(plan['milestones'], 1):
+        for i, milestone in enumerate(plan["milestones"], 1):
             click.echo(f"  {i}. {milestone.get('title', 'Untitled')}")
-            if milestone.get('description'):
+            if milestone.get("description"):
                 click.echo(f"     {milestone['description']}")
 
-    if plan['tasks']:
+    if plan["tasks"]:
         click.echo(f"\nTasks ({len(plan['tasks'])}):")
-        for task in plan['tasks']:
+        for task in plan["tasks"]:
             click.echo(f"  • {task['title']} ({task['status']})")
-            if task['milestone']:
+            if task["milestone"]:
                 click.echo(f"    Milestone: {task['milestone']}")
-            if task['depends_on']:
+            if task["depends_on"]:
                 click.echo(f"    Depends on: {', '.join(task['depends_on'])}")
 
 
@@ -972,9 +974,7 @@ def list(plan_id: str, status: str | None, milestone: str | None, limit: int):
         click.echo("No execution tasks found")
         return
 
-    click.echo(
-        f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} {'Status':<15} {'Title':<35}"
-    )
+    click.echo(f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} {'Status':<15} {'Title':<35}")
     click.echo("-" * 100)
 
     for current_task in tasks:
@@ -1058,7 +1058,9 @@ def _echo_task_metadata(current_task: dict, indent: str = ""):
     acceptance_criteria = current_task["acceptance_criteria"] or []
 
     click.echo(f"{indent}Dependencies: {', '.join(depends_on) if depends_on else 'none'}")
-    click.echo(f"{indent}Files:        {', '.join(files_or_modules) if files_or_modules else 'none'}")
+    click.echo(
+        f"{indent}Files:        {', '.join(files_or_modules) if files_or_modules else 'none'}"
+    )
     if current_task.get("blocked_reason"):
         click.echo(f"{indent}Blocked:      {current_task['blocked_reason']}")
 
@@ -1083,9 +1085,12 @@ def export():
 
 @export.command()
 @click.argument("plan_id")
-@click.option("--target", required=True,
-              type=click.Choice(["relay", "smoothie", "codex", "claude-code", "mermaid", "all"]),
-              help="Target execution engine")
+@click.option(
+    "--target",
+    required=True,
+    type=click.Choice(["relay", "smoothie", "codex", "claude-code", "mermaid", "csv-tasks", "all"]),
+    help="Target execution engine",
+)
 def run(plan_id: str, target: str):
     """Export execution plan to target engine."""
     config = get_config()
@@ -1099,9 +1104,11 @@ def run(plan_id: str, target: str):
             return
 
         # Get implementation brief
-        brief = store.get_implementation_brief(plan['implementation_brief_id'])
+        brief = store.get_implementation_brief(plan["implementation_brief_id"])
         if not brief:
-            click.echo(f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True)
+            click.echo(
+                f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True
+            )
             return
 
         # Ensure export directory exists
@@ -1110,7 +1117,7 @@ def run(plan_id: str, target: str):
 
         # Export to target(s)
         targets = (
-            ["relay", "smoothie", "codex", "claude-code", "mermaid"]
+            ["relay", "smoothie", "codex", "claude-code", "mermaid", "csv-tasks"]
             if target == "all"
             else [target]
         )
@@ -1140,8 +1147,8 @@ def run(plan_id: str, target: str):
                     "export_format": exporter.get_format(),
                     "output_path": result_path,
                     "export_metadata": {
-                        "brief_id": brief['id'],
-                        "brief_title": brief['title'],
+                        "brief_id": brief["id"],
+                        "brief_title": brief["title"],
                     },
                 }
                 store.insert_export_record(export_record)
@@ -1157,6 +1164,7 @@ def run(plan_id: str, target: str):
     except Exception as e:
         click.echo(f"✗ Export failed: {e}", err=True)
         import traceback
+
         click.echo(traceback.format_exc(), err=True)
 
 
@@ -1208,6 +1216,7 @@ def graph(plan_id: str, output: str):
     except Exception as e:
         click.echo(f"✗ Graph export failed: {e}", err=True)
         import traceback
+
         click.echo(traceback.format_exc(), err=True)
 
 
@@ -1219,6 +1228,7 @@ def _get_exporter(target: str):
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
         "mermaid": MermaidExporter(),
+        "csv-tasks": CsvTasksExporter(),
     }
     return exporters.get(target)
 

@@ -45,6 +45,7 @@ exports:
     assert payload["values"]["llm"]["default_model"] == "claude-sonnet-4-5"
     assert payload["values"]["exports"]["formats"]["codex"] == "json"
     assert payload["values"]["exports"]["formats"]["relay"] == "json"
+    assert payload["values"]["exports"]["formats"]["csv-tasks"] == "csv"
     assert payload["environment"]["ANTHROPIC_API_KEY"]["present"] is True
     assert payload["warnings"] == []
     assert "secret-test-key" not in result.output
