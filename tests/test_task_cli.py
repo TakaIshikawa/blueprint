@@ -31,6 +31,20 @@ def test_store_get_list_and_update_execution_tasks(tmp_path):
 
     assert store.update_execution_task_status("task-api", "completed") is True
     assert store.get_execution_task("task-api")["status"] == "completed"
+    assert (
+        store.update_execution_task_status(
+            "task-api",
+            "blocked",
+            blocked_reason="Waiting for schema approval",
+        )
+        is True
+    )
+    blocked_task = store.get_execution_task("task-api")
+    assert blocked_task["status"] == "blocked"
+    assert blocked_task["blocked_reason"] == "Waiting for schema approval"
+    assert blocked_task["metadata"] == {
+        "blocked_reason": "Waiting for schema approval",
+    }
     assert store.update_execution_task_status("task-missing", "completed") is False
     assert store.get_execution_task("task-missing") is None
 
@@ -113,6 +127,32 @@ def test_task_update_cli_changes_status(tmp_path, monkeypatch):
     assert Store(str(tmp_path / "blueprint.db")).get_execution_task("task-api")[
         "status"
     ] == "completed"
+
+
+def test_task_update_cli_sets_blocked_reason(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    store = init_db(str(tmp_path / "blueprint.db"))
+    store.insert_implementation_brief(_implementation_brief())
+    store.insert_execution_plan(_execution_plan(), _tasks())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "task",
+            "update",
+            "task-api",
+            "--status",
+            "blocked",
+            "--blocked-reason",
+            "Waiting for credentials",
+        ],
+    )
+
+    task = Store(str(tmp_path / "blueprint.db")).get_execution_task("task-api")
+    assert result.exit_code == 0, result.output
+    assert "Blocked reason: Waiting for credentials" in result.output
+    assert task["status"] == "blocked"
+    assert task["blocked_reason"] == "Waiting for credentials"
 
 
 def test_task_update_cli_rejects_invalid_status(tmp_path, monkeypatch):

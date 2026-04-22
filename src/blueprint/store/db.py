@@ -6,6 +6,8 @@ from typing import Any
 from datetime import datetime
 
 from sqlalchemy import create_engine
+from sqlalchemy import inspect as inspect_db
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from blueprint.store.models import (
@@ -26,12 +28,28 @@ class Store:
         self.db_path = db_path
         self.engine = create_engine(f"sqlite:///{db_path}")
         self.SessionLocal = sessionmaker(bind=self.engine)
+        if Path(self.db_path).exists():
+            self._migrate_schema()
 
     def init_db(self):
         """Initialize database tables."""
         # Create parent directory if it doesn't exist
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         Base.metadata.create_all(self.engine)
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Apply lightweight migrations for existing SQLite databases."""
+        inspector = inspect_db(self.engine)
+        if "execution_tasks" not in inspector.get_table_names():
+            return
+
+        task_columns = {column["name"] for column in inspector.get_columns("execution_tasks")}
+        if "metadata" not in task_columns:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE execution_tasks ADD COLUMN metadata JSON")
+                )
 
     def get_session(self) -> Session:
         """Get a new database session."""
@@ -248,8 +266,11 @@ class Store:
 
             # Insert tasks
             for task_dict in tasks:
-                task_dict["execution_plan_id"] = plan.id
-                task = ExecutionTaskModel(**task_dict)
+                task_payload = dict(task_dict)
+                task_payload["execution_plan_id"] = plan.id
+                if "metadata" in task_payload:
+                    task_payload["task_metadata"] = task_payload.pop("metadata")
+                task = ExecutionTaskModel(**task_payload)
                 session.add(task)
 
             session.commit()
@@ -323,6 +344,8 @@ class Store:
             "acceptance_criteria": task.acceptance_criteria,
             "estimated_complexity": task.estimated_complexity,
             "status": task.status,
+            "metadata": task.task_metadata or {},
+            "blocked_reason": (task.task_metadata or {}).get("blocked_reason"),
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         }
@@ -358,13 +381,25 @@ class Store:
             query = query.order_by(ExecutionTaskModel.created_at.asc()).limit(limit)
             return [self._task_to_dict(t) for t in query.all()]
 
-    def update_execution_task_status(self, task_id: str, status: str) -> bool:
+    def update_execution_task_status(
+        self,
+        task_id: str,
+        status: str,
+        blocked_reason: str | None = None,
+    ) -> bool:
         """Update execution task status."""
         with self.get_session() as session:
             task = session.query(ExecutionTaskModel).filter_by(id=task_id).first()
             if not task:
                 return False
             task.status = status
+            if blocked_reason is not None:
+                task_metadata = dict(task.task_metadata or {})
+                if blocked_reason:
+                    task_metadata["blocked_reason"] = blocked_reason
+                else:
+                    task_metadata.pop("blocked_reason", None)
+                task.task_metadata = task_metadata
             session.commit()
             return True
 

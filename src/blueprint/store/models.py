@@ -183,6 +183,7 @@ class ExecutionTaskModel(Base):
     )  # pending | in_progress | completed | blocked | skipped
 
     # Metadata
+    task_metadata = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

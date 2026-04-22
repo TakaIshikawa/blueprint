@@ -611,7 +611,7 @@ def task():
 
 
 @task.command()
-@click.option("--plan-id", required=True, help="Execution plan ID")
+@click.option("--plan-id", help="Filter by execution plan ID")
 @click.option("--status", help="Filter by status")
 @click.option("--milestone", help="Filter by milestone")
 @click.option("--limit", default=50, help="Maximum number of tasks to show")
@@ -687,13 +687,19 @@ def inspect(task_id: str):
     required=True,
     type=click.Choice(["pending", "in_progress", "completed", "blocked", "skipped"]),
 )
-def update(task_id: str, status: str):
+@click.option("--blocked-reason", help="Reason the task is blocked")
+def update(task_id: str, status: str, blocked_reason: str | None):
     """Update execution task status."""
     config = get_config()
     store = Store(config.db_path)
 
-    if store.update_execution_task_status(task_id, status):
+    if blocked_reason and status != "blocked":
+        raise click.UsageError("--blocked-reason can only be used with --status blocked")
+
+    if store.update_execution_task_status(task_id, status, blocked_reason=blocked_reason):
         click.echo(f"✓ Updated task {task_id} status to {status}")
+        if blocked_reason:
+            click.echo(f"  Blocked reason: {blocked_reason}")
     else:
         click.echo(f"Execution task not found: {task_id}", err=True)
 
@@ -706,6 +712,8 @@ def _echo_task_metadata(current_task: dict, indent: str = ""):
 
     click.echo(f"{indent}Dependencies: {', '.join(depends_on) if depends_on else 'none'}")
     click.echo(f"{indent}Files:        {', '.join(files_or_modules) if files_or_modules else 'none'}")
+    if current_task.get("blocked_reason"):
+        click.echo(f"{indent}Blocked:      {current_task['blocked_reason']}")
 
     if acceptance_criteria:
         click.echo(f"{indent}Acceptance Criteria:")
