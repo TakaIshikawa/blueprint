@@ -112,6 +112,7 @@ class ExecutionPlan(DomainModel):
     generation_model: str | None = None
     generation_tokens: int | None = Field(default=None, ge=0)
     generation_prompt: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     tasks: list[ExecutionTask] = Field(default_factory=list)
 
 

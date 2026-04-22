@@ -21,6 +21,7 @@ from blueprint.generators.brief_generator import (
 )
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
+from blueprint.generators.plan_reviser import PlanReviser
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
@@ -671,6 +672,101 @@ def create(brief_id: str, model: str, staged: bool):
 
 
 @plan.command()
+@click.argument("plan_id")
+@click.option(
+    "--feedback",
+    required=True,
+    help="Human feedback text, or a path to a file containing feedback",
+)
+@click.option(
+    "--model",
+    type=click.Choice(["opus", "sonnet"]),
+    default="opus",
+    help="LLM model to use",
+)
+def revise(plan_id: str, feedback: str, model: str):
+    """Generate a revised execution plan from an existing plan and feedback."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        existing_plan = store.get_execution_plan(plan_id)
+        if not existing_plan:
+            click.echo(f"✗ Execution plan not found: {plan_id}", err=True)
+            return
+
+        implementation_brief = store.get_implementation_brief(
+            existing_plan["implementation_brief_id"]
+        )
+        if not implementation_brief:
+            click.echo(
+                f"✗ Implementation brief not found: "
+                f"{existing_plan['implementation_brief_id']}",
+                err=True,
+            )
+            return
+
+        feedback_text, feedback_source = _read_feedback(feedback)
+        if not feedback_text.strip():
+            raise click.UsageError("--feedback cannot be empty")
+
+        llm_client = LLMClient(
+            api_key=config.anthropic_api_key,
+            default_model=config.default_model,
+        )
+        generator = PlanReviser(llm_client)
+
+        click.echo(f"Revising execution plan {plan_id} using {model}...")
+        click.echo(f"Brief: {implementation_brief['title']}")
+        click.echo(
+            f"\n⏳ Calling {LLMClient.resolve_model(model)}... "
+            f"(this may take 15-45 seconds)\n"
+        )
+
+        revised_plan, tasks = generator.generate(
+            implementation_brief=implementation_brief,
+            existing_plan=existing_plan,
+            feedback=feedback_text,
+            model=LLMClient.resolve_model(model),
+            feedback_source=feedback_source,
+        )
+
+        revised_plan_id = store.insert_execution_plan(revised_plan, tasks)
+
+        click.echo(f"✓ Generated revised execution plan {revised_plan_id}")
+        click.echo(f"  Revised from: {plan_id}")
+        click.echo(f"  Milestones: {len(revised_plan['milestones'])}")
+        click.echo(f"  Tasks: {len(tasks)}")
+        click.echo(f"  Target: {revised_plan['target_engine'] or 'mixed'}")
+        click.echo(f"  Project Type: {revised_plan['project_type']}")
+        click.echo(f"  Tokens used: {revised_plan['generation_tokens']}")
+        click.echo(f"\nView full plan: blueprint plan inspect {revised_plan_id}")
+
+    except ValueError as e:
+        if "ANTHROPIC_API_KEY" in str(e):
+            click.echo(f"✗ Error: {e}", err=True)
+            click.echo("  Set ANTHROPIC_API_KEY environment variable", err=True)
+        else:
+            click.echo(f"✗ Revision failed: {e}", err=True)
+    except click.ClickException:
+        raise
+    except Exception as e:
+        click.echo(f"✗ Revision failed: {e}", err=True)
+        import traceback
+        click.echo(traceback.format_exc(), err=True)
+
+
+def _read_feedback(feedback: str) -> tuple[str, str]:
+    """Read feedback from a file path when it exists, otherwise use inline text."""
+    feedback_path = Path(feedback)
+    if feedback_path.exists():
+        if not feedback_path.is_file():
+            raise click.UsageError("--feedback path must point to a file")
+        return feedback_path.read_text(), str(feedback_path)
+    return feedback, "inline"
+
+
+@plan.command()
 @click.option("--brief-id", help="Filter by implementation brief ID")
 @click.option("--status", help="Filter by status")
 @click.option("--limit", default=50, help="Maximum number of plans to show")
@@ -763,6 +859,10 @@ def inspect(plan_id: str):
     click.echo(f"Project Type:         {plan['project_type'] or 'N/A'}")
     click.echo(f"Status:               {plan['status']}")
     click.echo(f"Created:              {plan['created_at']}")
+    plan_metadata = plan.get("metadata") or {}
+    lineage = plan_metadata.get("lineage") or plan_metadata
+    if lineage.get("revised_from_plan_id"):
+        click.echo(f"Revised From:         {lineage['revised_from_plan_id']}")
 
     if plan['milestones']:
         click.echo(f"\nMilestones ({len(plan['milestones'])}):")

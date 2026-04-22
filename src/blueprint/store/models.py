@@ -143,6 +143,7 @@ class ExecutionPlanModel(Base):
     generation_model = Column(String, nullable=True)
     generation_tokens = Column(Integer, nullable=True)
     generation_prompt = Column(Text, nullable=True)
+    plan_metadata = Column("metadata", JSON, nullable=True)
 
     # Relationships
     implementation_brief = relationship("ImplementationBriefModel", back_populates="execution_plans")

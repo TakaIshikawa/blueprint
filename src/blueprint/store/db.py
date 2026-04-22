@@ -48,7 +48,18 @@ class Store:
     def _migrate_schema(self):
         """Apply lightweight migrations for existing SQLite databases."""
         inspector = inspect_db(self.engine)
-        if "execution_tasks" not in inspector.get_table_names():
+        table_names = inspector.get_table_names()
+        if "execution_plans" in table_names:
+            plan_columns = {
+                column["name"] for column in inspector.get_columns("execution_plans")
+            }
+            if "metadata" not in plan_columns:
+                with self.engine.begin() as connection:
+                    connection.execute(
+                        text("ALTER TABLE execution_plans ADD COLUMN metadata JSON")
+                    )
+
+        if "execution_tasks" not in table_names:
             return
 
         task_columns = {column["name"] for column in inspector.get_columns("execution_tasks")}
@@ -337,6 +348,8 @@ class Store:
             "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
             "generation_model": plan.generation_model,
             "generation_tokens": plan.generation_tokens,
+            "generation_prompt": plan.generation_prompt,
+            "metadata": plan.plan_metadata or {},
             "tasks": [self._task_to_dict(t) for t in plan.tasks],
         }
 
@@ -471,11 +484,13 @@ class Store:
 
     def _validated_execution_plan_payload(self, plan_dict: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalize an ExecutionPlan for database insertion."""
-        return ExecutionPlan.model_validate(plan_dict).model_dump(
+        payload = ExecutionPlan.model_validate(plan_dict).model_dump(
             mode="python",
             exclude={"tasks"},
             exclude_none=True,
         )
+        payload["plan_metadata"] = payload.pop("metadata", {})
+        return payload
 
     def _validated_execution_task_payload(
         self,
