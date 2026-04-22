@@ -3,7 +3,9 @@
 import click
 
 from blueprint.config import get_config
+from blueprint.generators.brief_generator import BriefGenerator
 from blueprint.importers.max_importer import MaxImporter
+from blueprint.llm.client import LLMClient
 from blueprint.store import Store, init_db
 
 
@@ -217,8 +219,53 @@ def brief():
               help="LLM model to use (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)")
 def create(source_id: str, model: str):
     """Generate implementation brief from source brief."""
-    click.echo(f"Generating implementation brief from {source_id} using {model}...")
-    click.echo("TODO: Implement brief generation")
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        # Get source brief
+        source_brief = store.get_source_brief(source_id)
+        if not source_brief:
+            click.echo(f"✗ Source brief not found: {source_id}", err=True)
+            return
+
+        # Initialize LLM client and generator
+        llm_client = LLMClient(
+            api_key=config.anthropic_api_key,
+            default_model=config.default_model,
+        )
+        generator = BriefGenerator(llm_client)
+
+        # Generate brief
+        click.echo(f"Generating implementation brief from {source_id} using {model}...")
+        click.echo(f"Source: {source_brief['title']}")
+        click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 10-30 seconds)\n")
+
+        implementation_brief = generator.generate(
+            source_brief=source_brief,
+            model=LLMClient.resolve_model(model),
+        )
+
+        # Store in database
+        brief_id = store.insert_implementation_brief(implementation_brief)
+
+        # Success message
+        click.echo(f"✓ Generated implementation brief {brief_id}")
+        click.echo(f"  Title: {implementation_brief['title']}")
+        click.echo(f"  MVP Goal: {implementation_brief['mvp_goal'][:100]}...")
+        click.echo(f"  Tokens used: {implementation_brief['generation_tokens']}")
+        click.echo(f"\nView full brief: blueprint brief inspect {brief_id}")
+
+    except ValueError as e:
+        if "ANTHROPIC_API_KEY" in str(e):
+            click.echo(f"✗ Error: {e}", err=True)
+            click.echo("  Set ANTHROPIC_API_KEY environment variable", err=True)
+        else:
+            click.echo(f"✗ Generation failed: {e}", err=True)
+    except Exception as e:
+        click.echo(f"✗ Generation failed: {e}", err=True)
+        import traceback
+        click.echo(traceback.format_exc(), err=True)
 
 
 @brief.command()
