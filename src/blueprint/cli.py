@@ -10,6 +10,7 @@ from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.mermaid import MermaidExporter
+from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.generators.brief_generator import BriefGenerator
@@ -556,6 +557,45 @@ def list(brief_id: str | None, status: str | None, limit: int):
         )
 
     click.echo(f"\nTotal: {len(plans)} plans")
+
+
+@plan.command(name="graph")
+@click.argument("plan_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["dot", "json"]),
+    default="dot",
+    show_default=True,
+    help="Graph output format",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write graph to a file instead of stdout",
+)
+def plan_graph(plan_id: str, output_format: str, output: Path | None):
+    """Export a task dependency graph as DOT or JSON."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    exporter = PlanGraphExporter()
+    try:
+        content = exporter.render(plan, output_format)
+    except UnknownDependencyError as e:
+        raise click.ClickException(str(e)) from e
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content)
+        click.echo(f"✓ Exported {output_format.upper()} graph to: {output}")
+        return
+
+    click.echo(content, nl=False)
 
 
 @plan.command()
