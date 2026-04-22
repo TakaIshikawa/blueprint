@@ -257,6 +257,11 @@ class Config:
         return self.get("sources.github.default_repo")
 
     @property
+    def llm_provider(self) -> str:
+        """Get configured LLM provider."""
+        return self.get("llm.provider")
+
+    @property
     def default_model(self) -> str:
         """Get default LLM model."""
         return self.get("llm.default_model")

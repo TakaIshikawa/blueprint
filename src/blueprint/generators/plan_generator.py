@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from blueprint.llm.client import LLMClient
+from blueprint.llm.provider import LLMProvider
 
 
 def generate_execution_plan_id() -> str:
@@ -20,7 +20,7 @@ def generate_task_id() -> str:
 class PlanGenerator:
     """Generate execution plans from implementation briefs using LLM reasoning."""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMProvider):
         """
         Initialize plan generator.
 

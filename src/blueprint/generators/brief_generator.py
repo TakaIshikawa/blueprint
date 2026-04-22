@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from blueprint.llm.client import LLMClient
+from blueprint.llm.provider import LLMProvider
 
 
 def generate_implementation_brief_id() -> str:
@@ -15,7 +15,7 @@ def generate_implementation_brief_id() -> str:
 class BriefGenerator:
     """Generate implementation briefs from source briefs using LLM reasoning."""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMProvider):
         """
         Initialize brief generator.
 

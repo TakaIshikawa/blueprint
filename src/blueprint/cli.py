@@ -25,6 +25,7 @@ from blueprint.generators.plan_reviser import PlanReviser
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
+from blueprint.llm.provider import LLMProvider
 from blueprint.store import Store, init_db
 
 
@@ -101,6 +102,22 @@ def _flatten_dict(data: dict, prefix: str = ""):
             yield from _flatten_dict(value, path)
         else:
             yield path, value
+
+
+def _create_llm_provider(config) -> LLMProvider:
+    """Create the configured LLM provider."""
+    if config.llm_provider == "anthropic":
+        return LLMClient(
+            api_key=config.anthropic_api_key,
+            default_model=config.default_model,
+        )
+
+    raise ValueError(f"Unsupported LLM provider configured: {config.llm_provider}")
+
+
+def _resolve_llm_model(model: str) -> str:
+    """Resolve CLI model aliases against the default provider."""
+    return LLMClient.resolve_model(model)
 
 
 # ============================================================================
@@ -404,20 +421,18 @@ def create(source_id: str, model: str):
             return
 
         # Initialize LLM client and generator
-        llm_client = LLMClient(
-            api_key=config.anthropic_api_key,
-            default_model=config.default_model,
-        )
+        llm_client = _create_llm_provider(config)
         generator = BriefGenerator(llm_client)
 
         # Generate brief
         click.echo(f"Generating implementation brief from {source_id} using {model}...")
         click.echo(f"Source: {source_brief['title']}")
-        click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 10-30 seconds)\n")
+        resolved_model = _resolve_llm_model(model)
+        click.echo(f"\n⏳ Calling {resolved_model}... (this may take 10-30 seconds)\n")
 
         implementation_brief = generator.generate(
             source_brief=source_brief,
-            model=LLMClient.resolve_model(model),
+            model=resolved_model,
         )
 
         # Store in database
@@ -619,10 +634,7 @@ def create(brief_id: str, model: str, staged: bool):
             return
 
         # Initialize LLM client and generator
-        llm_client = LLMClient(
-            api_key=config.anthropic_api_key,
-            default_model=config.default_model,
-        )
+        llm_client = _create_llm_provider(config)
 
         if staged:
             generator = StagedPlanGenerator(llm_client)
@@ -640,11 +652,14 @@ def create(brief_id: str, model: str, staged: bool):
             click.echo(f"⏳ Stage 3: Generating plan metadata...")
             click.echo(f"(This may take 30-90 seconds total)\n")
         else:
-            click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 15-45 seconds)\n")
+            click.echo(
+                f"\n⏳ Calling {_resolve_llm_model(model)}... "
+                f"(this may take 15-45 seconds)\n"
+            )
 
         execution_plan, tasks = generator.generate(
             implementation_brief=implementation_brief,
-            model=LLMClient.resolve_model(model),
+            model=_resolve_llm_model(model),
         )
 
         # Store in database
@@ -710,16 +725,13 @@ def revise(plan_id: str, feedback: str, model: str):
         if not feedback_text.strip():
             raise click.UsageError("--feedback cannot be empty")
 
-        llm_client = LLMClient(
-            api_key=config.anthropic_api_key,
-            default_model=config.default_model,
-        )
+        llm_client = _create_llm_provider(config)
         generator = PlanReviser(llm_client)
 
         click.echo(f"Revising execution plan {plan_id} using {model}...")
         click.echo(f"Brief: {implementation_brief['title']}")
         click.echo(
-            f"\n⏳ Calling {LLMClient.resolve_model(model)}... "
+            f"\n⏳ Calling {_resolve_llm_model(model)}... "
             f"(this may take 15-45 seconds)\n"
         )
 
@@ -727,7 +739,7 @@ def revise(plan_id: str, feedback: str, model: str):
             implementation_brief=implementation_brief,
             existing_plan=existing_plan,
             feedback=feedback_text,
-            model=LLMClient.resolve_model(model),
+            model=_resolve_llm_model(model),
             feedback_source=feedback_source,
         )
 

@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from blueprint.llm.client import LLMClient
+from blueprint.llm.provider import LLMProvider
 
 
 def generate_execution_plan_id() -> str:
@@ -28,7 +28,7 @@ class StagedPlanGenerator:
     This avoids the nested JSON structure that causes parsing issues.
     """
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMProvider):
         """
         Initialize staged plan generator.
 

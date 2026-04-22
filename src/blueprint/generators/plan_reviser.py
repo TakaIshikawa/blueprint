@@ -9,13 +9,13 @@ from blueprint.generators.plan_generator import (
     generate_execution_plan_id,
     generate_task_id,
 )
-from blueprint.llm.client import LLMClient
+from blueprint.llm.provider import LLMProvider
 
 
 class PlanReviser:
     """Generate revised execution plans from an existing plan and feedback."""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMProvider):
         """Initialize plan reviser with an LLM client."""
         self.llm = llm_client
 
