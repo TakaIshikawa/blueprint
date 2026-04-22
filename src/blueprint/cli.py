@@ -4,6 +4,7 @@ import click
 
 from blueprint.config import get_config
 from blueprint.generators.brief_generator import BriefGenerator
+from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
 from blueprint.store import Store, init_db
@@ -367,8 +368,55 @@ def plan():
               help="LLM model to use")
 def create(brief_id: str, model: str):
     """Generate execution plan from implementation brief."""
-    click.echo(f"Generating execution plan for {brief_id} using {model}...")
-    click.echo("TODO: Implement plan generation")
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        # Get implementation brief
+        implementation_brief = store.get_implementation_brief(brief_id)
+        if not implementation_brief:
+            click.echo(f"✗ Implementation brief not found: {brief_id}", err=True)
+            return
+
+        # Initialize LLM client and generator
+        llm_client = LLMClient(
+            api_key=config.anthropic_api_key,
+            default_model=config.default_model,
+        )
+        generator = PlanGenerator(llm_client)
+
+        # Generate plan
+        click.echo(f"Generating execution plan for {brief_id} using {model}...")
+        click.echo(f"Brief: {implementation_brief['title']}")
+        click.echo(f"\n⏳ Calling {LLMClient.resolve_model(model)}... (this may take 15-45 seconds)\n")
+
+        execution_plan, tasks = generator.generate(
+            implementation_brief=implementation_brief,
+            model=LLMClient.resolve_model(model),
+        )
+
+        # Store in database
+        plan_id = store.insert_execution_plan(execution_plan, tasks)
+
+        # Success message
+        click.echo(f"✓ Generated execution plan {plan_id}")
+        click.echo(f"  Milestones: {len(execution_plan['milestones'])}")
+        click.echo(f"  Tasks: {len(tasks)}")
+        click.echo(f"  Target: {execution_plan['target_engine'] or 'mixed'}")
+        click.echo(f"  Project Type: {execution_plan['project_type']}")
+        click.echo(f"  Tokens used: {execution_plan['generation_tokens']}")
+        click.echo(f"\nView full plan: blueprint plan inspect {plan_id}")
+
+    except ValueError as e:
+        if "ANTHROPIC_API_KEY" in str(e):
+            click.echo(f"✗ Error: {e}", err=True)
+            click.echo("  Set ANTHROPIC_API_KEY environment variable", err=True)
+        else:
+            click.echo(f"✗ Generation failed: {e}", err=True)
+    except Exception as e:
+        click.echo(f"✗ Generation failed: {e}", err=True)
+        import traceback
+        click.echo(traceback.format_exc(), err=True)
 
 
 @plan.command()
