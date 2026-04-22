@@ -82,29 +82,81 @@ class SmoothieExporter(TargetExporter):
             sections.append(f"\n## Product Surface")
             sections.append(brief['product_surface'])
 
-        # Screens/Views to Prototype
-        sections.append("\n## Screens/Views to Prototype")
-        sections.append("\nBased on the MVP scope, prototype these key views:\n")
+        # Product surfaces - adapt based on product type
+        product_surface = brief.get('product_surface', '').lower()
 
-        # Extract screens from scope
-        for i, scope_item in enumerate(brief.get('scope', [])[:5], 1):
-            sections.append(f"{i}. **{self._scope_to_screen(scope_item)}**")
-            sections.append(f"   - Purpose: {scope_item}")
+        if 'library' in product_surface or 'api' in product_surface:
+            sections.append("\n## API Surfaces to Prototype")
+            sections.append("\nBased on the MVP scope, prototype these key interfaces:\n")
+            for i, scope_item in enumerate(brief.get('scope', [])[:5], 1):
+                sections.append(f"{i}. **{scope_item}**")
+                sections.append(f"   - Implementation approach: Show how developers will interact with this")
 
-        # User Flow
+        elif 'cli' in product_surface:
+            sections.append("\n## Commands to Prototype")
+            sections.append("\nBased on the MVP scope, prototype these key commands:\n")
+            for i, scope_item in enumerate(brief.get('scope', [])[:5], 1):
+                sections.append(f"{i}. **{scope_item}**")
+                sections.append(f"   - Command flow: How user invokes and gets feedback")
+
+        else:
+            # Default to screens for UI/web apps
+            sections.append("\n## Screens/Views to Prototype")
+            sections.append("\nBased on the MVP scope, prototype these key views:\n")
+            for i, scope_item in enumerate(brief.get('scope', [])[:5], 1):
+                sections.append(f"{i}. **{self._scope_to_screen(scope_item)}**")
+                sections.append(f"   - Purpose: {scope_item}")
+
+        # User Flow - adapt based on product type
+        product_surface = brief.get('product_surface', '').lower()
+
         sections.append("\n## Primary User Flow")
-        sections.append("\n```")
-        sections.append("1. User lands on main screen")
-        sections.append("2. User performs primary action")
-        sections.append("3. System provides feedback")
-        sections.append("4. User sees result/completion state")
-        sections.append("```")
 
-        # Interactions
+        if 'library' in product_surface or 'api' in product_surface:
+            sections.append("\n```python")
+            sections.append("# Developer integration flow")
+            sections.append("1. Developer installs library")
+            sections.append("2. Developer imports and configures")
+            sections.append("3. Developer calls primary API")
+            sections.append("4. Library provides result or error feedback")
+            sections.append("```")
+
+        elif 'cli' in product_surface:
+            sections.append("\n```bash")
+            sections.append("# Command-line workflow")
+            sections.append("1. User runs primary command")
+            sections.append("2. CLI prompts for input or uses flags")
+            sections.append("3. System processes and shows progress")
+            sections.append("4. CLI displays results or error")
+            sections.append("```")
+
+        else:
+            sections.append("\n```")
+            sections.append("1. User lands on main screen")
+            sections.append("2. User performs primary action")
+            sections.append("3. System provides feedback")
+            sections.append("4. User sees result/completion state")
+            sections.append("```")
+
+        # Interactions - adapt based on product type
         sections.append("\n## Key Interactions")
-        sections.append("\n- **Primary action**: Main user goal")
-        sections.append("- **Feedback mechanism**: How system responds")
-        sections.append("- **Error states**: What happens when things fail")
+
+        if 'library' in product_surface or 'api' in product_surface:
+            sections.append("\n- **Primary API calls**: Core methods developers will use")
+            sections.append("- **Return values**: What data structure is returned")
+            sections.append("- **Exception handling**: What errors are raised and when")
+            sections.append("- **Configuration options**: How developers customize behavior")
+
+        elif 'cli' in product_surface:
+            sections.append("\n- **Primary commands**: Main CLI commands users will run")
+            sections.append("- **Input/output**: How data flows in and out")
+            sections.append("- **Progress feedback**: How users know what's happening")
+            sections.append("- **Error messages**: What users see when things fail")
+
+        else:
+            sections.append("\n- **Primary action**: Main user goal")
+            sections.append("- **Feedback mechanism**: How system responds")
+            sections.append("- **Error states**: What happens when things fail")
 
         # Validation
         sections.append("\n## Validation Questions")
