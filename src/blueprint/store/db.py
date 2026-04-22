@@ -235,6 +235,7 @@ class Store:
         """Convert task model to dict."""
         return {
             "id": task.id,
+            "execution_plan_id": task.execution_plan_id,
             "title": task.title,
             "description": task.description,
             "milestone": task.milestone,
@@ -245,7 +246,50 @@ class Store:
             "acceptance_criteria": task.acceptance_criteria,
             "estimated_complexity": task.estimated_complexity,
             "status": task.status,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         }
+
+    # ============================================================================
+    # Execution Tasks
+    # ============================================================================
+
+    def get_execution_task(self, task_id: str) -> dict[str, Any] | None:
+        """Get an execution task by ID."""
+        with self.get_session() as session:
+            task = session.query(ExecutionTaskModel).filter_by(id=task_id).first()
+            if not task:
+                return None
+            return self._task_to_dict(task)
+
+    def list_execution_tasks(
+        self,
+        plan_id: str | None = None,
+        status: str | None = None,
+        milestone: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List execution tasks with optional filtering."""
+        with self.get_session() as session:
+            query = session.query(ExecutionTaskModel)
+            if plan_id:
+                query = query.filter_by(execution_plan_id=plan_id)
+            if status:
+                query = query.filter_by(status=status)
+            if milestone:
+                query = query.filter_by(milestone=milestone)
+            query = query.order_by(ExecutionTaskModel.created_at.asc()).limit(limit)
+            return [self._task_to_dict(t) for t in query.all()]
+
+    def update_execution_task_status(self, task_id: str, status: str) -> bool:
+        """Update execution task status."""
+        with self.get_session() as session:
+            task = session.query(ExecutionTaskModel).filter_by(id=task_id).first()
+            if not task:
+                return False
+            task.status = status
+            session.commit()
+            return True
 
     # ============================================================================
     # Export Records

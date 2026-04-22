@@ -571,6 +571,122 @@ def inspect(plan_id: str):
 
 
 # ============================================================================
+# Execution Task Commands
+# ============================================================================
+
+
+@cli.group()
+def task():
+    """Manage execution tasks."""
+    pass
+
+
+@task.command()
+@click.option("--plan-id", required=True, help="Execution plan ID")
+@click.option("--status", help="Filter by status")
+@click.option("--milestone", help="Filter by milestone")
+@click.option("--limit", default=50, help="Maximum number of tasks to show")
+def list(plan_id: str, status: str | None, milestone: str | None, limit: int):
+    """List execution tasks."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    tasks = store.list_execution_tasks(
+        plan_id=plan_id,
+        status=status,
+        milestone=milestone,
+        limit=limit,
+    )
+
+    if not tasks:
+        click.echo("No execution tasks found")
+        return
+
+    click.echo(
+        f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} {'Status':<15} {'Title':<35}"
+    )
+    click.echo("-" * 100)
+
+    for current_task in tasks:
+        engine = current_task["suggested_engine"] or "N/A"
+        milestone_name = current_task["milestone"] or "N/A"
+        click.echo(
+            f"{current_task['id']:<15} "
+            f"{milestone_name[:16]:<18} "
+            f"{engine:<15} "
+            f"{current_task['status']:<15} "
+            f"{current_task['title'][:33]:<35}"
+        )
+        _echo_task_metadata(current_task, indent="  ")
+
+    click.echo(f"\nTotal: {len(tasks)} tasks")
+
+
+@task.command()
+@click.argument("task_id")
+def inspect(task_id: str):
+    """Inspect an execution task in detail."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    current_task = store.get_execution_task(task_id)
+
+    if not current_task:
+        click.echo(f"Execution task not found: {task_id}", err=True)
+        return
+
+    click.echo(f"\n{'='*80}")
+    click.echo(f"Execution Task: {current_task['id']}")
+    click.echo(f"{'='*80}\n")
+
+    click.echo(f"Title:           {current_task['title']}")
+    click.echo(f"Plan:            {current_task['execution_plan_id']}")
+    click.echo(f"Status:          {current_task['status']}")
+    click.echo(f"Milestone:       {current_task['milestone'] or 'N/A'}")
+    click.echo(f"Owner:           {current_task['owner_type'] or 'N/A'}")
+    click.echo(f"Engine:          {current_task['suggested_engine'] or 'N/A'}")
+    click.echo(f"Complexity:      {current_task['estimated_complexity'] or 'N/A'}")
+    click.echo(f"Created:         {current_task['created_at']}")
+    click.echo(f"\nDescription:\n{current_task['description']}\n")
+    _echo_task_metadata(current_task)
+
+
+@task.command()
+@click.argument("task_id")
+@click.option(
+    "--status",
+    required=True,
+    type=click.Choice(["pending", "in_progress", "completed", "blocked", "skipped"]),
+)
+def update(task_id: str, status: str):
+    """Update execution task status."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    if store.update_execution_task_status(task_id, status):
+        click.echo(f"✓ Updated task {task_id} status to {status}")
+    else:
+        click.echo(f"Execution task not found: {task_id}", err=True)
+
+
+def _echo_task_metadata(current_task: dict, indent: str = ""):
+    """Print task metadata shared by task list and inspect commands."""
+    depends_on = current_task["depends_on"] or []
+    files_or_modules = current_task["files_or_modules"] or []
+    acceptance_criteria = current_task["acceptance_criteria"] or []
+
+    click.echo(f"{indent}Dependencies: {', '.join(depends_on) if depends_on else 'none'}")
+    click.echo(f"{indent}Files:        {', '.join(files_or_modules) if files_or_modules else 'none'}")
+
+    if acceptance_criteria:
+        click.echo(f"{indent}Acceptance Criteria:")
+        for criterion in acceptance_criteria:
+            click.echo(f"{indent}  - {criterion}")
+    else:
+        click.echo(f"{indent}Acceptance Criteria: none")
+
+
+# ============================================================================
 # Export Commands
 # ============================================================================
 
