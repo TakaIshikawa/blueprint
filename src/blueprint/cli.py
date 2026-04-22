@@ -866,6 +866,51 @@ def _read_feedback(feedback: str) -> tuple[str, str]:
 
 
 @plan.command()
+@click.argument("plan_id")
+@click.option(
+    "--preserve-statuses",
+    is_flag=True,
+    help="Keep the source plan and task statuses on the clone",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output clone details as JSON")
+def clone(plan_id: str, preserve_statuses: bool, json_output: bool):
+    """Clone an execution plan so it can be branched safely."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    cloned_plan_id = store.clone_execution_plan(
+        plan_id,
+        reset_statuses=not preserve_statuses,
+    )
+    if not cloned_plan_id:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    cloned_plan = store.get_execution_plan(cloned_plan_id)
+    lineage = ((cloned_plan or {}).get("metadata") or {}).get("lineage") or {}
+    task_id_map = lineage.get("task_id_map") or {}
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                {
+                    "id": cloned_plan_id,
+                    "cloned_from_plan_id": plan_id,
+                    "task_id_map": task_id_map,
+                    "statuses_reset": not preserve_statuses,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    click.echo(f"✓ Cloned execution plan {plan_id} to {cloned_plan_id}")
+    click.echo(f"  Tasks: {len(task_id_map)}")
+    click.echo(f"  Statuses: {'preserved' if preserve_statuses else 'reset'}")
+    click.echo(f"\nView full plan: blueprint plan inspect {cloned_plan_id}")
+
+
+@plan.command()
 @click.option("--brief-id", help="Filter by implementation brief ID")
 @click.option("--status", help="Filter by status")
 @click.option("--limit", default=50, help="Maximum number of plans to show")
@@ -977,6 +1022,8 @@ def inspect(plan_id: str):
     lineage = plan_metadata.get("lineage") or plan_metadata
     if lineage.get("revised_from_plan_id"):
         click.echo(f"Revised From:         {lineage['revised_from_plan_id']}")
+    if lineage.get("cloned_from_plan_id"):
+        click.echo(f"Cloned From:          {lineage['cloned_from_plan_id']}")
 
     if plan["milestones"]:
         click.echo(f"\nMilestones ({len(plan['milestones'])}):")

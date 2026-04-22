@@ -1,5 +1,6 @@
 """Database access layer for Blueprint."""
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 import uuid
@@ -326,6 +327,77 @@ class Store:
                 return None
             return self._execution_plan_to_dict(plan)
 
+    def clone_execution_plan(
+        self,
+        plan_id: str,
+        reset_statuses: bool = True,
+    ) -> str | None:
+        """Clone an execution plan and its tasks, returning the new plan ID."""
+        with self.get_session() as session:
+            source_plan = session.query(ExecutionPlanModel).filter_by(id=plan_id).first()
+            if not source_plan:
+                return None
+
+            task_id_map = {
+                task.id: self._generate_execution_task_id()
+                for task in source_plan.tasks
+            }
+            cloned_plan_id = self._generate_execution_plan_id()
+            source_metadata = deepcopy(source_plan.plan_metadata or {})
+            lineage = dict(source_metadata.get("lineage") or {})
+            lineage.update(
+                {
+                    "cloned_from_plan_id": plan_id,
+                    "task_id_map": task_id_map,
+                }
+            )
+            source_metadata["lineage"] = lineage
+
+            cloned_plan = ExecutionPlanModel(
+                id=cloned_plan_id,
+                implementation_brief_id=source_plan.implementation_brief_id,
+                target_engine=source_plan.target_engine,
+                target_repo=source_plan.target_repo,
+                project_type=source_plan.project_type,
+                milestones=deepcopy(source_plan.milestones),
+                test_strategy=source_plan.test_strategy,
+                handoff_prompt=source_plan.handoff_prompt,
+                status="draft" if reset_statuses else source_plan.status,
+                generation_model=source_plan.generation_model,
+                generation_tokens=source_plan.generation_tokens,
+                generation_prompt=source_plan.generation_prompt,
+                plan_metadata=source_metadata,
+            )
+            session.add(cloned_plan)
+            session.flush()
+
+            for source_task in source_plan.tasks:
+                task_metadata = deepcopy(source_task.task_metadata or {})
+                if reset_statuses:
+                    task_metadata.pop("blocked_reason", None)
+                cloned_task = ExecutionTaskModel(
+                    id=task_id_map[source_task.id],
+                    execution_plan_id=cloned_plan_id,
+                    title=source_task.title,
+                    description=source_task.description,
+                    milestone=source_task.milestone,
+                    owner_type=source_task.owner_type,
+                    suggested_engine=source_task.suggested_engine,
+                    depends_on=[
+                        task_id_map.get(dependency_id, dependency_id)
+                        for dependency_id in (source_task.depends_on or [])
+                    ],
+                    files_or_modules=deepcopy(source_task.files_or_modules),
+                    acceptance_criteria=deepcopy(source_task.acceptance_criteria),
+                    estimated_complexity=source_task.estimated_complexity,
+                    status="pending" if reset_statuses else source_task.status,
+                    task_metadata=task_metadata,
+                )
+                session.add(cloned_task)
+
+            session.commit()
+            return cloned_plan_id
+
     def list_execution_plans(
         self,
         brief_id: str | None = None,
@@ -538,6 +610,14 @@ class Store:
     def _generate_status_event_id(self) -> str:
         """Generate a status event ID."""
         return f"se-{uuid.uuid4().hex[:12]}"
+
+    def _generate_execution_plan_id(self) -> str:
+        """Generate an execution plan ID."""
+        return f"plan-{uuid.uuid4().hex[:12]}"
+
+    def _generate_execution_task_id(self) -> str:
+        """Generate an execution task ID."""
+        return f"task-{uuid.uuid4().hex[:12]}"
 
     # ============================================================================
     # Export Records
