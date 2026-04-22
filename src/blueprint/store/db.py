@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+import uuid
 
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from blueprint.domain import (
     ExportRecord,
     ImplementationBrief,
     SourceBrief,
+    StatusEvent,
 )
 from blueprint.store.models import (
     Base,
@@ -24,6 +26,7 @@ from blueprint.store.models import (
     ExportRecordModel,
     ImplementationBriefModel,
     SourceBriefModel,
+    StatusEventModel,
 )
 
 
@@ -49,6 +52,9 @@ class Store:
         """Apply lightweight migrations for existing SQLite databases."""
         inspector = inspect_db(self.engine)
         table_names = inspector.get_table_names()
+        if "status_events" not in table_names:
+            StatusEventModel.__table__.create(self.engine, checkfirst=True)
+
         if "execution_plans" in table_names:
             plan_columns = {
                 column["name"] for column in inspector.get_columns("execution_plans")
@@ -233,13 +239,27 @@ class Store:
             query = query.order_by(ImplementationBriefModel.created_at.desc()).limit(limit)
             return [self._implementation_brief_to_dict(b) for b in query.all()]
 
-    def update_implementation_brief_status(self, brief_id: str, status: str) -> bool:
+    def update_implementation_brief_status(
+        self,
+        brief_id: str,
+        status: str,
+        reason: str | None = None,
+    ) -> bool:
         """Update implementation brief status."""
         with self.get_session() as session:
             brief = session.query(ImplementationBriefModel).filter_by(id=brief_id).first()
             if not brief:
                 return False
+            old_status = brief.status
             brief.status = status
+            self._add_status_event(
+                session,
+                entity_type="brief",
+                entity_id=brief_id,
+                old_status=old_status,
+                new_status=status,
+                reason=reason,
+            )
             session.commit()
             return True
 
@@ -322,13 +342,27 @@ class Store:
             query = query.order_by(ExecutionPlanModel.created_at.desc()).limit(limit)
             return [self._execution_plan_to_dict(p) for p in query.all()]
 
-    def update_execution_plan_status(self, plan_id: str, status: str) -> bool:
+    def update_execution_plan_status(
+        self,
+        plan_id: str,
+        status: str,
+        reason: str | None = None,
+    ) -> bool:
         """Update execution plan status."""
         with self.get_session() as session:
             plan = session.query(ExecutionPlanModel).filter_by(id=plan_id).first()
             if not plan:
                 return False
+            old_status = plan.status
             plan.status = status
+            self._add_status_event(
+                session,
+                entity_type="plan",
+                entity_id=plan_id,
+                old_status=old_status,
+                new_status=status,
+                reason=reason,
+            )
             session.commit()
             return True
 
@@ -410,12 +444,14 @@ class Store:
         task_id: str,
         status: str,
         blocked_reason: str | None = None,
+        reason: str | None = None,
     ) -> bool:
         """Update execution task status."""
         with self.get_session() as session:
             task = session.query(ExecutionTaskModel).filter_by(id=task_id).first()
             if not task:
                 return False
+            old_status = task.status
             task.status = status
             if blocked_reason is not None:
                 task_metadata = dict(task.task_metadata or {})
@@ -424,8 +460,84 @@ class Store:
                 else:
                     task_metadata.pop("blocked_reason", None)
                 task.task_metadata = task_metadata
+            event_metadata = {}
+            if blocked_reason:
+                event_metadata["blocked_reason"] = blocked_reason
+            self._add_status_event(
+                session,
+                entity_type="task",
+                entity_id=task_id,
+                old_status=old_status,
+                new_status=status,
+                reason=reason,
+                metadata=event_metadata,
+            )
             session.commit()
             return True
+
+    # ============================================================================
+    # Status History
+    # ============================================================================
+
+    def list_status_events(
+        self,
+        entity_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List status history events for an entity."""
+        with self.get_session() as session:
+            query = (
+                session.query(StatusEventModel)
+                .filter_by(entity_id=entity_id)
+                .order_by(StatusEventModel.created_at.asc())
+                .limit(limit)
+            )
+            return [self._status_event_to_dict(event) for event in query.all()]
+
+    def _add_status_event(
+        self,
+        session: Session,
+        *,
+        entity_type: str,
+        entity_id: str,
+        old_status: str,
+        new_status: str,
+        reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a status event when the status actually changes."""
+        if old_status == new_status:
+            return
+
+        payload = self._validated_status_event_payload(
+            {
+                "id": self._generate_status_event_id(),
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason,
+                "metadata": metadata or {},
+            }
+        )
+        session.add(StatusEventModel(**payload))
+
+    def _status_event_to_dict(self, event: StatusEventModel) -> dict[str, Any]:
+        """Convert status event model to dict."""
+        return {
+            "id": event.id,
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "old_status": event.old_status,
+            "new_status": event.new_status,
+            "reason": event.reason,
+            "created_at": event.created_at.isoformat() if event.created_at else None,
+            "metadata": event.event_metadata or {},
+        }
+
+    def _generate_status_event_id(self) -> str:
+        """Generate a status event ID."""
+        return f"se-{uuid.uuid4().hex[:12]}"
 
     # ============================================================================
     # Export Records
@@ -516,6 +628,18 @@ class Store:
             mode="python",
             exclude_none=True,
         )
+
+    def _validated_status_event_payload(
+        self,
+        event_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and normalize a StatusEvent for database insertion."""
+        payload = StatusEvent.model_validate(event_dict).model_dump(
+            mode="python",
+            exclude_none=True,
+        )
+        payload["event_metadata"] = payload.pop("metadata", {})
+        return payload
 
 
 def init_db(db_path: str):

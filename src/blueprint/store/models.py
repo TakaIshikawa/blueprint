@@ -192,6 +192,21 @@ class ExecutionTaskModel(Base):
     execution_plan = relationship("ExecutionPlanModel", back_populates="tasks")
 
 
+class StatusEventModel(Base):
+    """Audit event for status transitions on briefs, plans, and tasks."""
+
+    __tablename__ = "status_events"
+
+    id = Column(String, primary_key=True)  # se-{uuid12}
+    entity_type = Column(String, nullable=False)  # brief | plan | task
+    entity_id = Column(String, nullable=False)
+    old_status = Column(String, nullable=False)
+    new_status = Column(String, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    event_metadata = Column("metadata", JSON, nullable=True)
+
+
 class ExportRecordModel(Base):
     """Record of exports to execution engines."""
 

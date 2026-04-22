@@ -116,6 +116,19 @@ class ExecutionPlan(DomainModel):
     tasks: list[ExecutionTask] = Field(default_factory=list)
 
 
+class StatusEvent(DomainModel):
+    """Audit event for a status transition."""
+
+    id: str = Field(min_length=1)
+    entity_type: Literal["brief", "plan", "task"]
+    entity_id: str = Field(min_length=1)
+    old_status: str = Field(min_length=1)
+    new_status: str = Field(min_length=1)
+    reason: str | None = None
+    created_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ExportRecord(DomainModel):
     """Record of a rendered execution-plan export."""
 

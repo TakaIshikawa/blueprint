@@ -40,6 +40,8 @@ BRIEF_STATUS_CHOICES = (
     "paused",
     "rejected",
 )
+PLAN_STATUS_CHOICES = ("draft", "ready", "queued", "in_progress", "completed", "failed")
+TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skipped")
 
 
 @click.group()
@@ -47,6 +49,35 @@ BRIEF_STATUS_CHOICES = (
 def cli():
     """Blueprint: Implementation planning layer for design briefs."""
     pass
+
+
+@cli.command()
+@click.argument("entity_id")
+@click.option("--limit", default=50, help="Maximum number of history events to show")
+def history(entity_id: str, limit: int):
+    """Show status history for a brief, plan, or task."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    events = store.list_status_events(entity_id=entity_id, limit=limit)
+    if not events:
+        click.echo(f"No history events found for {entity_id}")
+        return
+
+    click.echo(f"\n{'Created':<20} {'Entity':<8} {'Status':<35} Reason")
+    click.echo("-" * 80)
+    for event in events:
+        created_at = (event["created_at"] or "")[:19]
+        transition = f"{event['old_status']} -> {event['new_status']}"
+        reason = event["reason"] or "N/A"
+        click.echo(
+            f"{created_at:<20} "
+            f"{event['entity_type']:<8} "
+            f"{transition:<35} "
+            f"{reason}"
+        )
+
+    click.echo(f"\nTotal: {len(events)} events")
 
 
 # ============================================================================
@@ -593,12 +624,13 @@ def inspect(brief_id: str):
 @click.argument("brief_id")
 @click.option("--status", required=True,
               type=click.Choice(BRIEF_STATUS_CHOICES))
-def update(brief_id: str, status: str):
+@click.option("--reason", help="Reason for the status change")
+def update(brief_id: str, status: str, reason: str | None):
     """Update implementation brief status."""
     config = get_config()
     store = Store(config.db_path)
 
-    if store.update_implementation_brief_status(brief_id, status):
+    if store.update_implementation_brief_status(brief_id, status, reason=reason):
         click.echo(f"✓ Updated brief {brief_id} status to {status}")
     else:
         click.echo(f"Brief not found: {brief_id}", err=True)
@@ -809,6 +841,21 @@ def list(brief_id: str | None, status: str | None, limit: int):
     click.echo(f"\nTotal: {len(plans)} plans")
 
 
+@plan.command()
+@click.argument("plan_id")
+@click.option("--status", required=True, type=click.Choice(PLAN_STATUS_CHOICES))
+@click.option("--reason", help="Reason for the status change")
+def update(plan_id: str, status: str, reason: str | None):
+    """Update execution plan status."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    if store.update_execution_plan_status(plan_id, status, reason=reason):
+        click.echo(f"✓ Updated plan {plan_id} status to {status}")
+    else:
+        click.echo(f"Execution plan not found: {plan_id}", err=True)
+
+
 @plan.command(name="graph")
 @click.argument("plan_id")
 @click.option(
@@ -979,10 +1026,11 @@ def inspect(task_id: str):
 @click.option(
     "--status",
     required=True,
-    type=click.Choice(["pending", "in_progress", "completed", "blocked", "skipped"]),
+    type=click.Choice(TASK_STATUS_CHOICES),
 )
 @click.option("--blocked-reason", help="Reason the task is blocked")
-def update(task_id: str, status: str, blocked_reason: str | None):
+@click.option("--reason", help="Reason for the status change")
+def update(task_id: str, status: str, blocked_reason: str | None, reason: str | None):
     """Update execution task status."""
     config = get_config()
     store = Store(config.db_path)
@@ -990,7 +1038,12 @@ def update(task_id: str, status: str, blocked_reason: str | None):
     if blocked_reason and status != "blocked":
         raise click.UsageError("--blocked-reason can only be used with --status blocked")
 
-    if store.update_execution_task_status(task_id, status, blocked_reason=blocked_reason):
+    if store.update_execution_task_status(
+        task_id,
+        status,
+        blocked_reason=blocked_reason,
+        reason=reason,
+    ):
         click.echo(f"✓ Updated task {task_id} status to {status}")
         if blocked_reason:
             click.echo(f"  Blocked reason: {blocked_reason}")

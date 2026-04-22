@@ -6,6 +6,7 @@ from blueprint.domain.models import (
     ExportRecord,
     ImplementationBrief,
     SourceBrief,
+    StatusEvent,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ExportRecord",
     "ImplementationBrief",
     "SourceBrief",
+    "StatusEvent",
 ]
