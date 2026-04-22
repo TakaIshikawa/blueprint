@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "blueprint"
+version = "0.1.0"
+description = "Implementation planning layer that converts design briefs into execution-ready plans"
+authors = ["Taka Ishikawa"]
+readme = "README.md"
+packages = [{include = "blueprint", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+click = "^8.1.7"
+sqlalchemy = "^2.0.25"
+alembic = "^1.13.1"
+anthropic = "^0.42.0"
+pydantic = "^2.5.3"
+pyyaml = "^6.0.1"
+python-frontmatter = "^1.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+black = "^24.1.1"
+ruff = "^0.1.14"
+
+[tool.poetry.scripts]
+blueprint = "blueprint.cli:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=blueprint --cov-report=term-missing"

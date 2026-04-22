@@ -1,0 +1,28 @@
+# Blueprint Configuration Example
+# Copy this file to ~/.blueprint.yaml or ./.blueprint.yaml and customize
+
+# Database configuration
+database:
+  path: ~/.blueprint/blueprint.db
+
+# Source system configurations
+sources:
+  max:
+    db_path: ~/Project/experiments/max/max.db
+  graph:
+    db_path: ~/Project/experiments/graph/graph.db
+
+# LLM configuration
+llm:
+  provider: anthropic
+  default_model: claude-opus-4-6  # or claude-sonnet-4-5
+  # Set ANTHROPIC_API_KEY environment variable for API access
+
+# Export configuration
+exports:
+  output_dir: ~/blueprint-exports
+  formats:
+    relay: json
+    smoothie: markdown
+    codex: markdown
+    claude_code: markdown
