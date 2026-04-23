@@ -32,6 +32,7 @@ from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
+from blueprint.exporters.task_handoff import TaskHandoffExporter
 from blueprint.domain import ImplementationBrief
 from blueprint.generators.brief_generator import (
     BriefGenerator,
@@ -1549,6 +1550,52 @@ def inspect(task_id: str):
 @task.command()
 @click.argument("task_id")
 @click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the handoff to a file instead of stdout",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output handoff as JSON")
+def handoff(task_id: str, output: Path | None, json_output: bool):
+    """Render a focused handoff for a single execution task."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    current_task = store.get_execution_task(task_id)
+    if not current_task:
+        raise click.ClickException(f"Execution task not found: {task_id}")
+
+    plan = None
+    brief = None
+    plan_id = current_task.get("execution_plan_id")
+    if plan_id:
+        plan = store.get_execution_plan(plan_id)
+        if plan:
+            brief = store.get_implementation_brief(plan["implementation_brief_id"])
+
+    dependency_tasks = _resolve_dependency_tasks(store, current_task, plan)
+    exporter = TaskHandoffExporter()
+
+    if json_output:
+        content = json.dumps(
+            exporter.render_json(current_task, dependency_tasks, plan, brief),
+            indent=2,
+            sort_keys=True,
+        )
+    else:
+        content = exporter.render_markdown(current_task, dependency_tasks, plan, brief)
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content)
+        click.echo(f"✓ Wrote task handoff to: {output}")
+        return
+
+    click.echo(content, nl=False)
+
+
+@task.command()
+@click.argument("task_id")
+@click.option(
     "--status",
     required=True,
     type=click.Choice(TASK_STATUS_CHOICES),
@@ -1692,6 +1739,31 @@ def _echo_task_metadata(current_task: dict, indent: str = ""):
             click.echo(f"{indent}  - {criterion}")
     else:
         click.echo(f"{indent}Acceptance Criteria: none")
+
+
+def _resolve_dependency_tasks(
+    store: Store,
+    current_task: dict,
+    plan: dict | None,
+) -> list[dict]:
+    """Resolve dependency task records while preserving dependency order."""
+    dependency_ids = current_task.get("depends_on") or []
+    if not dependency_ids:
+        return []
+
+    plan_tasks_by_id = {
+        task["id"]: task
+        for task in (plan or {}).get("tasks", [])
+    }
+    dependency_tasks = []
+    for dependency_id in dependency_ids:
+        dependency_task = plan_tasks_by_id.get(dependency_id)
+        if not dependency_task:
+            dependency_task = store.get_execution_task(dependency_id)
+        if dependency_task:
+            dependency_tasks.append(dependency_task)
+
+    return dependency_tasks
 
 
 # ============================================================================
