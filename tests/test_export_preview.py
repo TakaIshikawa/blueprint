@@ -66,6 +66,52 @@ def test_export_preview_supports_directory_targets(tmp_path, monkeypatch):
     assert Store(str(tmp_path / "blueprint.db")).list_export_records(plan_id=plan_id) == []
 
 
+def test_export_run_requires_coherence_blocks_incoherent_plan(tmp_path, monkeypatch):
+    store = _setup_store(tmp_path, monkeypatch)
+    store.insert_implementation_brief(_incoherent_brief())
+    plan_id = store.insert_execution_plan(_execution_plan(), _tasks())
+
+    result = CliRunner().invoke(
+        cli,
+        ["export", "run", plan_id, "--target", "csv-tasks", "--require-coherence"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Brief-plan coherence audit: plan-test" in result.output
+    assert "[scope_item_uncovered]" in result.output
+    assert "Export blocked by brief-plan coherence errors" in result.output
+    assert not (tmp_path / "exports").exists()
+    assert Store(str(tmp_path / "blueprint.db")).list_export_records(plan_id=plan_id) == []
+
+
+def test_export_preview_requires_coherence_blocks_incoherent_plan(tmp_path, monkeypatch):
+    store = _setup_store(tmp_path, monkeypatch)
+    store.insert_implementation_brief(_incoherent_brief())
+    plan_id = store.insert_execution_plan(_execution_plan(), _tasks())
+    output_path = tmp_path / "previews" / "codex.md"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "export",
+            "preview",
+            plan_id,
+            "--target",
+            "codex",
+            "--output",
+            str(output_path),
+            "--require-coherence",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Brief-plan coherence audit: plan-test" in result.output
+    assert "[scope_item_uncovered]" in result.output
+    assert "Export blocked by brief-plan coherence errors" in result.output
+    assert not output_path.exists()
+    assert Store(str(tmp_path / "blueprint.db")).list_export_records(plan_id=plan_id) == []
+
+
 def _setup_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "blueprint.db"
@@ -158,3 +204,11 @@ def _implementation_brief():
         "generation_tokens": 1,
         "generation_prompt": "test prompt",
     }
+
+
+def _incoherent_brief():
+    brief = _implementation_brief()
+    brief["scope"] = ["Unmatched scope item"]
+    brief["validation_plan"] = "Run pytest"
+    brief["definition_of_done"] = ["Build the plan"]
+    return brief

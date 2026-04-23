@@ -1887,7 +1887,12 @@ def export():
     type=str,
     help="Target execution engine",
 )
-def run(plan_id: str, target: str):
+@click.option(
+    "--require-coherence",
+    is_flag=True,
+    help="Block export if the plan and brief coherence audit reports errors",
+)
+def run(plan_id: str, target: str, require_coherence: bool):
     """Export execution plan to target engine."""
     config = get_config()
     store = Store(config.db_path)
@@ -1910,6 +1915,12 @@ def run(plan_id: str, target: str):
                 f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True
             )
             return
+
+        _maybe_require_brief_plan_coherence(
+            plan,
+            brief,
+            require_coherence=require_coherence,
+        )
 
         # Ensure export directory exists
         export_dir = Path(config.export_dir)
@@ -1961,6 +1972,8 @@ def run(plan_id: str, target: str):
         click.echo(f"\n✓ Export complete")
         click.echo(f"  Output directory: {export_dir}")
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"✗ Export failed: {e}", err=True)
         import traceback
@@ -1981,7 +1994,12 @@ def run(plan_id: str, target: str):
     type=click.Path(dir_okay=False, path_type=Path),
     help="Write preview output to a file",
 )
-def preview(plan_id: str, target: str, output: Path | None):
+@click.option(
+    "--require-coherence",
+    is_flag=True,
+    help="Block preview if the plan and brief coherence audit reports errors",
+)
+def preview(plan_id: str, target: str, output: Path | None, require_coherence: bool):
     """Preview an export target without recording it."""
     config = get_config()
     store = Store(config.db_path)
@@ -2002,6 +2020,12 @@ def preview(plan_id: str, target: str, output: Path | None):
                 f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True
             )
             return
+
+        _maybe_require_brief_plan_coherence(
+            plan,
+            brief,
+            require_coherence=require_coherence,
+        )
 
         targets = (
             [choice for choice in EXPORT_TARGET_CHOICES if choice != "all"]
@@ -2028,6 +2052,8 @@ def preview(plan_id: str, target: str, output: Path | None):
         preview_output = "\n\n".join(preview_sections)
         _emit_export_preview(preview_output, output)
 
+    except click.exceptions.Exit:
+        raise
     except Exception as e:
         click.echo(f"✗ Export preview failed: {e}", err=True)
         import traceback
@@ -2133,6 +2159,24 @@ def _get_exporter(target: str):
         return create_exporter(target)
     except ValueError:
         return None
+
+
+def _maybe_require_brief_plan_coherence(
+    plan: dict,
+    brief: dict,
+    *,
+    require_coherence: bool,
+) -> None:
+    """Optionally gate export rendering on brief/plan coherence."""
+    if not require_coherence:
+        return
+
+    result = audit_brief_plan_coherence(plan, brief)
+    _emit_brief_plan_coherence(result)
+
+    if not result.ok:
+        click.echo("✗ Export blocked by brief-plan coherence errors", err=True)
+        raise click.exceptions.Exit(1)
 
 
 def _emit_export_validation_result(result, json_output: bool) -> None:
