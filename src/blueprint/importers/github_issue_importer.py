@@ -168,14 +168,16 @@ class GitHubIssueImporter(SourceImporter):
             return False
         return True
 
-    def list_available(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_available(self, limit: int = 50, state: str = "all") -> list[dict[str, Any]]:
         """List recent issues for the configured default repository."""
         if not self.default_owner or not self.default_repo:
             raise ValueError("sources.github.default_owner and default_repo are required")
+        if state not in {"open", "closed", "all"}:
+            raise ValueError("GitHub issue state must be one of: open, closed, all")
 
         path = (
             f"/repos/{quote(self.default_owner)}/{quote(self.default_repo)}/issues"
-            f"?state=all&per_page={limit}"
+            f"?state={quote(state)}&per_page={limit}"
         )
         issues = self._request_json(path)
         if not isinstance(issues, list):
@@ -188,8 +190,12 @@ class GitHubIssueImporter(SourceImporter):
             available.append(
                 {
                     "id": f"{self.default_owner}/{self.default_repo}#{issue['number']}",
+                    "number": issue["number"],
                     "title": issue["title"],
                     "state": issue.get("state"),
+                    "labels": _labels(issue.get("labels")),
+                    "assignees": _users(issue.get("assignees")),
+                    "html_url": issue.get("html_url"),
                     "updated_at": issue.get("updated_at"),
                 }
             )

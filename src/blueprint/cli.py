@@ -233,6 +233,60 @@ def list_max(status: str | None, limit: int):
         click.echo(f"✗ Failed to list Max briefs: {e}", err=True)
 
 
+@import_cmd.command(name="list-github-issues")
+@click.option(
+    "--state",
+    type=click.Choice(["open", "closed", "all"]),
+    default="open",
+    show_default=True,
+    help="Filter by issue state",
+)
+@click.option("--limit", default=20, show_default=True, help="Maximum number of issues to show")
+@click.option("--json", "as_json", is_flag=True, help="Output issue summaries as JSON")
+def list_github_issues(state: str, limit: int, as_json: bool):
+    """List available GitHub issues from the configured default repository."""
+    config = get_config()
+    importer = GitHubIssueImporter(
+        token_env=config.github_token_env,
+        default_owner=config.github_default_owner,
+        default_repo=config.github_default_repo,
+    )
+
+    try:
+        issues = importer.list_available(limit=limit, state=state)
+    except Exception as e:
+        raise click.ClickException(f"Failed to list GitHub issues: {e}") from e
+
+    if as_json:
+        click.echo(json.dumps(issues, indent=2))
+        return
+
+    if not issues:
+        click.echo("No GitHub issues found")
+        return
+
+    click.echo(
+        f"\n{'Issue':<18} {'State':<8} {'Title':<38} "
+        f"{'Labels':<24} {'Assignees':<18} {'Updated':<20}"
+    )
+    click.echo("-" * 130)
+
+    for issue in issues:
+        labels = ", ".join(issue.get("labels") or [])
+        assignees = ", ".join(issue.get("assignees") or [])
+        click.echo(
+            f"{issue['id']:<18} "
+            f"{(issue.get('state') or 'N/A'):<8} "
+            f"{issue['title'][:36]:<38} "
+            f"{labels[:22]:<24} "
+            f"{assignees[:16]:<18} "
+            f"{(issue.get('updated_at') or 'N/A')[:19]:<20}"
+        )
+
+    click.echo(f"\nTotal: {len(issues)} issues")
+    click.echo("\nTo import: blueprint import github-issue <OWNER/REPO#NUMBER>")
+
+
 @import_cmd.command()
 @click.argument("brief_id")
 @click.option(

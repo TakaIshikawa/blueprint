@@ -59,6 +59,35 @@ def test_importer_fetches_issue_with_mocked_response(monkeypatch):
     assert source_brief["source_id"] == "acme/widgets#42"
 
 
+def test_list_available_filters_by_state_and_skips_pull_requests():
+    seen = {}
+
+    def fake_open(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        return _Response(_issues_payload())
+
+    importer = GitHubIssueImporter(
+        default_owner="acme",
+        default_repo="widgets",
+        http_open=fake_open,
+    )
+
+    issues = importer.list_available(limit=5, state="closed")
+
+    assert seen["url"] == "https://api.github.com/repos/acme/widgets/issues?state=closed&per_page=5"
+    assert seen["timeout"] == 10
+    assert [issue["id"] for issue in issues] == [
+        "acme/widgets#42",
+        "acme/widgets#43",
+    ]
+    assert issues[0]["number"] == 42
+    assert issues[0]["labels"] == ["importer", "enhancement"]
+    assert issues[0]["assignees"] == ["mona"]
+    assert issues[0]["html_url"] == "https://github.com/acme/widgets/issues/42"
+    assert issues[0]["updated_at"] == "2026-04-21T00:00:00Z"
+
+
 def test_cli_import_github_issue_stores_source_brief(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch)
     init_db(str(tmp_path / "blueprint.db"))
@@ -86,8 +115,64 @@ def test_cli_import_github_issue_stores_source_brief(tmp_path, monkeypatch):
     assert briefs[0]["title"] == "Add GitHub imports"
 
 
-def _write_config(tmp_path, monkeypatch):
+def test_cli_list_github_issues_text_output(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    seen = _install_fake_github_list_open(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        ["import", "list-github-issues", "--state", "closed", "--limit", "5"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["url"] == "https://api.github.com/repos/acme/widgets/issues?state=closed&per_page=5"
+    assert "acme/widgets#42" in result.output
+    assert "Add GitHub imports" in result.output
+    assert "importer, enhancement" in result.output
+    assert "mona" in result.output
+    assert "Pull request masquerading as issue" not in result.output
+    assert "Total: 2 issues" in result.output
+
+
+def test_cli_list_github_issues_json_output(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    _install_fake_github_list_open(monkeypatch)
+
+    result = CliRunner().invoke(
+        cli,
+        ["import", "list-github-issues", "--state", "all", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    issues = json.loads(result.output)
+    assert [issue["number"] for issue in issues] == [42, 43]
+    assert issues[0]["labels"] == ["importer", "enhancement"]
+    assert issues[0]["assignees"] == ["mona"]
+    assert issues[0]["html_url"] == "https://github.com/acme/widgets/issues/42"
+
+
+def test_cli_list_github_issues_requires_default_repo(tmp_path, monkeypatch):
+    _write_config(
+        tmp_path,
+        monkeypatch,
+        default_owner=None,
+        default_repo=None,
+    )
+    _install_fake_github_list_open(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["import", "list-github-issues"])
+
+    assert result.exit_code != 0
+    assert "sources.github.default_owner and default_repo are required" in result.output
+
+
+def _write_config(tmp_path, monkeypatch, default_owner="acme", default_repo="widgets"):
     monkeypatch.chdir(tmp_path)
+    github_defaults = ""
+    if default_owner is not None:
+        github_defaults += f"    default_owner: {default_owner}\n"
+    if default_repo is not None:
+        github_defaults += f"    default_repo: {default_repo}\n"
     (tmp_path / ".blueprint.yaml").write_text(
         f"""
 database:
@@ -95,8 +180,7 @@ database:
 sources:
   github:
     token_env: GH_TEST_TOKEN
-    default_owner: acme
-    default_repo: widgets
+{github_defaults.rstrip()}
 exports:
   output_dir: {tmp_path}
 """
@@ -121,6 +205,58 @@ def _issue_payload():
         "updated_at": "2026-04-21T00:00:00Z",
         "closed_at": None,
     }
+
+
+def _issues_payload():
+    second_issue = {
+        **_issue_payload(),
+        "number": 43,
+        "html_url": "https://github.com/acme/widgets/issues/43",
+        "title": "Document GitHub imports",
+        "body": "Write importer docs.",
+        "labels": [{"name": "docs"}],
+        "assignees": [],
+        "updated_at": "2026-04-22T00:00:00Z",
+    }
+    pull_request = {
+        **_issue_payload(),
+        "number": 44,
+        "html_url": "https://github.com/acme/widgets/pull/44",
+        "title": "Pull request masquerading as issue",
+        "pull_request": {"url": "https://api.github.com/repos/acme/widgets/pulls/44"},
+    }
+    return [_issue_payload(), pull_request, second_issue]
+
+
+def _install_fake_github_list_open(monkeypatch):
+    seen = {}
+    original_init = GitHubIssueImporter.__init__
+
+    def fake_open(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        return _Response(_issues_payload())
+
+    def fake_init(
+        self,
+        *,
+        token_env="GITHUB_TOKEN",
+        default_owner=None,
+        default_repo=None,
+        api_base="https://api.github.com",
+        http_open=None,
+    ):
+        original_init(
+            self,
+            token_env=token_env,
+            default_owner=default_owner,
+            default_repo=default_repo,
+            api_base=api_base,
+            http_open=fake_open,
+        )
+
+    monkeypatch.setattr(GitHubIssueImporter, "__init__", fake_init)
+    return seen
 
 
 class _Response:
