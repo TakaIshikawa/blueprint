@@ -1,9 +1,15 @@
 """Staged LLM-based execution plan generator (fixes JSON parsing issues)."""
 
-import json
 import uuid
 from typing import Any
 
+from blueprint.generators.json_repair import (
+    MilestoneOutlineResponse,
+    MilestoneTasksResponse,
+    PlanMetadataResponse,
+    parse_and_validate_llm_json,
+    validate_execution_plan_payload,
+)
 from blueprint.llm.provider import LLMProvider
 
 
@@ -63,7 +69,6 @@ class StagedPlanGenerator:
             tasks_data = self._generate_milestone_tasks(
                 implementation_brief,
                 milestone,
-                milestones_data["milestones"],
                 model,
             )
             all_tasks.extend(tasks_data["tasks"])
@@ -88,6 +93,8 @@ class StagedPlanGenerator:
             "generation_tokens": total_tokens,
             "generation_prompt": "Staged generation (milestones + tasks separately)",
         }
+
+        validate_execution_plan_payload(execution_plan, all_tasks)
 
         return execution_plan, all_tasks
 
@@ -146,8 +153,11 @@ Output ONLY the JSON, no additional text."""
             max_tokens=2000,
         )
 
-        # Parse with fallback strategies
-        milestones_json = self._parse_json(response["content"])
+        milestones_json = parse_and_validate_llm_json(
+            response["content"],
+            MilestoneOutlineResponse,
+            context="staged milestone generation",
+        )
 
         return {
             "milestones": milestones_json["milestones"],
@@ -158,12 +168,10 @@ Output ONLY the JSON, no additional text."""
         self,
         brief: dict[str, Any],
         milestone: dict[str, Any],
-        all_milestones: list[dict[str, Any]],
         model: str | None,
     ) -> dict[str, Any]:
         """Generate tasks for a specific milestone (Stage 2)."""
-        milestone_index = all_milestones.index(milestone)
-
+        architecture_notes = brief.get("architecture_notes") or "See brief"
         prompt = f"""# Implementation Brief: {brief['title']}
 
 ## This Milestone: {milestone['name']}
@@ -171,7 +179,7 @@ Output ONLY the JSON, no additional text."""
 
 ## Context
 Product Surface: {brief.get('product_surface', 'TBD')}
-Architecture: {brief.get('architecture_notes', 'See brief')[:200]}...
+Architecture: {architecture_notes[:200]}...
 
 ---
 
@@ -211,8 +219,11 @@ Output ONLY the JSON, no additional text."""
             max_tokens=3000,
         )
 
-        # Parse with fallback strategies
-        tasks_json = self._parse_json(response["content"])
+        tasks_json = parse_and_validate_llm_json(
+            response["content"],
+            MilestoneTasksResponse,
+            context=f"staged task generation for {milestone['name']}",
+        )
 
         # Add task metadata
         tasks_with_metadata = []
@@ -274,63 +285,13 @@ Output ONLY the JSON, no additional text."""
             max_tokens=1000,
         )
 
-        # Parse with fallback strategies
-        metadata = self._parse_json(response["content"])
+        metadata = parse_and_validate_llm_json(
+            response["content"],
+            PlanMetadataResponse,
+            context="staged plan metadata generation",
+        )
 
         return {
             **metadata,
             "tokens_used": response["usage"]["total_tokens"],
         }
-
-    def _parse_json(self, content: str) -> dict[str, Any]:
-        """Parse JSON with multiple fallback strategies."""
-        parse_error = None
-
-        # Strategy 1: Direct JSON parse
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            parse_error = e
-
-        # Strategy 2: Extract from markdown code blocks
-        if "```json" in content:
-            try:
-                start = content.find("```json") + 7
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 3: Extract from code blocks without language tag
-        if "```" in content:
-            try:
-                start = content.find("```") + 3
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                if json_str.startswith("json\n"):
-                    json_str = json_str[5:]
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 4: Find JSON object boundaries
-        try:
-            start_idx = content.find("{")
-            end_idx = content.rfind("}")
-            if start_idx != -1 and end_idx != -1:
-                json_str = content[start_idx:end_idx+1]
-                return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            parse_error = e
-
-        # All strategies failed
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-            f.write(content)
-            debug_file = f.name
-        raise ValueError(
-            f"Failed to parse LLM response as JSON.\n"
-            f"Last error: {parse_error}\n"
-            f"Response saved to: {debug_file}"
-        )

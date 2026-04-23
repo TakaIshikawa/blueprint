@@ -1,9 +1,14 @@
 """LLM-based execution plan generator."""
 
-import json
 import uuid
 from typing import Any
 
+from blueprint.generators.json_repair import (
+    PlanGenerationResponse,
+    parse_and_validate_llm_json,
+    register_task_aliases,
+    validate_execution_plan_payload,
+)
 from blueprint.llm.provider import LLMProvider
 
 
@@ -56,75 +61,27 @@ class PlanGenerator:
             system=self._get_system_prompt(),
         )
 
-        # Parse JSON response with multiple fallback strategies
-        content = response["content"]
-        plan_data = None
-        parse_error = None
-
-        # Strategy 1: Direct JSON parse
-        try:
-            plan_data = json.loads(content)
-        except json.JSONDecodeError as e:
-            parse_error = e
-
-        # Strategy 2: Extract from markdown code blocks
-        if plan_data is None and "```json" in content:
-            try:
-                start = content.find("```json") + 7
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                plan_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 3: Extract from code blocks without language tag
-        if plan_data is None and "```" in content:
-            try:
-                start = content.find("```") + 3
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                # Remove potential language tag
-                if json_str.startswith("json\n"):
-                    json_str = json_str[5:]
-                plan_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 4: Find JSON object boundaries
-        if plan_data is None:
-            try:
-                # Find first { and last }
-                start_idx = content.find("{")
-                end_idx = content.rfind("}")
-                if start_idx != -1 and end_idx != -1:
-                    json_str = content[start_idx:end_idx+1]
-                    plan_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        if plan_data is None:
-            # Save response to file for debugging
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-                f.write(content)
-                debug_file = f.name
-            raise ValueError(
-                f"Failed to parse LLM response as JSON after trying multiple strategies.\n"
-                f"Last error: {parse_error}\n"
-                f"Response saved to: {debug_file}\n"
-                f"Please check the response and try again with a different model or regenerate."
-            )
+        plan_data = parse_and_validate_llm_json(
+            response["content"],
+            PlanGenerationResponse,
+            context="execution plan generation",
+        )
 
         # Generate task IDs and map dependencies
         task_id_map = {}  # milestone:task_index -> task_id
         tasks = []
 
-        for milestone in plan_data["milestones"]:
+        for milestone_index, milestone in enumerate(plan_data["milestones"]):
             milestone_name = milestone["name"]
             for task_idx, task_data in enumerate(milestone["tasks"]):
                 task_id = generate_task_id()
-                task_key = f"{milestone_name}:{task_idx}"
-                task_id_map[task_key] = task_id
+                register_task_aliases(
+                    task_id_map,
+                    milestone_name=milestone_name,
+                    milestone_index=milestone_index,
+                    task_index=task_idx,
+                    task_id=task_id,
+                )
 
                 # Resolve dependencies to task IDs
                 depends_on = []
@@ -147,7 +104,6 @@ class PlanGenerator:
                 }
                 tasks.append(task)
 
-        # Build execution plan dict
         execution_plan = {
             "id": generate_execution_plan_id(),
             "implementation_brief_id": implementation_brief["id"],
@@ -162,6 +118,8 @@ class PlanGenerator:
             "generation_tokens": response["usage"]["total_tokens"],
             "generation_prompt": prompt[:1000],
         }
+
+        validate_execution_plan_payload(execution_plan, tasks)
 
         return execution_plan, tasks
 
@@ -191,7 +149,7 @@ Output ONLY valid JSON with no additional commentary. Use the exact schema provi
         mvp_goal = brief["mvp_goal"]
         scope = brief["scope"]
         non_goals = brief["non_goals"]
-        architecture = brief.get("architecture_notes", "Not specified")
+        architecture = brief.get("architecture_notes") or "Not specified"
         product_surface = brief.get("product_surface", "Not specified")
         validation = brief["validation_plan"]
         dod = brief["definition_of_done"]

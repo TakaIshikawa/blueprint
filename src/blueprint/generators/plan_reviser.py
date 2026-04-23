@@ -1,13 +1,18 @@
 """LLM-based execution plan revision generator."""
 
 import json
-import tempfile
 from datetime import datetime
 from typing import Any
 
 from blueprint.generators.plan_generator import (
     generate_execution_plan_id,
     generate_task_id,
+)
+from blueprint.generators.json_repair import (
+    PlanGenerationResponse,
+    parse_and_validate_llm_json,
+    register_task_aliases,
+    validate_execution_plan_payload,
 )
 from blueprint.llm.provider import LLMProvider
 
@@ -42,7 +47,11 @@ class PlanReviser:
             system=self._get_system_prompt(),
         )
 
-        plan_data = self._parse_json_response(response["content"])
+        plan_data = parse_and_validate_llm_json(
+            response["content"],
+            PlanGenerationResponse,
+            context="plan revision generation",
+        )
         tasks = self._build_tasks(plan_data)
         lineage = {
             "revised_from_plan_id": existing_plan["id"],
@@ -65,6 +74,8 @@ class PlanReviser:
             "generation_prompt": prompt[:1000],
             "metadata": {**lineage, "lineage": lineage},
         }
+
+        validate_execution_plan_payload(execution_plan, tasks)
 
         return execution_plan, tasks
 
@@ -141,66 +152,22 @@ Requirements:
 - Dependencies must refer to tasks in this revised plan using "Milestone Name:task_index" format.
 - Output ONLY the JSON, no additional text."""
 
-    def _parse_json_response(self, content: str) -> dict[str, Any]:
-        """Parse JSON from an LLM response with common fallback strategies."""
-        plan_data = None
-        parse_error = None
-
-        try:
-            plan_data = json.loads(content)
-        except json.JSONDecodeError as e:
-            parse_error = e
-
-        if plan_data is None and "```json" in content:
-            try:
-                start = content.find("```json") + 7
-                end = content.find("```", start)
-                plan_data = json.loads(content[start:end].strip())
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        if plan_data is None and "```" in content:
-            try:
-                start = content.find("```") + 3
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                if json_str.startswith("json\n"):
-                    json_str = json_str[5:]
-                plan_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        if plan_data is None:
-            try:
-                start_idx = content.find("{")
-                end_idx = content.rfind("}")
-                if start_idx != -1 and end_idx != -1:
-                    plan_data = json.loads(content[start_idx : end_idx + 1])
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        if plan_data is None:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
-                f.write(content)
-                debug_file = f.name
-            raise ValueError(
-                "Failed to parse LLM response as JSON after trying multiple strategies.\n"
-                f"Last error: {parse_error}\n"
-                f"Response saved to: {debug_file}"
-            )
-
-        return plan_data
-
     def _build_tasks(self, plan_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Build task records from revised plan JSON."""
         task_id_map: dict[str, str] = {}
         tasks = []
 
-        for milestone in plan_data["milestones"]:
+        for milestone_index, milestone in enumerate(plan_data["milestones"]):
             milestone_name = milestone["name"]
             for task_idx, task_data in enumerate(milestone.get("tasks", [])):
                 task_id = generate_task_id()
-                task_id_map[f"{milestone_name}:{task_idx}"] = task_id
+                register_task_aliases(
+                    task_id_map,
+                    milestone_name=milestone_name,
+                    milestone_index=milestone_index,
+                    task_index=task_idx,
+                    task_id=task_id,
+                )
 
                 depends_on = [
                     task_id_map[dep]
