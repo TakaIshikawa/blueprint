@@ -15,6 +15,7 @@ from blueprint.audits.critical_path import (
     analyze_critical_path,
 )
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
+from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
@@ -1154,6 +1155,57 @@ def _emit_plan_audit(result: PlanAuditResult) -> None:
         click.echo(f"\n{heading}:")
         for issue in issues:
             click.echo(f"  - [{issue.code}] {issue.message}")
+
+
+@plan.command()
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output metrics as JSON")
+def metrics(plan_id: str, json_output: bool):
+    """Summarize execution plan size and readiness."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = calculate_plan_metrics(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _emit_plan_metrics(result)
+
+
+def _emit_plan_metrics(result: PlanMetrics) -> None:
+    """Render human-readable execution plan metrics."""
+    click.echo(f"Execution plan metrics: {result.plan_id}")
+    click.echo(f"\n{'Metric':<32} Value")
+    click.echo("-" * 48)
+    for label, value in (
+        ("Tasks", result.task_count),
+        ("Milestones", result.milestone_count),
+        ("Ready tasks", result.ready_task_count),
+        ("Blocked tasks", result.blocked_task_count),
+        ("Completed", f"{result.completed_percent:.2f}%"),
+        ("Dependency edges", result.dependency_edge_count),
+        ("Avg dependencies per task", f"{result.average_dependencies_per_task:.2f}"),
+    ):
+        click.echo(f"{label:<32} {value}")
+
+    _emit_metric_counts("Status", result.counts_by_status)
+    _emit_metric_counts("Suggested engine", result.counts_by_suggested_engine)
+    _emit_metric_counts("Estimated complexity", result.counts_by_estimated_complexity)
+
+
+def _emit_metric_counts(label: str, counts: dict[str, int]) -> None:
+    click.echo(f"\n{label}:")
+    if not counts:
+        click.echo("  none")
+        return
+    for key, count in counts.items():
+        click.echo(f"  {key}: {count}")
 
 
 @plan.command()
