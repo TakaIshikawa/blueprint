@@ -53,6 +53,10 @@ blueprint-exports/
 # Alembic
 alembic/versions/*.pyc
 
+# Publication clearance
+clearance-report/
+.clearance/AI_PROVIDER_REVIEW.md
+
 # OS
 .DS_Store
 Thumbs.db
