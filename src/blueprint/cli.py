@@ -47,6 +47,7 @@ from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.generators.plan_reviser import PlanReviser
 from blueprint.importers.graph_importer import GraphImporter
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
+from blueprint.importers.manual_importer import ManualBriefImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
 from blueprint.llm.provider import LLMProvider
@@ -483,10 +484,55 @@ def graph_node(file_path: str, replace: bool, skip_existing: bool):
 
 @import_cmd.command()
 @click.argument("file_path")
-def manual(file_path: str):
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def manual(file_path: str, replace: bool, skip_existing: bool):
     """Import a manual design brief from markdown file."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = ManualBriefImporter()
+
     click.echo(f"Importing manual brief from: {file_path}")
-    click.echo("TODO: Implement manual import")
+    try:
+        source_brief = importer.import_from_source(file_path)
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
+
+        source_brief_id = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
+
+        if existing_source_brief and replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from manual brief "
+                f"{source_brief['source_id']}"
+            )
+        elif existing_source_brief:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from manual brief "
+                f"{source_brief['source_id']}"
+            )
+        else:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from manual brief "
+                f"{source_brief['source_id']}"
+            )
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  Domain: {source_brief['domain'] or 'N/A'}")
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
 
 
 # ============================================================================
@@ -1403,8 +1449,7 @@ def queue(plan_id: str | None, engine: str | None, limit: int, json_output: bool
         return
 
     click.echo(
-        f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} "
-        f"{'Complexity':<12} {'Title':<35} Files"
+        f"\n{'ID':<15} {'Milestone':<18} {'Engine':<15} " f"{'Complexity':<12} {'Title':<35} Files"
     )
     click.echo("-" * 120)
 
@@ -1453,11 +1498,7 @@ def blockers(plan_id: str, json_output: bool):
         click.echo(f"  Reason: {blocker['blocked_reason'] or 'N/A'}")
         click.echo(
             "  Direct dependents: "
-            + (
-                ", ".join(blocker["direct_dependents"])
-                if blocker["direct_dependents"]
-                else "none"
-            )
+            + (", ".join(blocker["direct_dependents"]) if blocker["direct_dependents"] else "none")
         )
         click.echo(
             "  Transitive dependents: "
@@ -1529,21 +1570,11 @@ def _emit_critical_path(result: CriticalPathResult) -> None:
 
     click.echo("\nOrdered chain:")
     for index, task in enumerate(result.tasks, 1):
-        click.echo(
-            f"  {index}. {task.id} - {task.title} "
-            f"[{task.milestone or 'N/A'}]"
-        )
-        click.echo(
-            f"     Weight: {task.weight} "
-            f"(cumulative: {task.cumulative_weight})"
-        )
+        click.echo(f"  {index}. {task.id} - {task.title} " f"[{task.milestone or 'N/A'}]")
+        click.echo(f"     Weight: {task.weight} " f"(cumulative: {task.cumulative_weight})")
         click.echo(
             "     Blocking dependencies: "
-            + (
-                ", ".join(task.blocking_dependencies)
-                if task.blocking_dependencies
-                else "none"
-            )
+            + (", ".join(task.blocking_dependencies) if task.blocking_dependencies else "none")
         )
 
 
@@ -1708,8 +1739,8 @@ def _task_with_ready_reason(current_task: dict) -> dict:
     task_payload = dict(current_task)
     dependencies = current_task.get("depends_on") or []
     if dependencies:
-        task_payload["ready_reason"] = (
-            "All dependencies are completed or skipped: " + ", ".join(dependencies)
+        task_payload["ready_reason"] = "All dependencies are completed or skipped: " + ", ".join(
+            dependencies
         )
     else:
         task_payload["ready_reason"] = "Task is pending and has no dependencies"
@@ -1738,9 +1769,7 @@ def _blocked_task_impact(tasks: list[dict]) -> list[dict]:
         )
         direct_dependent_ids = set(direct_dependents)
         transitive_dependents = [
-            task_id
-            for task_id in downstream_dependents
-            if task_id not in direct_dependent_ids
+            task_id for task_id in downstream_dependents if task_id not in direct_dependent_ids
         ]
 
         impact.append(
@@ -1807,10 +1836,7 @@ def _resolve_dependency_tasks(
     if not dependency_ids:
         return []
 
-    plan_tasks_by_id = {
-        task["id"]: task
-        for task in (plan or {}).get("tasks", [])
-    }
+    plan_tasks_by_id = {task["id"]: task for task in (plan or {}).get("tasks", [])}
     dependency_tasks = []
     for dependency_id in dependency_ids:
         dependency_task = plan_tasks_by_id.get(dependency_id)
