@@ -9,6 +9,11 @@ from pydantic import ValidationError
 
 from pathlib import Path
 
+from blueprint.audits.critical_path import (
+    CriticalPathError,
+    CriticalPathResult,
+    analyze_critical_path,
+)
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.config import get_config
 from blueprint.exporters.claude_code import ClaudeCodeExporter
@@ -1348,6 +1353,59 @@ def blockers(plan_id: str, json_output: bool):
             )
         )
         click.echo(f"  Impacted count: {blocker['impacted_count']}")
+
+
+@task.command(name="critical-path")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output critical path as JSON")
+def critical_path(plan_id: str, json_output: bool):
+    """Show the longest weighted dependency chain in an execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    try:
+        result = analyze_critical_path(plan)
+    except CriticalPathError as e:
+        raise click.ClickException(str(e)) from e
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _emit_critical_path(result)
+
+
+def _emit_critical_path(result: CriticalPathResult) -> None:
+    """Render human-readable critical path analysis."""
+    click.echo(f"Critical path for plan {result.plan_id}")
+    click.echo(f"Total weight: {result.total_weight}")
+
+    if not result.tasks:
+        click.echo("No execution tasks found.")
+        return
+
+    click.echo("\nOrdered chain:")
+    for index, task in enumerate(result.tasks, 1):
+        click.echo(
+            f"  {index}. {task.id} - {task.title} "
+            f"[{task.milestone or 'N/A'}]"
+        )
+        click.echo(
+            f"     Weight: {task.weight} "
+            f"(cumulative: {task.cumulative_weight})"
+        )
+        click.echo(
+            "     Blocking dependencies: "
+            + (
+                ", ".join(task.blocking_dependencies)
+                if task.blocking_dependencies
+                else "none"
+            )
+        )
 
 
 @task.command()
