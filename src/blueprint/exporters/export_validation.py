@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
+from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.relay import RelayExporter
@@ -116,6 +117,7 @@ def create_exporter(target: str):
         "claude-code": ClaudeCodeExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
+        "github-issues": GitHubIssuesExporter(),
         "junit-tasks": JUnitTasksExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
@@ -527,6 +529,148 @@ def _validate_task_bundle(
     return findings
 
 
+def _validate_github_issues_bundle(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the GitHub issues directory export."""
+    findings: list[ValidationFinding] = []
+    if not artifact_path.is_dir():
+        return [
+            ValidationFinding(
+                code="github_issues.invalid_shape",
+                message="GitHub issue export must be a directory.",
+                path=str(artifact_path),
+            )
+        ]
+
+    manifest_path = artifact_path / "manifest.json"
+    if not manifest_path.exists():
+        findings.append(
+            ValidationFinding(
+                code="github_issues.missing_manifest",
+                message="GitHub issue export is missing manifest.json.",
+                path=str(manifest_path),
+            )
+        )
+        return findings
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="github_issues.invalid_manifest",
+                message=f"GitHub issue manifest is not valid JSON: {exc.msg}",
+                path=str(manifest_path),
+            )
+        ]
+
+    if not isinstance(manifest, dict):
+        return [
+            ValidationFinding(
+                code="github_issues.invalid_manifest_shape",
+                message="GitHub issue manifest must be a JSON object.",
+                path=str(manifest_path),
+            )
+        ]
+
+    required_keys = ["schema_version", "repository", "plan", "issues", "milestone_groups"]
+    findings.extend(_missing_keys(manifest, required_keys, "github_issues.missing_key", str(manifest_path)))
+
+    repository = manifest.get("repository")
+    if isinstance(repository, dict):
+        findings.extend(
+            _missing_keys(
+                repository,
+                ["raw_target_repo", "full_name", "issues_url"],
+                "github_issues.repository.missing_key",
+                str(manifest_path),
+            )
+        )
+    else:
+        findings.append(
+            ValidationFinding(
+                code="github_issues.repository.invalid_shape",
+                message="GitHub issue repository metadata must be an object.",
+                path=str(manifest_path),
+            )
+        )
+
+    issues = manifest.get("issues")
+    if not isinstance(issues, list):
+        findings.append(
+            ValidationFinding(
+                code="github_issues.issues.invalid_shape",
+                message="GitHub issue manifest issues must be a list.",
+                path=str(manifest_path),
+            )
+        )
+        return findings
+
+    for index, task in enumerate(execution_plan.get("tasks", []), 1):
+        filename = _github_issue_filename(index, task["id"])
+        task_path = artifact_path / filename
+        if not task_path.exists():
+            findings.append(
+                ValidationFinding(
+                    code="github_issues.missing_issue_file",
+                    message=f"Missing issue draft for {task['id']}: {filename}",
+                    path=str(task_path),
+                )
+            )
+            continue
+
+        task_content = task_path.read_text()
+        labels = _task_labels(task)
+        milestone_name = task.get("milestone") or "Ungrouped"
+        for heading in [
+            f"# {task['title']}",
+            "## Task Metadata",
+            "## Description",
+            "## Acceptance Criteria",
+            "## Dependencies",
+            "## Labels",
+            "## Validation Context",
+            "## Milestone Group",
+        ]:
+            if not _has_heading(task_content, heading):
+                findings.append(
+                    ValidationFinding(
+                        code="github_issues.missing_heading",
+                        message=f"Missing required Markdown heading: {heading}",
+                        path=str(task_path),
+                    )
+                )
+        for snippet in [
+            f"- Task ID: `{task['id']}`",
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Repository: {execution_plan.get('target_repo') or 'N/A'}",
+            f"- Milestone: {milestone_name}",
+            f"- Labels: {', '.join(labels) if labels else 'None'}",
+        ]:
+            if snippet not in task_content:
+                findings.append(
+                    ValidationFinding(
+                        code="github_issues.missing_identifier",
+                        message=f"Missing required identifier text: {snippet}",
+                        path=str(task_path),
+                    )
+                )
+
+    if not any(path.suffix == ".md" for path in artifact_path.rglob("*") if path.is_file()):
+        findings.append(
+            ValidationFinding(
+                code="github_issues.empty",
+                message="GitHub issue export does not contain any issue drafts.",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
 def _validate_csv_tasks(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -756,8 +900,22 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "claude-code": _validate_claude_code,
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
+    "github-issues": _validate_github_issues_bundle,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
 }
+
+
+def _task_labels(task: dict[str, Any]) -> list[str]:
+    """Extract task labels from metadata."""
+    metadata = task.get("metadata") or {}
+    labels = metadata.get("labels") or []
+    return [label for label in labels if isinstance(label, str) and label]
+
+
+def _github_issue_filename(index: int, task_id: str) -> str:
+    """Recreate the GitHub issue draft filename."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")
+    return f"issues/{index:03d}-{slug or 'task'}.md"
