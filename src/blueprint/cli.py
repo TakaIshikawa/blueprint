@@ -29,6 +29,7 @@ from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
+from blueprint.exporters.export_diff import compare_rendered_exports
 from blueprint.exporters.export_validation import create_exporter, validate_export
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
@@ -2189,6 +2190,58 @@ def preview(plan_id: str, target: str, output: Path | None, require_coherence: b
         click.echo(traceback.format_exc(), err=True)
 
 
+@export.command(name="diff")
+@click.argument("left_plan_id")
+@click.argument("right_plan_id")
+@click.option(
+    "--target",
+    required=True,
+    type=click.Choice(
+        [
+            "relay",
+            "smoothie",
+            "codex",
+            "claude-code",
+            "mermaid",
+            "csv-tasks",
+            "github-issues",
+            "junit-tasks",
+            "status-report",
+            "task-bundle",
+        ]
+    ),
+    help="Target execution engine",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output diff results as JSON")
+def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output: bool):
+    """Compare two rendered exports for the same target engine."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    left_plan = store.get_execution_plan(left_plan_id)
+    if not left_plan:
+        raise click.ClickException(f"Execution plan not found: {left_plan_id}")
+
+    right_plan = store.get_execution_plan(right_plan_id)
+    if not right_plan:
+        raise click.ClickException(f"Execution plan not found: {right_plan_id}")
+
+    left_brief = store.get_implementation_brief(left_plan["implementation_brief_id"])
+    if not left_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {left_plan['implementation_brief_id']}"
+        )
+
+    right_brief = store.get_implementation_brief(right_plan["implementation_brief_id"])
+    if not right_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {right_plan['implementation_brief_id']}"
+        )
+
+    result = compare_rendered_exports(left_plan, left_brief, right_plan, right_brief, target)
+    _emit_export_diff_result(result, json_output)
+
+
 @export.command()
 @click.argument("plan_id")
 @click.option(
@@ -2325,6 +2378,51 @@ def _emit_export_validation_result(result, json_output: bool) -> None:
                 click.echo(f"  - {prefix} {finding.message}", err=True)
 
     raise click.exceptions.Exit(0 if result.passed else 1)
+
+
+def _emit_export_diff_result(result, json_output: bool) -> None:
+    """Render diff output and exit successfully."""
+    payload = result.to_dict()
+    if json_output:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        raise click.exceptions.Exit(0)
+
+    click.echo(
+        f"Export diff: {result.left_plan_id} -> {result.right_plan_id} "
+        f"(target: {result.target})"
+    )
+    click.echo(f"Artifact type: {result.artifact_type}")
+    click.echo(
+        "Summary: "
+        f"{len(result.added_files)} added, "
+        f"{len(result.removed_files)} removed, "
+        f"{len(result.changed_files)} changed"
+    )
+
+    if not result.has_changes:
+        click.echo("No differences found after normalization.")
+        raise click.exceptions.Exit(0)
+
+    if result.added_files:
+        click.echo("\nAdded files:")
+        for change in result.added_files:
+            click.echo(f"  - {change.path}")
+
+    if result.removed_files:
+        click.echo("\nRemoved files:")
+        for change in result.removed_files:
+            click.echo(f"  - {change.path}")
+
+    if result.changed_files:
+        click.echo("\nChanged files:")
+        for change in result.changed_files:
+            click.echo(f"  - {change.path}")
+            for line in change.diff[:8]:
+                click.echo(f"    {line}")
+            if len(change.diff) > 8:
+                click.echo("    ...")
+
+    raise click.exceptions.Exit(0)
 
 
 def _render_export_preview(
