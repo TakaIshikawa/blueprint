@@ -14,6 +14,11 @@ from blueprint.audits.critical_path import (
     CriticalPathResult,
     analyze_critical_path,
 )
+from blueprint.audits.execution_waves import (
+    ExecutionWaveError,
+    ExecutionWavesResult,
+    analyze_execution_waves,
+)
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
@@ -1432,6 +1437,30 @@ def critical_path(plan_id: str, json_output: bool):
     _emit_critical_path(result)
 
 
+@task.command()
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output execution waves as JSON")
+def waves(plan_id: str, json_output: bool):
+    """Show dependency-ready execution task waves."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    try:
+        result = analyze_execution_waves(plan)
+    except ExecutionWaveError as e:
+        raise click.ClickException(str(e)) from e
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _emit_execution_waves(result)
+
+
 def _emit_critical_path(result: CriticalPathResult) -> None:
     """Render human-readable critical path analysis."""
     click.echo(f"Critical path for plan {result.plan_id}")
@@ -1459,6 +1488,33 @@ def _emit_critical_path(result: CriticalPathResult) -> None:
                 else "none"
             )
         )
+
+
+def _emit_execution_waves(result: ExecutionWavesResult) -> None:
+    """Render human-readable execution wave analysis."""
+    click.echo(f"Execution waves for plan {result.plan_id}")
+
+    if not result.waves:
+        click.echo("No execution tasks found.")
+        return
+
+    for wave in result.waves:
+        click.echo(f"\nWave {wave.wave_number}")
+        click.echo(f"{'ID':<15} {'Milestone':<18} {'Engine':<15} " f"{'Title':<35} Files")
+        click.echo("-" * 110)
+        for current_task in wave.tasks:
+            milestone = current_task.milestone or "N/A"
+            engine = current_task.suggested_engine or "N/A"
+            files = ", ".join(current_task.files_or_modules) or "none"
+            click.echo(
+                f"{current_task.id:<15} "
+                f"{milestone[:16]:<18} "
+                f"{engine:<15} "
+                f"{current_task.title[:33]:<35} "
+                f"{files}"
+            )
+
+    click.echo(f"\nTotal: {result.task_count} tasks in {len(result.waves)} waves")
 
 
 @task.command()
