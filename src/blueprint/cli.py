@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 
 import click
 from pydantic import ValidationError
@@ -62,6 +63,18 @@ BRIEF_STATUS_CHOICES = (
 )
 PLAN_STATUS_CHOICES = ("draft", "ready", "queued", "in_progress", "completed", "failed")
 TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skipped")
+EXPORT_TARGET_CHOICES = (
+    "relay",
+    "smoothie",
+    "codex",
+    "claude-code",
+    "mermaid",
+    "csv-tasks",
+    "junit-tasks",
+    "status-report",
+    "task-bundle",
+    "all",
+)
 
 
 @click.group()
@@ -157,6 +170,20 @@ def _emit_prompt_preview(prompt: str, output: Path | None) -> None:
         return
 
     click.echo(prompt, nl=False)
+
+
+def _emit_export_preview(
+    preview_content: str,
+    output: Path | None,
+) -> None:
+    """Write a rendered export preview to a file or stdout."""
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(preview_content)
+        click.echo(f"✓ Wrote preview to: {output}")
+        return
+
+    click.echo(preview_content, nl=False)
 
 
 def _create_llm_provider(config) -> LLMProvider:
@@ -1782,20 +1809,7 @@ def export():
 @click.option(
     "--target",
     required=True,
-    type=click.Choice(
-        [
-            "relay",
-            "smoothie",
-            "codex",
-            "claude-code",
-            "mermaid",
-            "csv-tasks",
-            "junit-tasks",
-            "status-report",
-            "task-bundle",
-            "all",
-        ]
-    ),
+    type=str,
     help="Target execution engine",
 )
 def run(plan_id: str, target: str):
@@ -1804,6 +1818,10 @@ def run(plan_id: str, target: str):
     store = Store(config.db_path)
 
     try:
+        if target not in EXPORT_TARGET_CHOICES:
+            click.echo(f"✗ Unknown target: {target}", err=True)
+            return
+
         # Get execution plan
         plan = store.get_execution_plan(plan_id)
         if not plan:
@@ -1824,17 +1842,7 @@ def run(plan_id: str, target: str):
 
         # Export to target(s)
         targets = (
-            [
-                "relay",
-                "smoothie",
-                "codex",
-                "claude-code",
-                "mermaid",
-                "csv-tasks",
-                "junit-tasks",
-                "status-report",
-                "task-bundle",
-            ]
+            [choice for choice in EXPORT_TARGET_CHOICES if choice != "all"]
             if target == "all"
             else [target]
         )
@@ -1880,6 +1888,73 @@ def run(plan_id: str, target: str):
 
     except Exception as e:
         click.echo(f"✗ Export failed: {e}", err=True)
+        import traceback
+
+        click.echo(traceback.format_exc(), err=True)
+
+
+@export.command()
+@click.argument("plan_id")
+@click.option(
+    "--target",
+    required=True,
+    type=str,
+    help="Target execution engine",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write preview output to a file",
+)
+def preview(plan_id: str, target: str, output: Path | None):
+    """Preview an export target without recording it."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        if target not in EXPORT_TARGET_CHOICES:
+            click.echo(f"✗ Unknown target: {target}", err=True)
+            return
+
+        plan = store.get_execution_plan(plan_id)
+        if not plan:
+            click.echo(f"✗ Execution plan not found: {plan_id}", err=True)
+            return
+
+        brief = store.get_implementation_brief(plan["implementation_brief_id"])
+        if not brief:
+            click.echo(
+                f"✗ Implementation brief not found: {plan['implementation_brief_id']}", err=True
+            )
+            return
+
+        targets = (
+            [choice for choice in EXPORT_TARGET_CHOICES if choice != "all"]
+            if target == "all"
+            else [target]
+        )
+
+        preview_sections = []
+        for target_name in targets:
+            exporter = _get_exporter(target_name)
+            if not exporter:
+                click.echo(f"✗ Unknown target: {target_name}", err=True)
+                continue
+
+            preview_sections.append(
+                _render_export_preview(
+                    plan,
+                    brief,
+                    target_name,
+                    exporter,
+                )
+            )
+
+        preview_output = "\n\n".join(preview_sections)
+        _emit_export_preview(preview_output, output)
+
+    except Exception as e:
+        click.echo(f"✗ Export preview failed: {e}", err=True)
         import traceback
 
         click.echo(traceback.format_exc(), err=True)
@@ -1951,6 +2026,37 @@ def _get_exporter(target: str):
         "task-bundle": TaskBundleExporter(),
     }
     return exporters.get(target)
+
+
+def _render_export_preview(
+    plan: dict,
+    brief: dict,
+    target_name: str,
+    exporter,
+) -> str:
+    """Render an export target into preview text without leaving permanent files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        preview_path = Path(tmp_dir) / f"{plan['id']}-{target_name}{exporter.get_extension()}"
+        result_path = Path(exporter.export(plan, brief, str(preview_path)))
+        return _read_preview_artifact(result_path)
+
+
+def _read_preview_artifact(path: Path) -> str:
+    """Read a rendered export artifact back into preview text."""
+    if path.is_file():
+        return path.read_text()
+
+    if path.is_dir():
+        sections = []
+        for artifact_path in sorted(
+            (candidate for candidate in path.rglob("*") if candidate.is_file()),
+            key=lambda candidate: candidate.relative_to(path).as_posix(),
+        ):
+            sections.append(f"## {artifact_path.relative_to(path).as_posix()}")
+            sections.append(artifact_path.read_text())
+        return "\n\n".join(sections)
+
+    raise FileNotFoundError(f"Rendered preview artifact not found: {path}")
 
 
 @export.command()
