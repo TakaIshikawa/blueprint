@@ -23,8 +23,12 @@ Private review documentation capturing the AI provider policy compliance review.
 Run policy monitoring periodically to detect changes:
 
 ```bash
-cd /Users/taka/Project/experiments/clearance
-PYTHONPATH=src python -m clearance monitor --project /Users/taka/Project/experiments/blueprint --report-dir clearance-report
+# If clearance is installed:
+clearance monitor --project . --report-dir clearance-report
+
+# Or from the clearance source repository:
+cd /path/to/clearance
+PYTHONPATH=src python -m clearance monitor --project /path/to/blueprint --report-dir clearance-report
 ```
 
 When a policy change is detected:
