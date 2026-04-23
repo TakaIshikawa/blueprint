@@ -14,6 +14,10 @@ from blueprint.audits.critical_path import (
     CriticalPathResult,
     analyze_critical_path,
 )
+from blueprint.audits.brief_plan_coherence import (
+    BriefPlanCoherenceResult,
+    audit_brief_plan_coherence,
+)
 from blueprint.audits.execution_waves import (
     ExecutionWaveError,
     ExecutionWavesResult,
@@ -1151,6 +1155,58 @@ def _emit_plan_audit(result: PlanAuditResult) -> None:
 
     if not result.issues:
         click.echo("No structural issues found.")
+        return
+
+    by_severity = result.issues_by_severity()
+    for severity, heading in (("error", "Errors"), ("warning", "Warnings")):
+        issues = by_severity[severity]
+        if not issues:
+            continue
+        click.echo(f"\n{heading}:")
+        for issue in issues:
+            click.echo(f"  - [{issue.code}] {issue.message}")
+
+
+@plan.command()
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def coherence(plan_id: str, json_output: bool):
+    """Audit whether an execution plan coherently reflects its implementation brief."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    implementation_brief_id = plan.get("implementation_brief_id")
+    implementation_brief = store.get_implementation_brief(str(implementation_brief_id or ""))
+    if not implementation_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {implementation_brief_id or 'N/A'}"
+        )
+
+    result = audit_brief_plan_coherence(plan, implementation_brief)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_brief_plan_coherence(result)
+
+    if not result.ok:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_brief_plan_coherence(result: BriefPlanCoherenceResult) -> None:
+    """Render human-readable brief/plan coherence results grouped by severity."""
+    click.echo(f"Brief-plan coherence audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.ok else 'failed'} "
+        f"({result.error_count} errors, {result.warning_count} warnings)"
+    )
+
+    if not result.issues:
+        click.echo("No coherence issues found.")
         return
 
     by_severity = result.issues_by_severity()
