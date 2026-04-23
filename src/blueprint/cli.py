@@ -27,16 +27,9 @@ from blueprint.audits.execution_waves import (
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
-from blueprint.exporters.claude_code import ClaudeCodeExporter
-from blueprint.exporters.codex import CodexExporter
-from blueprint.exporters.csv_tasks import CsvTasksExporter
-from blueprint.exporters.junit_tasks import JUnitTasksExporter
+from blueprint.exporters.export_validation import create_exporter, validate_export
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
-from blueprint.exporters.relay import RelayExporter
-from blueprint.exporters.smoothie import SmoothieExporter
-from blueprint.exporters.status_report import StatusReportExporter
-from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.exporters.task_handoff import TaskHandoffExporter
 from blueprint.domain import ImplementationBrief
 from blueprint.generators.brief_generator import (
@@ -2045,6 +2038,46 @@ def preview(plan_id: str, target: str, output: Path | None):
 @export.command()
 @click.argument("plan_id")
 @click.option(
+    "--target",
+    required=True,
+    type=click.Choice(
+        [
+            "relay",
+            "smoothie",
+            "codex",
+            "claude-code",
+            "mermaid",
+            "csv-tasks",
+            "junit-tasks",
+            "status-report",
+            "task-bundle",
+        ]
+    ),
+    help="Target execution engine",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output validation results as JSON")
+def validate(plan_id: str, target: str, json_output: bool):
+    """Validate a rendered export artifact for a target engine."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    brief = store.get_implementation_brief(plan["implementation_brief_id"])
+    if not brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {plan['implementation_brief_id']}"
+        )
+
+    result = validate_export(plan, brief, target)
+    _emit_export_validation_result(result, json_output)
+
+
+@export.command()
+@click.argument("plan_id")
+@click.option(
     "--output",
     required=True,
     type=click.Path(dir_okay=False),
@@ -2096,18 +2129,29 @@ def graph(plan_id: str, output: str):
 
 def _get_exporter(target: str):
     """Get exporter instance for target."""
-    exporters = {
-        "relay": RelayExporter(),
-        "smoothie": SmoothieExporter(),
-        "codex": CodexExporter(),
-        "claude-code": ClaudeCodeExporter(),
-        "mermaid": MermaidExporter(),
-        "csv-tasks": CsvTasksExporter(),
-        "junit-tasks": JUnitTasksExporter(),
-        "status-report": StatusReportExporter(),
-        "task-bundle": TaskBundleExporter(),
-    }
-    return exporters.get(target)
+    try:
+        return create_exporter(target)
+    except ValueError:
+        return None
+
+
+def _emit_export_validation_result(result, json_output: bool) -> None:
+    """Render validation output and exit with the appropriate status code."""
+    payload = result.to_dict()
+    if json_output:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        if result.passed:
+            click.echo(f"✓ Validation passed for {result.target}")
+        else:
+            click.echo(f"✗ Validation failed for {result.target}", err=True)
+            for finding in result.findings:
+                prefix = f"[{finding.code}]"
+                if finding.path:
+                    prefix = f"{prefix} {finding.path}:"
+                click.echo(f"  - {prefix} {finding.message}", err=True)
+
+    raise click.exceptions.Exit(0 if result.passed else 1)
 
 
 def _render_export_preview(
