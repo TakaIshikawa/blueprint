@@ -25,6 +25,7 @@ from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyE
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
+from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.domain import ImplementationBrief
 from blueprint.generators.brief_generator import (
     BriefGenerator,
@@ -1611,6 +1612,7 @@ def export():
             "csv-tasks",
             "junit-tasks",
             "status-report",
+            "task-bundle",
             "all",
         ]
     ),
@@ -1651,6 +1653,7 @@ def run(plan_id: str, target: str):
                 "csv-tasks",
                 "junit-tasks",
                 "status-report",
+                "task-bundle",
             ]
             if target == "all"
             else [target]
@@ -1765,6 +1768,7 @@ def _get_exporter(target: str):
         "csv-tasks": CsvTasksExporter(),
         "junit-tasks": JUnitTasksExporter(),
         "status-report": StatusReportExporter(),
+        "task-bundle": TaskBundleExporter(),
     }
     return exporters.get(target)
 
