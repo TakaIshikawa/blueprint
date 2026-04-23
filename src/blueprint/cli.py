@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from builtins import list as builtin_list
 
 import click
 from pydantic import ValidationError
@@ -25,6 +26,7 @@ from blueprint.audits.execution_waves import (
     analyze_execution_waves,
 )
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
+from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
 from blueprint.exporters.export_validation import create_exporter, validate_export
@@ -1190,6 +1192,31 @@ def plan_graph(plan_id: str, output_format: str, output: Path | None):
 
 
 @plan.command()
+@click.argument("left_plan_id")
+@click.argument("right_plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output diff as JSON")
+def diff(left_plan_id: str, right_plan_id: str, json_output: bool):
+    """Compare two execution plans and summarize the changes."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    left_plan = store.get_execution_plan(left_plan_id)
+    if not left_plan:
+        raise click.ClickException(f"Execution plan not found: {left_plan_id}")
+
+    right_plan = store.get_execution_plan(right_plan_id)
+    if not right_plan:
+        raise click.ClickException(f"Execution plan not found: {right_plan_id}")
+
+    result = diff_execution_plans(left_plan, right_plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_plan_diff(result)
+
+
+@plan.command()
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
 def audit(plan_id: str, json_output: bool):
@@ -1262,6 +1289,106 @@ def coherence(plan_id: str, json_output: bool):
 
     if not result.ok:
         raise click.exceptions.Exit(1)
+
+
+def _emit_plan_diff(result: PlanDiffResult) -> None:
+    """Render a human-readable execution plan diff."""
+    click.echo(f"Execution plan diff: {result.left_plan_id} -> {result.right_plan_id}")
+    click.echo(
+        "Summary: "
+        f"{len(result.added_milestones)} milestone additions, "
+        f"{len(result.removed_milestones)} milestone removals, "
+        f"{len(result.changed_milestones)} milestone changes, "
+        f"{len(result.added_tasks)} task additions, "
+        f"{len(result.removed_tasks)} task removals, "
+        f"{len(result.changed_tasks)} task changes"
+    )
+
+    if not result.has_changes:
+        click.echo("No differences found.")
+        return
+
+    _emit_plan_diff_section("Milestones added", result.added_milestones)
+    _emit_plan_diff_section("Milestones removed", result.removed_milestones)
+    if result.changed_milestones:
+        click.echo("\nMilestones changed:")
+        for milestone_change in result.changed_milestones:
+            _emit_plan_diff_record(
+                milestone_change.milestone_key,
+                milestone_change.left,
+                milestone_change.right,
+                milestone_change.changes,
+                indent="  ",
+            )
+
+    _emit_plan_diff_section("Tasks added", result.added_tasks)
+    _emit_plan_diff_section("Tasks removed", result.removed_tasks)
+    if result.changed_tasks:
+        click.echo("\nTasks changed:")
+        for task_change in result.changed_tasks:
+            _emit_plan_diff_record(
+                task_change.task_key,
+                task_change.left,
+                task_change.right,
+                task_change.changes,
+                indent="  ",
+            )
+
+
+def _emit_plan_diff_section(heading: str, items: list[dict[str, object]]) -> None:
+    if not items:
+        return
+    click.echo(f"\n{heading}:")
+    for item in items:
+        _emit_plan_diff_snapshot(item)
+
+
+def _emit_plan_diff_snapshot(item: dict[str, object]) -> None:
+    label = item.get("id") or item.get("name") or item.get("title") or "unknown"
+    summary_bits = []
+    title = item.get("title")
+    milestone = item.get("milestone")
+    status = item.get("status")
+    depends_on = item.get("depends_on")
+    if isinstance(title, str) and title:
+        summary_bits.append(title)
+    if isinstance(milestone, str) and milestone:
+        summary_bits.append(f"milestone={milestone}")
+    if isinstance(status, str) and status:
+        summary_bits.append(f"status={status}")
+    if isinstance(depends_on, builtin_list) and depends_on:
+        summary_bits.append(f"depends_on={', '.join(str(dep) for dep in depends_on)}")
+
+    if summary_bits:
+        click.echo(f"  - {label}: {', '.join(summary_bits)}")
+    else:
+        click.echo(f"  - {label}")
+
+
+def _emit_plan_diff_record(
+    item_label: str,
+    left: dict[str, object],
+    right: dict[str, object],
+    changes,
+    indent: str,
+) -> None:
+    title = left.get("title") or right.get("title")
+    if title:
+        click.echo(f"{indent}- {item_label}: {title}")
+    else:
+        click.echo(f"{indent}- {item_label}")
+    for change in changes:
+        left_value = _format_diff_value(change.left)
+        right_value = _format_diff_value(change.right)
+        click.echo(f"{indent}  {change.field}: {left_value} -> {right_value}")
+
+
+def _format_diff_value(value: object) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, builtin_list):
+        return ", ".join(_format_diff_value(item) for item in value) if value else "[]"
+    return str(value)
 
 
 def _emit_brief_plan_coherence(result: BriefPlanCoherenceResult) -> None:
