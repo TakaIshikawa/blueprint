@@ -35,7 +35,12 @@ from blueprint.exporters.export_validation import create_exporter, validate_expo
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.task_handoff import TaskHandoffExporter
-from blueprint.domain import ImplementationBrief
+from blueprint.domain import (
+    ImplementationBrief,
+    UnknownSchemaModelError,
+    get_all_model_json_schemas,
+    get_model_json_schema,
+)
 from blueprint.generators.brief_generator import (
     BriefGenerator,
     generate_implementation_brief_id,
@@ -189,6 +194,17 @@ def _emit_export_preview(
     click.echo(preview_content, nl=False)
 
 
+def _emit_json_payload(payload: dict, output: Path | None) -> None:
+    """Write a JSON payload to a file or stdout."""
+    rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)
+        return
+
+    click.echo(rendered, nl=False)
+
+
 def _create_llm_provider(config) -> LLMProvider:
     """Create the configured LLM provider."""
     if config.llm_provider == "anthropic":
@@ -203,6 +219,38 @@ def _create_llm_provider(config) -> LLMProvider:
 def _resolve_llm_model(model: str) -> str:
     """Resolve CLI model aliases against the default provider."""
     return LLMClient.resolve_model(model)
+
+
+# ============================================================================
+# Schema Commands
+# ============================================================================
+
+
+@cli.group()
+def schema():
+    """Export domain record JSON Schemas."""
+    pass
+
+
+@schema.command(name="export")
+@click.argument("model_name")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write schema JSON to a file instead of stdout",
+)
+def schema_export(model_name: str, output: Path | None):
+    """Export JSON Schema for a domain model, or all models."""
+    try:
+        payload = (
+            get_all_model_json_schemas()
+            if model_name == "all"
+            else get_model_json_schema(model_name)
+        )
+    except UnknownSchemaModelError as e:
+        raise click.ClickException(str(e)) from e
+
+    _emit_json_payload(payload, output)
 
 
 # ============================================================================
