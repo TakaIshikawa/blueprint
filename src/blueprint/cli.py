@@ -95,6 +95,7 @@ from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.source_brief import SourceBriefExporter
+from blueprint.exporters.status_timeline import StatusTimelineExporter
 from blueprint.exporters.task_handoff import TaskHandoffExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.domain import (
@@ -179,10 +180,29 @@ def cli():
     pass
 
 
-@cli.command()
+class HistoryGroup(click.Group):
+    """Route `history ENTITY_ID` to the hidden show command."""
+
+    def resolve_command(self, ctx, args):
+        """Resolve history subcommands while preserving the legacy shorthand."""
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            if args and args[0] not in self.commands and "show" in self.commands:
+                return "show", self.commands["show"], args
+            raise
+
+
+@cli.group(cls=HistoryGroup)
+def history():
+    """Show or export status history for a brief, plan, or task."""
+    pass
+
+
+@history.command(name="show", hidden=True)
 @click.argument("entity_id")
 @click.option("--limit", default=50, help="Maximum number of history events to show")
-def history(entity_id: str, limit: int):
+def history_show(entity_id: str, limit: int):
     """Show status history for a brief, plan, or task."""
     config = get_config()
     store = Store(config.db_path)
@@ -203,6 +223,41 @@ def history(entity_id: str, limit: int):
         )
 
     click.echo(f"\nTotal: {len(events)} events")
+
+
+@history.command(name="export")
+@click.argument("entity_id")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Output Markdown timeline path",
+)
+@click.option("--json", "json_output", is_flag=True, help="Print JSON summary")
+def history_export(entity_id: str, output: Path | None, json_output: bool):
+    """Export status history for a brief, plan, or task."""
+    config = get_config()
+    store = Store(config.db_path)
+    exporter = StatusTimelineExporter()
+    events = store.list_status_events(entity_id=entity_id)
+
+    if output:
+        try:
+            result_path = exporter.export(entity_id, events, str(output))
+        except OSError as exc:
+            raise click.ClickException(f"Could not write history export: {exc}") from exc
+        if not json_output:
+            click.echo(f"Exported status timeline to: {result_path}")
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                exporter.render_json(entity_id, events),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif not output:
+        click.echo(exporter.render_markdown(entity_id, events), nl=False)
 
 
 # ============================================================================
