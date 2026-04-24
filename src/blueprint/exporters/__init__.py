@@ -15,6 +15,7 @@ from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.gantt import GanttExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
+from blueprint.exporters.github_projects_csv import GitHubProjectsCsvExporter
 from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
 from blueprint.exporters.html_report import HtmlReportExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
@@ -56,6 +57,7 @@ __all__ = [
     "GanttExporter",
     "GitHubActionsExporter",
     "GitHubIssuesExporter",
+    "GitHubProjectsCsvExporter",
     "GitLabIssuesExporter",
     "HtmlReportExporter",
     "JiraCsvExporter",

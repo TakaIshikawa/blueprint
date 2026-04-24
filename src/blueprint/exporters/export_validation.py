@@ -31,6 +31,7 @@ from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNE
 from blueprint.exporters.gantt import GanttExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
+from blueprint.exporters.github_projects_csv import GitHubProjectsCsvExporter
 from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
 from blueprint.exporters.html_report import HtmlReportExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
@@ -171,6 +172,7 @@ def create_exporter(target: str):
         "gantt": GanttExporter(),
         "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
+        "github-projects-csv": GitHubProjectsCsvExporter(),
         "gitlab-issues": GitLabIssuesExporter(),
         "html-report": HtmlReportExporter(),
         "jira-csv": JiraCsvExporter(),
@@ -2368,6 +2370,138 @@ def _validate_asana_csv(
     return findings
 
 
+def _validate_github_projects_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the GitHub Projects CSV task export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.reader(f, strict=True)
+            raw_rows = list(reader)
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="github_projects_csv.invalid_structure",
+                message=f"GitHub Projects CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not raw_rows:
+        return [
+            ValidationFinding(
+                code="github_projects_csv.missing_header",
+                message="GitHub Projects CSV export is missing a header row.",
+                path=str(artifact_path),
+            )
+        ]
+
+    fieldnames = raw_rows[0]
+    expected_columns = GitHubProjectsCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        findings.append(
+            ValidationFinding(
+                code="github_projects_csv.header_mismatch",
+                message=(
+                    "GitHub Projects CSV header does not match expected columns: "
+                    f"{', '.join(expected_columns)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    malformed_rows = [
+        index for index, row in enumerate(raw_rows[1:], start=2) if len(row) != len(fieldnames)
+    ]
+    if malformed_rows:
+        findings.append(
+            ValidationFinding(
+                code="github_projects_csv.invalid_structure",
+                message=(
+                    "GitHub Projects CSV rows have the wrong number of fields: "
+                    f"{', '.join(str(index) for index in malformed_rows)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    rows = [dict(zip(fieldnames, row, strict=False)) for row in raw_rows[1:]]
+    tasks = execution_plan.get("tasks", [])
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="github_projects_csv.row_count_mismatch",
+                message="GitHub Projects CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    row_task_ids = [row.get("Task ID", "") for row in rows]
+    missing_task_rows = [
+        task["id"] for task in tasks if task.get("id") and task["id"] not in row_task_ids
+    ]
+    if missing_task_rows:
+        findings.append(
+            ValidationFinding(
+                code="github_projects_csv.missing_tasks",
+                message=(
+                    "GitHub Projects CSV is missing rows for task IDs: "
+                    f"{', '.join(missing_task_rows)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    duplicate_task_ids = [
+        task_id
+        for task_id, count in Counter(task_id for task_id in row_task_ids if task_id).items()
+        if count > 1
+    ]
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="github_projects_csv.duplicate_task_id",
+                message=(
+                    "GitHub Projects CSV contains duplicate task IDs: "
+                    f"{', '.join(duplicate_task_ids)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    known_task_ids = {task["id"] for task in tasks if task.get("id")}
+    for index, row in enumerate(rows, start=2):
+        task_id = row.get("Task ID") or f"row {index}"
+        for dependency_id in _csv_multivalue(row.get("Dependencies")):
+            if dependency_id not in known_task_ids:
+                findings.append(
+                    ValidationFinding(
+                        code="github_projects_csv.unknown_dependency_id",
+                        message=(
+                            f"GitHub Projects CSV task {task_id} references unknown "
+                            f"dependency ID: {dependency_id}"
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+
+    for index, row in enumerate(rows, start=2):
+        for column in ["Title", "Body", "Task ID"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="github_projects_csv.row_missing_required_value",
+                        message=f"GitHub Projects CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_linear(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -4125,6 +4259,18 @@ def _string_items(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _csv_multivalue(value: Any) -> list[str]:
+    """Return non-empty values from a CSV cell split by newlines or commas."""
+    if not isinstance(value, str):
+        return []
+    items: list[str] = []
+    for part in re.split(r"[\n,]", value):
+        item = part.strip()
+        if item and item not in items:
+            items.append(item)
+    return items
+
+
 def _kanban_rendered_tasks_by_column(content: str) -> dict[str, list[str]]:
     """Extract rendered Kanban task IDs by status heading."""
     columns = {"pending", "in_progress", "blocked", "completed", "skipped"}
@@ -4331,6 +4477,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "asana-csv": _validate_asana_csv,
     "azure-devops-csv": _validate_azure_devops_csv,
     "github-issues": _validate_github_issues_bundle,
+    "github-projects-csv": _validate_github_projects_csv,
     "gitlab-issues": _validate_gitlab_issues,
     "html-report": _validate_html_report,
     "jira-csv": _validate_jira_csv,
