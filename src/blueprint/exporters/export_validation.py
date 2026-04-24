@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree
 
+from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
@@ -117,6 +118,7 @@ def create_exporter(target: str):
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
+        "calendar": CalendarExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
         "github-issues": GitHubIssuesExporter(),
@@ -973,6 +975,111 @@ def _validate_mermaid(
     ]
 
 
+def _validate_calendar(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate an iCalendar execution-plan export."""
+    content = artifact_path.read_text()
+    label = str(artifact_path)
+    if not content.strip():
+        return [
+            ValidationFinding(
+                code="calendar.empty",
+                message="Calendar export is empty.",
+                path=label,
+            )
+        ]
+
+    lines = _unfold_icalendar_lines(content)
+    findings: list[ValidationFinding] = []
+    if "BEGIN:VCALENDAR" not in lines or "END:VCALENDAR" not in lines:
+        findings.append(
+            ValidationFinding(
+                code="calendar.invalid_structure",
+                message="Calendar export must contain a VCALENDAR wrapper.",
+                path=label,
+            )
+        )
+    if "VERSION:2.0" not in lines:
+        findings.append(
+            ValidationFinding(
+                code="calendar.missing_version",
+                message="Calendar export must declare VERSION:2.0.",
+                path=label,
+            )
+        )
+
+    events = _icalendar_event_blocks(lines)
+    if not events:
+        findings.append(
+            ValidationFinding(
+                code="calendar.empty",
+                message="Calendar export contains no VEVENT entries.",
+                path=label,
+            )
+        )
+
+    expected_task_ids = _dated_task_ids(execution_plan)
+    expected_uids = {
+        f"blueprint-{_calendar_uid_token(execution_plan['id'])}-{_calendar_uid_token(task_id)}@blueprint"
+        for task_id in expected_task_ids
+    }
+    rendered_uids = {_icalendar_property(event, "UID") for event in events}
+    missing_uids = sorted(expected_uids - rendered_uids)
+    if missing_uids:
+        findings.append(
+            ValidationFinding(
+                code="calendar.missing_task_event",
+                message=f"Calendar export is missing dated task events: {', '.join(missing_uids)}",
+                path=label,
+            )
+        )
+
+    for index, event in enumerate(events, 1):
+        uid = _icalendar_property(event, "UID")
+        if not uid:
+            findings.append(
+                ValidationFinding(
+                    code="calendar.event_missing_uid",
+                    message=f"VEVENT {index} is missing UID.",
+                    path=label,
+                )
+            )
+        if not _icalendar_property(event, "SUMMARY"):
+            findings.append(
+                ValidationFinding(
+                    code="calendar.event_missing_summary",
+                    message=f"VEVENT {index} is missing SUMMARY.",
+                    path=label,
+                )
+            )
+        has_start = any(line.startswith("DTSTART") for line in event)
+        has_end = any(line.startswith("DTEND") for line in event)
+        if not has_start or not has_end:
+            findings.append(
+                ValidationFinding(
+                    code="calendar.event_missing_dates",
+                    message=f"VEVENT {index} must include DTSTART and DTEND.",
+                    path=label,
+                )
+            )
+
+    skipped_count = _icalendar_property(lines, "X-BLUEPRINT-SKIPPED-TASK-COUNT")
+    expected_skipped_count = len(execution_plan.get("tasks", [])) - len(expected_task_ids)
+    if skipped_count != str(expected_skipped_count):
+        findings.append(
+            ValidationFinding(
+                code="calendar.skipped_task_count_mismatch",
+                message="Calendar skipped task metadata does not match undated task count.",
+                path=label,
+            )
+        )
+
+    return findings
+
+
 def _missing_keys(
     payload: dict[str, Any],
     required_keys: list[str],
@@ -991,6 +1098,65 @@ def _missing_keys(
                 )
             )
     return findings
+
+
+def _unfold_icalendar_lines(content: str) -> list[str]:
+    """Unfold iCalendar continuation lines."""
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    lines: list[str] = []
+    for raw_line in normalized.split("\n"):
+        if not raw_line:
+            continue
+        if raw_line.startswith((" ", "\t")) and lines:
+            lines[-1] += raw_line[1:]
+        else:
+            lines.append(raw_line)
+    return lines
+
+
+def _icalendar_event_blocks(lines: list[str]) -> list[list[str]]:
+    """Extract VEVENT blocks from unfolded iCalendar lines."""
+    events: list[list[str]] = []
+    current: list[str] | None = None
+    for line in lines:
+        if line == "BEGIN:VEVENT":
+            current = [line]
+            continue
+        if current is not None:
+            current.append(line)
+            if line == "END:VEVENT":
+                events.append(current)
+                current = None
+    return events
+
+
+def _icalendar_property(lines: list[str], name: str) -> str | None:
+    """Read one iCalendar property by name, ignoring parameters."""
+    prefix = f"{name}:"
+    parameter_prefix = f"{name};"
+    for line in lines:
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+        if line.startswith(parameter_prefix):
+            _, _, value = line.partition(":")
+            return value
+    return None
+
+
+def _dated_task_ids(execution_plan: dict[str, Any]) -> list[str]:
+    """Return task IDs that should appear as calendar events."""
+    exporter = CalendarExporter()
+    dated_task_ids = []
+    for task in execution_plan.get("tasks", []):
+        date_range, _ = exporter._date_range(task)
+        if date_range is not None:
+            dated_task_ids.append(task["id"])
+    return dated_task_ids
+
+
+def _calendar_uid_token(value: str) -> str:
+    """Recreate the CalendarExporter UID token scheme."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "item"
 
 
 def _has_heading(content: str, expected: str) -> bool:
@@ -1048,6 +1214,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
+    "calendar": _validate_calendar,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "status-report": _validate_status_report,
