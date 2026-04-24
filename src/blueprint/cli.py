@@ -48,6 +48,7 @@ from blueprint.audits.source_similarity import (
 )
 from blueprint.config import get_config
 from blueprint.exporters.archive import ArchiveExporter
+from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
 from blueprint.exporters.export_validation import create_exporter, validate_export
@@ -1110,6 +1111,44 @@ def brief_readiness(brief_id: str, json_output: bool):
 
     if not result.passed:
         raise click.exceptions.Exit(1)
+
+
+@brief.command(name="review-packet")
+@click.argument("brief_id")
+@click.option(
+    "--source",
+    "include_source",
+    is_flag=True,
+    help="Include linked source brief metadata and payload summary",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the review packet to a file instead of stdout",
+)
+def brief_review_packet(brief_id: str, include_source: bool, output: Path | None):
+    """Render a Markdown review packet for an implementation brief."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    implementation_brief = store.get_implementation_brief(brief_id)
+    if not implementation_brief:
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    source_brief = None
+    if include_source:
+        source_brief = store.get_source_brief(implementation_brief["source_brief_id"])
+        if not source_brief:
+            raise click.ClickException(
+                f"Source brief not found: {implementation_brief['source_brief_id']}"
+            )
+
+    packet = BriefReviewPacketExporter().render(
+        implementation_brief,
+        source_brief=source_brief,
+        include_source=include_source,
+    )
+    _emit_text_payload(packet, output)
 
 
 def _emit_brief_readiness(result: BriefReadinessResult) -> None:
