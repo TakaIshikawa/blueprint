@@ -25,6 +25,7 @@ from blueprint.audits.execution_waves import (
     ExecutionWavesResult,
     analyze_execution_waves,
 )
+from blueprint.audits.env_inventory import EnvInventoryResult, build_env_inventory
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
@@ -230,6 +231,16 @@ def _emit_export_preview(
 def _emit_json_payload(payload: dict, output: Path | None) -> None:
     """Write a JSON payload to a file or stdout."""
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)
+        return
+
+    click.echo(rendered, nl=False)
+
+
+def _emit_text_payload(rendered: str, output: Path | None) -> None:
+    """Write a text payload to a file or stdout."""
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered)
@@ -1833,6 +1844,68 @@ def _emit_metric_counts(label: str, counts: dict[str, int]) -> None:
         return
     for key, count in counts.items():
         click.echo(f"  {key}: {count}")
+
+
+@plan.command(name="env-inventory")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output inventory as JSON")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write inventory to a file instead of stdout",
+)
+def env_inventory(plan_id: str, json_output: bool, output: Path | None):
+    """Extract environment variables and config keys from an execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    implementation_brief_id = plan.get("implementation_brief_id")
+    implementation_brief = store.get_implementation_brief(str(implementation_brief_id or ""))
+    if not implementation_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {implementation_brief_id or 'N/A'}"
+        )
+
+    result = build_env_inventory(implementation_brief, plan)
+    if json_output:
+        _emit_json_payload(result.to_dict(), output)
+        return
+
+    _emit_text_payload(_render_env_inventory(result), output)
+
+
+def _render_env_inventory(result: EnvInventoryResult) -> str:
+    """Render a human-readable environment inventory."""
+    lines = [
+        f"Plan environment inventory: {result.plan_id}",
+        f"Implementation brief: {result.brief_id}",
+        f"Items: {len(result.items)}",
+    ]
+
+    for status, heading in (
+        ("required", "Required"),
+        ("optional", "Optional"),
+        ("unknown", "Unknown"),
+    ):
+        items = result.items_by_status()[status]
+        lines.append("")
+        lines.append(f"{heading}:")
+        if not items:
+            lines.append("  none")
+            continue
+        for item in items:
+            task_ids = ", ".join(item.task_ids) if item.task_ids else "none"
+            fields = ", ".join(item.source_fields)
+            lines.append(f"  - {item.name} ({item.item_type})")
+            lines.append(f"    Fields: {fields}")
+            lines.append(f"    Tasks: {task_ids}")
+            lines.append(f"    Docs: {item.suggested_documentation}")
+
+    return "\n".join(lines) + "\n"
 
 
 @plan.command()
