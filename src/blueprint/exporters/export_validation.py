@@ -19,6 +19,7 @@ from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
 from blueprint.exporters.github_issues import GitHubIssuesExporter
+from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.mermaid import MermaidExporter
@@ -133,6 +134,7 @@ def create_exporter(target: str):
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
         "github-issues": GitHubIssuesExporter(),
+        "jira-csv": JiraCsvExporter(),
         "junit-tasks": JUnitTasksExporter(),
         "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
@@ -1231,6 +1233,97 @@ def _validate_csv_tasks(
     return findings
 
 
+def _validate_jira_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Jira CSV issue export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="jira_csv.invalid_structure",
+                message=f"Jira CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    expected_columns = JiraCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        missing = [column for column in expected_columns if column not in fieldnames]
+        extra = [column for column in fieldnames if column not in expected_columns]
+        if missing:
+            findings.append(
+                ValidationFinding(
+                    code="jira_csv.missing_column",
+                    message=f"Jira CSV export is missing required columns: {', '.join(missing)}",
+                    path=str(artifact_path),
+                )
+            )
+        if extra:
+            findings.append(
+                ValidationFinding(
+                    code="jira_csv.unexpected_column",
+                    message=f"Jira CSV export has unexpected columns: {', '.join(extra)}",
+                    path=str(artifact_path),
+                )
+            )
+
+    milestones = execution_plan.get("milestones", [])
+    tasks = execution_plan.get("tasks", [])
+    expected_row_count = len(milestones) + len(tasks)
+    if len(rows) != expected_row_count:
+        findings.append(
+            ValidationFinding(
+                code="jira_csv.row_count_mismatch",
+                message=(
+                    "Jira CSV row count does not match one row per milestone "
+                    "plus one row per task."
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    epic_rows = [row for row in rows if row.get("Issue Type") == "Epic"]
+    if len(epic_rows) != len(milestones):
+        findings.append(
+            ValidationFinding(
+                code="jira_csv.epic_count_mismatch",
+                message="Jira CSV epic row count does not match the number of milestones.",
+                path=str(artifact_path),
+            )
+        )
+
+    child_rows = [row for row in rows if row.get("Issue Type") != "Epic"]
+    if len(child_rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="jira_csv.task_count_mismatch",
+                message="Jira CSV child issue row count does not match the number of tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    for index, row in enumerate(rows, 1):
+        for column in ["Summary", "Description", "Issue Type", "External ID"]:
+            if not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="jira_csv.row_missing_required_value",
+                        message=f"Jira CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_junit_tasks(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -1827,6 +1920,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
+    "jira-csv": _validate_jira_csv,
     "calendar": _validate_calendar,
     "checklist": _validate_checklist,
     "kanban": _validate_kanban,
