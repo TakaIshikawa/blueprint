@@ -8,6 +8,7 @@ from builtins import list as builtin_list
 from typing import Any
 
 import click
+import yaml
 from pydantic import ValidationError
 
 from pathlib import Path
@@ -1535,7 +1536,7 @@ def scaffold(source_id: str, status: str, json_output: bool):
     help="Source brief ID to link this implementation brief to",
 )
 def import_brief(file_path: Path, source_brief_id: str):
-    """Import a hand-authored implementation brief JSON file."""
+    """Import a hand-authored implementation brief JSON or YAML file."""
     config = get_config()
     store = Store(config.db_path)
 
@@ -1543,13 +1544,7 @@ def import_brief(file_path: Path, source_brief_id: str):
     if not source_brief:
         raise click.ClickException(f"Source brief not found: {source_brief_id}")
 
-    try:
-        brief_payload = json.loads(file_path.read_text())
-    except json.JSONDecodeError as e:
-        raise click.ClickException(f"Invalid JSON in {file_path}: {e}") from e
-
-    if not isinstance(brief_payload, dict):
-        raise click.ClickException("Implementation brief JSON must be an object")
+    brief_payload = _load_implementation_brief_payload(file_path)
 
     brief_payload = _prepare_imported_implementation_brief(
         brief_payload,
@@ -1569,6 +1564,35 @@ def import_brief(file_path: Path, source_brief_id: str):
     click.echo(f"  Source Brief: {source_brief_id}")
     click.echo(f"  Title: {implementation_brief['title']}")
     click.echo(f"  Status: {implementation_brief['status']}")
+
+
+def _load_implementation_brief_payload(file_path: Path) -> dict:
+    """Load an implementation brief payload from a supported authored format."""
+    suffix = file_path.suffix.lower()
+    raw_payload = file_path.read_text()
+
+    if suffix == ".json":
+        try:
+            brief_payload = json.loads(raw_payload)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in {file_path}: {e}") from e
+        format_name = "JSON"
+    elif suffix in {".yaml", ".yml"}:
+        try:
+            brief_payload = yaml.safe_load(raw_payload)
+        except yaml.YAMLError as e:
+            raise click.ClickException(f"Invalid YAML in {file_path}: {e}") from e
+        format_name = "YAML"
+    else:
+        raise click.ClickException(
+            f"Unsupported implementation brief file suffix: {file_path.suffix or '<none>'}. "
+            "Use .json, .yaml, or .yml."
+        )
+
+    if not isinstance(brief_payload, dict):
+        raise click.ClickException(f"Implementation brief {format_name} must be an object")
+
+    return brief_payload
 
 
 def _prepare_imported_implementation_brief(

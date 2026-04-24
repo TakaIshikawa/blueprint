@@ -1,5 +1,6 @@
 import json
 
+import yaml
 from click.testing import CliRunner
 
 from blueprint import config as blueprint_config
@@ -83,6 +84,91 @@ def test_brief_import_requires_existing_source_brief(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert "Source brief not found: sb-missing" in result.output
+
+
+def test_brief_import_stores_valid_yaml_and_links_source(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    store = init_db(str(tmp_path / "blueprint.db"))
+    store.insert_source_brief(_source_brief())
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text(
+        yaml.safe_dump(
+            _implementation_brief(status="ready_for_planning"),
+            sort_keys=False,
+        )
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["brief", "import", str(brief_path), "--source-id", "sb-test"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Imported implementation brief ib-authored" in result.output
+
+    imported = Store(str(tmp_path / "blueprint.db")).get_implementation_brief("ib-authored")
+    assert imported["source_brief_id"] == "sb-test"
+    assert imported["status"] == "ready_for_planning"
+    assert imported["title"] == "Hand Authored Brief"
+
+
+def test_brief_import_generates_id_and_defaults_invalid_status_from_yaml(
+    tmp_path,
+    monkeypatch,
+):
+    _write_config(tmp_path, monkeypatch)
+    store = init_db(str(tmp_path / "blueprint.db"))
+    store.insert_source_brief(_source_brief())
+    brief_payload = _implementation_brief(status="not-a-status")
+    brief_payload.pop("id")
+    brief_path = tmp_path / "brief.yml"
+    brief_path.write_text(yaml.safe_dump(brief_payload, sort_keys=False))
+
+    result = CliRunner().invoke(
+        cli,
+        ["brief", "import", str(brief_path), "--source-id", "sb-test"],
+    )
+
+    assert result.exit_code == 0, result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_implementation_briefs()
+    assert len(briefs) == 1
+    assert briefs[0]["id"].startswith("ib-")
+    assert briefs[0]["source_brief_id"] == "sb-test"
+    assert briefs[0]["status"] == "draft"
+
+
+def test_brief_import_rejects_invalid_yaml_without_inserting(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    store = init_db(str(tmp_path / "blueprint.db"))
+    store.insert_source_brief(_source_brief())
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text("title: [unterminated")
+
+    result = CliRunner().invoke(
+        cli,
+        ["brief", "import", str(brief_path), "--source-id", "sb-test"],
+    )
+
+    assert result.exit_code != 0
+    assert "Invalid YAML" in result.output
+    assert Store(str(tmp_path / "blueprint.db")).list_implementation_briefs() == []
+
+
+def test_brief_import_rejects_unsupported_suffix(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    store = init_db(str(tmp_path / "blueprint.db"))
+    store.insert_source_brief(_source_brief())
+    brief_path = tmp_path / "brief.txt"
+    brief_path.write_text(json.dumps(_implementation_brief()))
+
+    result = CliRunner().invoke(
+        cli,
+        ["brief", "import", str(brief_path), "--source-id", "sb-test"],
+    )
+
+    assert result.exit_code != 0
+    assert "Unsupported implementation brief file suffix: .txt" in result.output
+    assert Store(str(tmp_path / "blueprint.db")).list_implementation_briefs() == []
 
 
 def _write_config(tmp_path, monkeypatch):
