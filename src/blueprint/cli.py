@@ -29,6 +29,7 @@ from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
 from blueprint.config import get_config
+from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
 from blueprint.exporters.export_validation import create_exporter, validate_export
 from blueprint.exporters.mermaid import MermaidExporter
@@ -2006,6 +2007,39 @@ def _resolve_dependency_tasks(
 def export():
     """Export execution plans to target engines."""
     pass
+
+
+@export.command()
+@click.argument("plan_id")
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Output .zip archive path",
+)
+def archive(plan_id: str, output: Path):
+    """Export a complete portable archive for one execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    brief = store.get_implementation_brief(plan["implementation_brief_id"])
+    if not brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {plan['implementation_brief_id']}"
+        )
+
+    source_brief = store.get_source_brief(brief["source_brief_id"])
+    result_path = ArchiveExporter().export(
+        plan,
+        brief,
+        str(output),
+        source_brief=source_brief,
+    )
+    click.echo(f"✓ Exported archive to: {result_path}")
 
 
 @export.command()
