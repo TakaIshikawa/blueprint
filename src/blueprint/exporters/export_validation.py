@@ -17,6 +17,7 @@ from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.mermaid import MermaidExporter
+from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
@@ -119,6 +120,7 @@ def create_exporter(target: str):
         "csv-tasks": CsvTasksExporter(),
         "github-issues": GitHubIssuesExporter(),
         "junit-tasks": JUnitTasksExporter(),
+        "release-notes": ReleaseNotesExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
     }
@@ -428,6 +430,32 @@ def _validate_status_report(
         required_snippets=[
             f"- Plan ID: `{execution_plan['id']}`",
             f"- Title: {implementation_brief['title']}",
+        ],
+    )
+
+
+def _validate_release_notes(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the release notes Markdown export."""
+    return _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Release Notes: {implementation_brief['title']}",
+            "## Summary",
+            "## Milestones",
+            "## Completed Tasks",
+            "## Pending Tasks",
+            "## Validation Notes",
+            "## Known Risks",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
         ],
     )
 
@@ -901,6 +929,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
+    "release-notes": _validate_release_notes,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
     "junit-tasks": _validate_junit_tasks,

@@ -86,6 +86,7 @@ EXPORT_TARGET_CHOICES = (
     "csv-tasks",
     "github-issues",
     "junit-tasks",
+    "release-notes",
     "status-report",
     "task-bundle",
     "all",
@@ -2453,6 +2454,7 @@ def preview(plan_id: str, target: str, output: Path | None, require_coherence: b
             "csv-tasks",
             "github-issues",
             "junit-tasks",
+            "release-notes",
             "status-report",
             "task-bundle",
         ]
@@ -2504,6 +2506,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "csv-tasks",
             "github-issues",
             "junit-tasks",
+            "release-notes",
             "status-report",
             "task-bundle",
         ]
