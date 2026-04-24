@@ -18,6 +18,7 @@ from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
+from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
@@ -133,6 +134,7 @@ def create_exporter(target: str):
         "milestone-summary": MilestoneSummaryExporter(),
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
+        "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
         "jira-csv": JiraCsvExporter(),
         "junit-tasks": JUnitTasksExporter(),
@@ -1620,6 +1622,98 @@ def _validate_vscode_tasks(
     return findings
 
 
+def _validate_github_actions(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the GitHub Actions workflow export."""
+    try:
+        import yaml
+
+        payload = yaml.safe_load(artifact_path.read_text())
+    except yaml.YAMLError as exc:
+        return [
+            ValidationFinding(
+                code="github_actions.invalid_yaml",
+                message=f"GitHub Actions workflow could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="github_actions.invalid_shape",
+                message="GitHub Actions workflow must be a YAML object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    findings.extend(
+        _missing_keys(
+            payload,
+            ["name", "on", "jobs"],
+            "github_actions.missing_key",
+            str(artifact_path),
+        )
+    )
+
+    jobs = payload.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        return findings + [
+            ValidationFinding(
+                code="github_actions.invalid_jobs",
+                message="GitHub Actions workflow must include a non-empty jobs object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    known_job_ids = set(jobs)
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            findings.append(
+                ValidationFinding(
+                    code="github_actions.invalid_job",
+                    message=f"GitHub Actions job '{job_id}' must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        needs = job.get("needs", [])
+        if isinstance(needs, str):
+            needs = [needs]
+        if not isinstance(needs, list):
+            findings.append(
+                ValidationFinding(
+                    code="github_actions.invalid_needs",
+                    message=f"GitHub Actions job '{job_id}' needs must be a string or list.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        unknown_needs = sorted(
+            (need for need in needs if not isinstance(need, str) or need not in known_job_ids),
+            key=str,
+        )
+        if unknown_needs:
+            findings.append(
+                ValidationFinding(
+                    code="github_actions.unknown_needs",
+                    message=(
+                        f"GitHub Actions job '{job_id}' references unknown needs: "
+                        f"{', '.join(str(need) for need in unknown_needs)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
 def _validate_mermaid(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -1930,6 +2024,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "csv-tasks": _validate_csv_tasks,
     "task-queue-jsonl": _validate_task_queue_jsonl,
     "file-impact-map": _validate_file_impact_map,
+    "github-actions": _validate_github_actions,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
     "milestone-summary": _validate_milestone_summary,

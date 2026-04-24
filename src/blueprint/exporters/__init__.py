@@ -7,6 +7,7 @@ from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
+from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.kanban import KanbanExporter
@@ -28,6 +29,7 @@ __all__ = [
     "DependencyMatrixExporter",
     "ExportManifestExporter",
     "FileImpactMapExporter",
+    "GitHubActionsExporter",
     "GitHubIssuesExporter",
     "JiraCsvExporter",
     "KanbanExporter",
