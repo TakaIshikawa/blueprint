@@ -28,6 +28,10 @@ from blueprint.audits.execution_waves import (
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
+from blueprint.audits.brief_readiness import (
+    BriefReadinessResult,
+    audit_brief_readiness,
+)
 from blueprint.audits.risk_coverage import (
     RiskCoverageResult,
     audit_risk_coverage,
@@ -1066,6 +1070,53 @@ def update(brief_id: str, status: str, reason: str | None):
         click.echo(f"✓ Updated brief {brief_id} status to {status}")
     else:
         click.echo(f"Brief not found: {brief_id}", err=True)
+
+
+@brief.command(name="readiness")
+@click.argument("brief_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def brief_readiness(brief_id: str, json_output: bool):
+    """Audit whether an implementation brief is ready for plan generation."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    implementation_brief = store.get_implementation_brief(brief_id)
+    if not implementation_brief:
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    result = audit_brief_readiness(implementation_brief)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_brief_readiness(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_brief_readiness(result: BriefReadinessResult) -> None:
+    """Render human-readable implementation brief readiness results."""
+    click.echo(f"Brief readiness audit: {result.brief_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"({result.blocking_count} blocking, {result.warning_count} warnings)"
+    )
+
+    grouped_findings = result.findings_by_severity()
+    if grouped_findings["blocking"]:
+        click.echo("\nBlocking findings:")
+        for finding in grouped_findings["blocking"]:
+            click.echo(f"  - {finding.field}: {finding.message}")
+            click.echo(f"    Remediation: {finding.remediation}")
+    else:
+        click.echo("No blocking findings found.")
+
+    if grouped_findings["warning"]:
+        click.echo("\nWarnings:")
+        for finding in grouped_findings["warning"]:
+            click.echo(f"  - {finding.field}: {finding.message}")
+            click.echo(f"    Remediation: {finding.remediation}")
 
 
 @brief.command(name="risk-coverage")
