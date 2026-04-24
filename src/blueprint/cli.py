@@ -99,6 +99,7 @@ from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.source_brief import SourceBriefExporter
+from blueprint.exporters.source_manifest import SourceManifestExporter
 from blueprint.exporters.status_timeline import StatusTimelineExporter
 from blueprint.exporters.task_handoff import TaskHandoffExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
@@ -1133,6 +1134,35 @@ def source_export(brief_id: str, output_format: str, output: Path | None):
 
     rendered = SourceBriefExporter().render(brief, output_format=output_format)
     _emit_text_payload(rendered, output)
+
+
+@source.command(name="manifest")
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write Markdown manifest to this path",
+)
+@click.option("--source-project", help="Filter by source project")
+@click.option(
+    "--limit",
+    default=50,
+    show_default=True,
+    type=click.IntRange(min=0),
+    help="Maximum number of source briefs to include",
+)
+def source_manifest(output: Path, source_project: str | None, limit: int):
+    """Export a Markdown manifest of source briefs."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    briefs = store.list_source_briefs(source_project=source_project, limit=limit)
+    SourceManifestExporter().export(
+        briefs,
+        str(output),
+        source_project=source_project,
+        limit=limit,
+    )
 
 
 @source.command()

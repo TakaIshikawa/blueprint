@@ -24,6 +24,7 @@ from blueprint.exporters.relay_yaml import RelayYamlExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
+from blueprint.exporters.source_manifest import SourceManifestExporter
 from blueprint.exporters.status_timeline import StatusTimelineExporter
 from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
@@ -56,6 +57,7 @@ __all__ = [
     "RiskRegisterExporter",
     "SlackDigestExporter",
     "SourceBriefExporter",
+    "SourceManifestExporter",
     "StatusTimelineExporter",
     "TaskfileExporter",
     "TaskQueueJsonlExporter",
