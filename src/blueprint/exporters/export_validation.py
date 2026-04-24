@@ -21,6 +21,7 @@ from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
+from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
@@ -141,6 +142,7 @@ def create_exporter(target: str):
         "file-impact-map": FileImpactMapExporter(),
         "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
+        "gitlab-issues": GitLabIssuesExporter(),
         "jira-csv": JiraCsvExporter(),
         "linear": LinearExporter(),
         "junit-tasks": JUnitTasksExporter(),
@@ -1548,6 +1550,135 @@ def _validate_linear(
     return findings
 
 
+def _validate_gitlab_issues(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the GitLab issue JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="gitlab_issues.invalid_json",
+                message=f"GitLab issues export is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, list):
+        return [
+            ValidationFinding(
+                code="gitlab_issues.invalid_shape",
+                message="GitLab issues export must be a JSON array.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    expected_tasks = execution_plan.get("tasks", [])
+    if len(payload) != len(expected_tasks):
+        findings.append(
+            ValidationFinding(
+                code="gitlab_issues.task_count_mismatch",
+                message="GitLab issue count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    task_occurrences: dict[str, int] = {}
+    for index, issue in enumerate(payload, 1):
+        if not isinstance(issue, dict):
+            findings.append(
+                ValidationFinding(
+                    code="gitlab_issues.issue.invalid_shape",
+                    message=f"GitLab issue {index} must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        findings.extend(
+            _missing_keys(
+                issue,
+                ["title", "description", "labels", "milestone", "weight", "metadata"],
+                "gitlab_issues.issue.missing_key",
+                str(artifact_path),
+            )
+        )
+
+        for field in ["title", "description", "milestone"]:
+            if not issue.get(field):
+                findings.append(
+                    ValidationFinding(
+                        code="gitlab_issues.issue.missing_required_value",
+                        message=f"GitLab issue {index} is missing {field}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+        if not isinstance(issue.get("labels"), list):
+            findings.append(
+                ValidationFinding(
+                    code="gitlab_issues.issue.labels.invalid_shape",
+                    message=f"GitLab issue {index} labels must be a list.",
+                    path=str(artifact_path),
+                )
+            )
+
+        metadata = issue.get("metadata")
+        if isinstance(metadata, dict):
+            task_id = metadata.get("task_id")
+            if isinstance(task_id, str):
+                task_occurrences[task_id] = task_occurrences.get(task_id, 0) + 1
+            else:
+                findings.append(
+                    ValidationFinding(
+                        code="gitlab_issues.issue.metadata.missing_task_id",
+                        message=f"GitLab issue {index} metadata is missing task_id.",
+                        path=str(artifact_path),
+                    )
+                )
+        else:
+            findings.append(
+                ValidationFinding(
+                    code="gitlab_issues.issue.metadata.invalid_shape",
+                    message=f"GitLab issue {index} metadata must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for task in expected_tasks:
+        occurrences = task_occurrences.get(task["id"], 0)
+        if occurrences != 1:
+            findings.append(
+                ValidationFinding(
+                    code="gitlab_issues.task_occurrence_mismatch",
+                    message=(
+                        f"Task {task['id']} appears {occurrences} times "
+                        "in the GitLab issues export."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(task_occurrences) - {task["id"] for task in expected_tasks})
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="gitlab_issues.unexpected_task",
+                message=(
+                    "GitLab issues export contains unexpected tasks: "
+                    f"{', '.join(extra_task_ids)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
 def _validate_junit_tasks(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -2555,6 +2686,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
+    "gitlab-issues": _validate_gitlab_issues,
     "jira-csv": _validate_jira_csv,
     "linear": _validate_linear,
     "calendar": _validate_calendar,
