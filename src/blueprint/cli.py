@@ -58,6 +58,7 @@ from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.manual_importer import ManualBriefImporter
 from blueprint.importers.max_importer import MaxImporter
 from blueprint.llm.client import LLMClient
+from blueprint.llm.estimator import PromptEstimate, estimate_prompt
 from blueprint.llm.provider import LLMProvider
 from blueprint.store import Store, init_db
 
@@ -183,6 +184,21 @@ def _emit_prompt_preview(prompt: str, output: Path | None) -> None:
         return
 
     click.echo(prompt, nl=False)
+
+
+def _emit_prompt_estimate(estimate: PromptEstimate, json_output: bool) -> None:
+    """Write a prompt estimate as JSON or human-readable text."""
+    payload = estimate.to_dict()
+    if json_output:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    click.echo(f"Model: {payload['model']}")
+    click.echo(f"Resolved model: {payload['resolved_model']}")
+    click.echo(f"Characters: {payload['characters']}")
+    click.echo(f"Words: {payload['words']}")
+    click.echo(f"Estimated tokens: {payload['estimated_tokens']}")
+    click.echo(f"Estimated input cost (USD): ${payload['estimated_input_cost_usd']:.6f}")
 
 
 def _emit_export_preview(
@@ -730,9 +746,7 @@ def similar(brief_id: str, limit: int, threshold: float, json_output: bool):
         click.echo(f"No similar source briefs found for {brief_id}")
         return
 
-    click.echo(
-        f"\n{'ID':<15} {'Score':<7} {'Source':<12} {'Matched Fields':<36} {'Title':<40}"
-    )
+    click.echo(f"\n{'ID':<15} {'Score':<7} {'Source':<12} {'Matched Fields':<36} {'Title':<40}")
     click.echo("-" * 115)
     for match in matches:
         click.echo(
@@ -774,6 +788,28 @@ def brief_prompt(source_id: str, output: Path | None):
         raise click.ClickException(f"Source brief not found: {source_id}")
 
     _emit_prompt_preview(BriefGenerator.build_prompt(source_brief), output)
+
+
+@brief.command(name="estimate")
+@click.argument("source_id")
+@click.option(
+    "--model",
+    type=click.Choice(["opus", "sonnet"]),
+    default="opus",
+    help="LLM model to estimate (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output estimate as JSON")
+def brief_estimate(source_id: str, model: str, json_output: bool):
+    """Estimate implementation brief generation prompt size and input cost."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    source_brief = store.get_source_brief(source_id)
+    if not source_brief:
+        raise click.ClickException(f"Source brief not found: {source_id}")
+
+    estimate = estimate_prompt(BriefGenerator.build_prompt(source_brief), model=model)
+    _emit_prompt_estimate(estimate, json_output)
 
 
 @brief.command()
@@ -1009,6 +1045,28 @@ def plan_prompt(brief_id: str, output: Path | None):
         raise click.ClickException(f"Implementation brief not found: {brief_id}")
 
     _emit_prompt_preview(PlanGenerator.build_prompt(implementation_brief), output)
+
+
+@plan.command(name="estimate")
+@click.argument("brief_id")
+@click.option(
+    "--model",
+    type=click.Choice(["opus", "sonnet"]),
+    default="opus",
+    help="LLM model to estimate (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output estimate as JSON")
+def plan_estimate(brief_id: str, model: str, json_output: bool):
+    """Estimate execution plan generation prompt size and input cost."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    implementation_brief = store.get_implementation_brief(brief_id)
+    if not implementation_brief:
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    estimate = estimate_prompt(PlanGenerator.build_prompt(implementation_brief), model=model)
+    _emit_prompt_estimate(estimate, json_output)
 
 
 @plan.command()
