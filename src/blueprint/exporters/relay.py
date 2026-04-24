@@ -38,9 +38,21 @@ class RelayExporter(TargetExporter):
             execution_plan,
             implementation_brief,
         )
+        relay_export = self.render_payload(execution_plan, implementation_brief)
 
-        # Build Relay-compatible structure
-        relay_export = {
+        # Write to file
+        with open(output_path, 'w') as f:
+            json.dump(relay_export, f, indent=2)
+
+        return output_path
+
+    def render_payload(
+        self,
+        execution_plan: dict[str, Any],
+        implementation_brief: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the normalized Relay payload."""
+        return {
             "schema_version": "blueprint.relay.v1",
             "objective": {
                 "title": implementation_brief["title"],
@@ -86,12 +98,6 @@ class RelayExporter(TargetExporter):
             },
             "handoff_prompt": execution_plan.get("handoff_prompt", ""),
         }
-
-        # Write to file
-        with open(output_path, 'w') as f:
-            json.dump(relay_export, f, indent=2)
-
-        return output_path
 
     def _get_milestone_id(self, milestone_name: str, milestones: list[dict]) -> str:
         """Get milestone ID from name."""

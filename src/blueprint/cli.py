@@ -132,6 +132,7 @@ TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skippe
 EXPORT_TARGET_CHOICES = (
     "adr",
     "relay",
+    "relay-yaml",
     "smoothie",
     "codex",
     "claude-code",

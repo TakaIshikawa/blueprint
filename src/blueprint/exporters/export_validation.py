@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree
 
+import yaml
+
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
@@ -32,6 +34,7 @@ from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
+from blueprint.exporters.relay_yaml import RelayYamlExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.risk_register import risk_identifier
 from blueprint.exporters.slack_digest import SlackDigestExporter
@@ -135,6 +138,7 @@ def create_exporter(target: str):
     exporters = {
         "adr": ADRExporter(),
         "relay": RelayExporter(),
+        "relay-yaml": RelayYamlExporter(),
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
@@ -204,11 +208,58 @@ def _validate_relay(
             )
         ]
 
+    return _validate_relay_payload(
+        payload,
+        artifact_path,
+        execution_plan,
+        invalid_shape_code="relay.invalid_shape",
+        code_prefix="relay",
+        format_label="JSON",
+    )
+
+
+def _validate_relay_yaml(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Relay YAML export."""
+    try:
+        payload = yaml.safe_load(artifact_path.read_text())
+    except yaml.YAMLError as exc:
+        return [
+            ValidationFinding(
+                code="relay_yaml.invalid_yaml",
+                message=f"Relay YAML export is not valid YAML: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    return _validate_relay_payload(
+        payload,
+        artifact_path,
+        execution_plan,
+        invalid_shape_code="relay_yaml.invalid_shape",
+        code_prefix="relay_yaml",
+        format_label="YAML",
+    )
+
+
+def _validate_relay_payload(
+    payload: Any,
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    *,
+    invalid_shape_code: str,
+    code_prefix: str,
+    format_label: str,
+) -> list[ValidationFinding]:
+    """Validate a parsed Relay export payload."""
     if not isinstance(payload, dict):
         return [
             ValidationFinding(
-                code="relay.invalid_shape",
-                message="Relay export must be a JSON object.",
+                code=invalid_shape_code,
+                message=f"Relay export must be a {format_label} object.",
                 path=str(artifact_path),
             )
         ]
@@ -222,7 +273,9 @@ def _validate_relay(
         "tasks",
         "validation",
     ]
-    findings.extend(_missing_keys(payload, required_keys, "relay.missing_key", str(artifact_path)))
+    findings.extend(
+        _missing_keys(payload, required_keys, f"{code_prefix}.missing_key", str(artifact_path))
+    )
 
     objective = payload.get("objective")
     if isinstance(objective, dict):
@@ -230,14 +283,14 @@ def _validate_relay(
             _missing_keys(
                 objective,
                 ["title", "problem", "mvp_goal", "success_criteria"],
-                "relay.objective.missing_key",
+                f"{code_prefix}.objective.missing_key",
                 str(artifact_path),
             )
         )
     else:
         findings.append(
             ValidationFinding(
-                code="relay.objective.invalid_shape",
+                code=f"{code_prefix}.objective.invalid_shape",
                 message="Relay export objective must be an object.",
                 path=str(artifact_path),
             )
@@ -247,7 +300,7 @@ def _validate_relay(
     if not isinstance(milestones, list):
         findings.append(
             ValidationFinding(
-                code="relay.milestones.invalid_shape",
+                code=f"{code_prefix}.milestones.invalid_shape",
                 message="Relay export milestones must be a list.",
                 path=str(artifact_path),
             )
@@ -257,7 +310,7 @@ def _validate_relay(
             if not isinstance(milestone, dict):
                 findings.append(
                     ValidationFinding(
-                        code="relay.milestone.invalid_shape",
+                        code=f"{code_prefix}.milestone.invalid_shape",
                         message=f"Relay milestone {index} must be an object.",
                         path=str(artifact_path),
                     )
@@ -267,7 +320,7 @@ def _validate_relay(
                 _missing_keys(
                     milestone,
                     ["id", "name"],
-                    "relay.milestone.missing_key",
+                    f"{code_prefix}.milestone.missing_key",
                     str(artifact_path),
                 )
             )
@@ -276,28 +329,53 @@ def _validate_relay(
     if not isinstance(tasks, list):
         findings.append(
             ValidationFinding(
-                code="relay.tasks.invalid_shape",
+                code=f"{code_prefix}.tasks.invalid_shape",
                 message="Relay export tasks must be a list.",
                 path=str(artifact_path),
             )
         )
     else:
+        expected_task_ids = {task["id"] for task in execution_plan.get("tasks", [])}
+        rendered_task_ids: list[str] = []
         for index, task in enumerate(tasks, 1):
             if not isinstance(task, dict):
                 findings.append(
                     ValidationFinding(
-                        code="relay.task.invalid_shape",
+                        code=f"{code_prefix}.task.invalid_shape",
                         message=f"Relay task {index} must be an object.",
                         path=str(artifact_path),
                     )
                 )
                 continue
+            task_id = task.get("id")
+            if task_id is not None:
+                rendered_task_ids.append(task_id)
             findings.extend(
                 _missing_keys(
                     task,
                     ["id", "milestone_id", "title", "description", "depends_on", "files"],
-                    "relay.task.missing_key",
+                    f"{code_prefix}.task.missing_key",
                     str(artifact_path),
+                )
+            )
+        rendered_task_id_set = set(rendered_task_ids)
+        if len(tasks) != len(expected_task_ids):
+            findings.append(
+                ValidationFinding(
+                    code=f"{code_prefix}.task_count_mismatch",
+                    message=(
+                        f"Relay export contains {len(tasks)} tasks, "
+                        f"expected {len(expected_task_ids)}."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        for missing_task_id in sorted(expected_task_ids - rendered_task_id_set):
+            findings.append(
+                ValidationFinding(
+                    code=f"{code_prefix}.missing_task",
+                    message=f"Relay export is missing task '{missing_task_id}'.",
+                    path=str(artifact_path),
                 )
             )
 
@@ -307,14 +385,14 @@ def _validate_relay(
             _missing_keys(
                 validation,
                 ["commands"],
-                "relay.validation.missing_key",
+                f"{code_prefix}.validation.missing_key",
                 str(artifact_path),
             )
         )
     else:
         findings.append(
             ValidationFinding(
-                code="relay.validation.invalid_shape",
+                code=f"{code_prefix}.validation.invalid_shape",
                 message="Relay export validation block must be an object.",
                 path=str(artifact_path),
             )
@@ -3164,6 +3242,7 @@ def _blocked_reason(task: dict[str, Any]) -> str | None:
 _VALIDATORS: dict[str, ValidationCheck] = {
     "adr": _validate_adr,
     "relay": _validate_relay,
+    "relay-yaml": _validate_relay_yaml,
     "codex": _validate_codex,
     "claude-code": _validate_claude_code,
     "smoothie": _validate_smoothie,

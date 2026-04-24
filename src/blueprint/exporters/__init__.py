@@ -19,6 +19,7 @@ from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
+from blueprint.exporters.relay_yaml import RelayYamlExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
@@ -48,6 +49,7 @@ __all__ = [
     "MilestoneSummaryExporter",
     "RaciMatrixExporter",
     "ReleaseNotesExporter",
+    "RelayYamlExporter",
     "RiskRegisterExporter",
     "SlackDigestExporter",
     "SourceBriefExporter",
