@@ -1,5 +1,10 @@
 """Audit helpers for Blueprint records."""
 
+from blueprint.audits.blocked_impact import (
+    BlockedImpactResult,
+    BlockedTaskImpact,
+    audit_blocked_impact,
+)
 from blueprint.audits.brief_readiness import (
     BriefReadinessFinding,
     BriefReadinessResult,
@@ -65,6 +70,8 @@ from blueprint.audits.workload import (
 )
 
 __all__ = [
+    "BlockedImpactResult",
+    "BlockedTaskImpact",
     "BriefReadinessFinding",
     "BriefReadinessResult",
     "AcceptanceQualityFinding",
@@ -95,6 +102,7 @@ __all__ = [
     "TaskSplittingResult",
     "WorkloadOverload",
     "WorkloadResult",
+    "audit_blocked_impact",
     "audit_brief_readiness",
     "audit_acceptance_quality",
     "audit_task_splitting",

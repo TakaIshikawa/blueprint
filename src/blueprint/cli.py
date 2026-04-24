@@ -17,6 +17,10 @@ from blueprint.audits.critical_path import (
     CriticalPathResult,
     analyze_critical_path,
 )
+from blueprint.audits.blocked_impact import (
+    BlockedImpactResult,
+    audit_blocked_impact,
+)
 from blueprint.audits.acceptance_quality import (
     DEFAULT_MIN_LENGTH as ACCEPTANCE_QUALITY_DEFAULT_MIN_LENGTH,
     AcceptanceQualityResult,
@@ -2930,6 +2934,27 @@ def blockers(plan_id: str, json_output: bool):
         click.echo(f"  Impacted count: {blocker['impacted_count']}")
 
 
+@task.command(name="blocked-impact")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output blocked impact as JSON")
+def blocked_impact(plan_id: str, json_output: bool):
+    """Audit how blocked tasks affect downstream execution."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_blocked_impact(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _emit_blocked_impact(result)
+
+
 @task.command(name="critical-path")
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output critical path as JSON")
@@ -3061,6 +3086,50 @@ def _emit_critical_path(result: CriticalPathResult) -> None:
         click.echo(
             "     Blocking dependencies: "
             + (", ".join(task.blocking_dependencies) if task.blocking_dependencies else "none")
+        )
+
+
+def _emit_blocked_impact(result: BlockedImpactResult) -> None:
+    """Render human-readable blocked task impact audit results."""
+    click.echo(f"Blocked task impact audit: {result.plan_id}")
+
+    if not result.blocked_tasks:
+        click.echo("No blocked execution tasks found.")
+        return
+
+    for blocked_task in result.blocked_tasks:
+        click.echo(f"\n{blocked_task.blocked_task_id} - {blocked_task.blocked_task_title}")
+        click.echo(f"  Severity: {blocked_task.severity}")
+        click.echo(f"  Reason: {blocked_task.blocked_reason or 'N/A'}")
+        click.echo(f"  Milestone: {blocked_task.milestone or 'N/A'}")
+        click.echo(
+            "  Impacted milestones: "
+            + (
+                ", ".join(blocked_task.impacted_milestones)
+                if blocked_task.impacted_milestones
+                else "none"
+            )
+        )
+        click.echo(
+            "  Direct dependents: "
+            + (
+                ", ".join(blocked_task.direct_dependents)
+                if blocked_task.direct_dependents
+                else "none"
+            )
+        )
+        click.echo(
+            "  Transitive dependents: "
+            + (
+                ", ".join(blocked_task.transitive_dependents)
+                if blocked_task.transitive_dependents
+                else "none"
+            )
+        )
+        click.echo(f"  Impacted count: {blocked_task.impacted_count}")
+        click.echo(
+            "  Critical dependency position: "
+            + ("yes" if blocked_task.critical_dependency_position else "no")
         )
 
 
