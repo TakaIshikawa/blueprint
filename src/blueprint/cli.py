@@ -127,6 +127,7 @@ from blueprint.importers.graph_importer import GraphImporter
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.manual_importer import ManualBriefImporter
 from blueprint.importers.max_importer import MaxImporter
+from blueprint.importers.obsidian_importer import ObsidianImporter
 from blueprint.importers.plan_markdown_importer import (
     PlanMarkdownImporter,
     PlanMarkdownImportError,
@@ -991,6 +992,59 @@ def manual(file_path: str, replace: bool, skip_existing: bool):
         click.echo(f"✗ Import failed: {e}", err=True)
 
 
+@import_cmd.command(name="obsidian-note")
+@click.argument("path")
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def obsidian_note(path: str, replace: bool, skip_existing: bool):
+    """Import an Obsidian markdown note from a vault."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = ObsidianImporter()
+
+    click.echo(f"Importing Obsidian note from: {path}")
+    try:
+        source_brief = importer.import_from_source(path)
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
+
+        source_brief_id = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
+
+        if existing_source_brief and replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        elif existing_source_brief:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        else:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  Domain: {source_brief['domain'] or 'N/A'}")
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
+
+
 @import_cmd.command(name="manual-dir")
 @click.argument(
     "directory",
@@ -1081,6 +1135,116 @@ def manual_dir(
 
     click.echo(f"Imported: {counts['imported']}")
     click.echo(f"Skipped: {counts['skipped']}")
+    click.echo(f"Failed: {counts['failed']}")
+    click.echo(f"Total: {counts['total']}")
+
+    for result in results:
+        status = result["status"]
+        source_brief_id = result["source_brief_id"] or "N/A"
+        detail = f" ({result['error']})" if result["error"] else ""
+        click.echo(f"- {status}: {result['relative_path']} [{source_brief_id}]{detail}")
+
+
+@import_cmd.command(name="obsidian-dir")
+@click.argument(
+    "directory",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+@click.option(
+    "--glob",
+    "glob_pattern",
+    default="*.md",
+    show_default=True,
+    help="File glob to import",
+)
+@click.option("--recursive", is_flag=True, help="Include files in nested directories")
+@click.option(
+    "--replace", is_flag=True, help="Replace existing imported briefs from the same source"
+)
+@click.option("--skip-existing", is_flag=True, help="Skip import if a source brief already exists")
+@click.option("--json", "json_output", is_flag=True, help="Output import results as JSON")
+def obsidian_dir(
+    directory: Path,
+    glob_pattern: str,
+    recursive: bool,
+    replace: bool,
+    skip_existing: bool,
+    json_output: bool,
+):
+    """Import Obsidian markdown notes from a vault directory."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = ObsidianImporter()
+    directory = directory.expanduser().resolve()
+    paths = _find_manual_directory_files(directory, glob_pattern, recursive)
+
+    results: list[dict[str, str | None]] = []
+    counts = {
+        "imported": 0,
+        "skipped": 0,
+        "replaced": 0,
+        "failed": 0,
+        "total": len(paths),
+    }
+
+    for path in paths:
+        result: dict[str, str | None] = {
+            "file": str(path),
+            "relative_path": path.relative_to(directory).as_posix(),
+            "status": None,
+            "source_brief_id": None,
+            "error": None,
+        }
+
+        try:
+            source_brief = importer.import_from_source(str(path))
+            existing_source_brief = store.get_source_brief_by_source(
+                source_project=source_brief["source_project"],
+                source_entity_type=source_brief["source_entity_type"],
+                source_id=source_brief["source_id"],
+            )
+            source_brief_id = store.upsert_source_brief(
+                source_brief,
+                replace=replace,
+                skip_existing=skip_existing,
+            )
+        except Exception as e:
+            result["status"] = "failed"
+            result["error"] = str(e)
+            counts["failed"] += 1
+            results.append(result)
+            continue
+
+        result["source_brief_id"] = source_brief_id
+        if existing_source_brief and replace:
+            result["status"] = "replaced"
+            counts["replaced"] += 1
+        elif existing_source_brief:
+            result["status"] = "skipped"
+            counts["skipped"] += 1
+        else:
+            result["status"] = "imported"
+            counts["imported"] += 1
+        results.append(result)
+
+    payload = {
+        "directory": str(directory),
+        "glob": glob_pattern,
+        "recursive": recursive,
+        "counts": counts,
+        "files": results,
+    }
+
+    if json_output:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    click.echo(f"Imported: {counts['imported']}")
+    click.echo(f"Skipped: {counts['skipped']}")
+    click.echo(f"Replaced: {counts['replaced']}")
     click.echo(f"Failed: {counts['failed']}")
     click.echo(f"Total: {counts['total']}")
 
