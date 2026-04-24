@@ -6,7 +6,9 @@ import csv
 import json
 import re
 import tempfile
+from collections import Counter
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree
@@ -26,6 +28,7 @@ from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNE
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
+from blueprint.exporters.html_report import HtmlReportExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
@@ -156,6 +159,7 @@ def create_exporter(target: str):
         "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
         "gitlab-issues": GitLabIssuesExporter(),
+        "html-report": HtmlReportExporter(),
         "jira-csv": JiraCsvExporter(),
         "linear": LinearExporter(),
         "junit-tasks": JUnitTasksExporter(),
@@ -552,6 +556,123 @@ def _validate_status_report(
             f"- Title: {implementation_brief['title']}",
         ],
     )
+
+
+class _HtmlReportParser(HTMLParser):
+    """Extract structural markers from the HTML report."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sections: set[str] = set()
+        self.task_ids: list[str] = []
+        self._table_depth = 0
+        self._in_task_table = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        section = attrs_dict.get("data-section")
+        if section:
+            self.sections.add(section)
+
+        if tag == "table" and (
+            attrs_dict.get("id") == "task-table"
+            or attrs_dict.get("data-task-table") == "true"
+        ):
+            self._in_task_table = True
+            self._table_depth = 1
+            return
+
+        if self._in_task_table:
+            if tag == "table":
+                self._table_depth += 1
+            if tag == "tr" and attrs_dict.get("data-task-id") is not None:
+                self.task_ids.append(attrs_dict["data-task-id"] or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._in_task_table and tag == "table":
+            self._table_depth -= 1
+            if self._table_depth <= 0:
+                self._in_task_table = False
+
+
+def _validate_html_report(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the stakeholder HTML report structural contract."""
+    content = artifact_path.read_text()
+    parser = _HtmlReportParser()
+    parser.feed(content)
+
+    findings: list[ValidationFinding] = []
+    required_sections = {
+        "summary",
+        "brief-summary",
+        "status-counts",
+        "milestones",
+        "tasks",
+        "dependencies",
+        "risks",
+        "validation-plan",
+    }
+    for section in sorted(required_sections - parser.sections):
+        findings.append(
+            ValidationFinding(
+                code="html_report.missing_section",
+                message=f"HTML report is missing section marker '{section}'.",
+                path=str(artifact_path),
+            )
+        )
+
+    if not content.strip():
+        findings.append(
+            ValidationFinding(
+                code="html_report.empty",
+                message="HTML report is empty.",
+                path=str(artifact_path),
+            )
+        )
+
+    expected_counts = Counter(task["id"] for task in execution_plan.get("tasks", []))
+    rendered_counts = Counter(parser.task_ids)
+    expected_total = sum(expected_counts.values())
+    rendered_total = sum(rendered_counts.values())
+    if rendered_total != expected_total:
+        findings.append(
+            ValidationFinding(
+                code="html_report.task_count_mismatch",
+                message=(
+                    f"HTML report task table contains {rendered_total} task rows, "
+                    f"expected {expected_total}."
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    for task_id in sorted(expected_counts):
+        if rendered_counts[task_id] != 1:
+            findings.append(
+                ValidationFinding(
+                    code="html_report.task_occurrence_mismatch",
+                    message=(
+                        f"Task '{task_id}' appears {rendered_counts[task_id]} times "
+                        "in the HTML report task table; expected exactly once."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    for task_id in sorted(set(rendered_counts) - set(expected_counts)):
+        findings.append(
+            ValidationFinding(
+                code="html_report.unexpected_task",
+                message=f"HTML report task table includes unexpected task '{task_id}'.",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
 
 
 def _validate_slack_digest(
@@ -3308,6 +3429,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "azure-devops-csv": _validate_azure_devops_csv,
     "github-issues": _validate_github_issues_bundle,
     "gitlab-issues": _validate_gitlab_issues,
+    "html-report": _validate_html_report,
     "jira-csv": _validate_jira_csv,
     "linear": _validate_linear,
     "calendar": _validate_calendar,

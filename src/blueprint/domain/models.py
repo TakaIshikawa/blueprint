@@ -29,6 +29,7 @@ ExportFormat = Literal[
     "xml",
     "icalendar",
     "jsonl",
+    "html",
 ]
 
 
