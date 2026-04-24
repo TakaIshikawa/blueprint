@@ -28,6 +28,11 @@ from blueprint.audits.execution_waves import (
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
+from blueprint.audits.source_similarity import (
+    DEFAULT_LIMIT as SOURCE_SIMILARITY_DEFAULT_LIMIT,
+    DEFAULT_THRESHOLD as SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
+    find_similar_source_briefs,
+)
 from blueprint.config import get_config
 from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
@@ -677,6 +682,68 @@ def inspect(brief_id: str):
         for key, value in brief["source_links"].items():
             click.echo(f"  {key}: {value}")
         click.echo()
+
+
+@source.command()
+@click.argument("brief_id")
+@click.option(
+    "--limit",
+    default=SOURCE_SIMILARITY_DEFAULT_LIMIT,
+    type=click.IntRange(min=0),
+    help="Maximum number of similar briefs to show",
+)
+@click.option(
+    "--threshold",
+    default=SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
+    type=click.FloatRange(min=0.0, max=1.0),
+    help="Minimum similarity score from 0.0 to 1.0",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
+def similar(brief_id: str, limit: int, threshold: float, json_output: bool):
+    """List likely duplicate source briefs."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    brief = store.get_source_brief(brief_id)
+    if not brief:
+        raise click.ClickException(f"Source brief not found: {brief_id}")
+
+    candidates = store.list_source_briefs(limit=10000)
+    matches = find_similar_source_briefs(
+        brief,
+        candidates,
+        threshold=threshold,
+        limit=limit,
+    )
+
+    if json_output:
+        payload = {
+            "brief_id": brief_id,
+            "threshold": threshold,
+            "limit": limit,
+            "matches": [match.to_dict() for match in matches],
+        }
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    if not matches:
+        click.echo(f"No similar source briefs found for {brief_id}")
+        return
+
+    click.echo(
+        f"\n{'ID':<15} {'Score':<7} {'Source':<12} {'Matched Fields':<36} {'Title':<40}"
+    )
+    click.echo("-" * 115)
+    for match in matches:
+        click.echo(
+            f"{match.id:<15} "
+            f"{match.score:<7.4f} "
+            f"{match.source_project:<12} "
+            f"{', '.join(match.matched_fields)[:34]:<36} "
+            f"{match.title[:38]:<40}"
+        )
+
+    click.echo(f"\nTotal: {len(matches)} matches")
 
 
 # ============================================================================
