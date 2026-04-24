@@ -94,6 +94,7 @@ BRIEF_STATUS_CHOICES = (
 PLAN_STATUS_CHOICES = ("draft", "ready", "queued", "in_progress", "completed", "failed")
 TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skipped")
 EXPORT_TARGET_CHOICES = (
+    "adr",
     "relay",
     "smoothie",
     "codex",
@@ -2810,6 +2811,7 @@ def preview(plan_id: str, target: str, output: Path | None, require_coherence: b
     required=True,
     type=click.Choice(
         [
+            "adr",
             "relay",
             "smoothie",
             "codex",
@@ -2864,6 +2866,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
     required=True,
     type=click.Choice(
         [
+            "adr",
             "relay",
             "smoothie",
             "codex",

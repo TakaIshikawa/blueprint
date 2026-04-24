@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree
 
+from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
@@ -114,6 +115,7 @@ def validate_rendered_export(
 def create_exporter(target: str):
     """Create the exporter used by validation and export commands."""
     exporters = {
+        "adr": ADRExporter(),
         "relay": RelayExporter(),
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
@@ -506,9 +508,7 @@ def _validate_kanban(
 
     rendered_tasks = _kanban_rendered_tasks_by_column(content)
     expected_tasks = execution_plan.get("tasks", [])
-    rendered_task_ids = [
-        task_id for task_ids in rendered_tasks.values() for task_id in task_ids
-    ]
+    rendered_task_ids = [task_id for task_ids in rendered_tasks.values() for task_id in task_ids]
 
     if len(rendered_task_ids) != len(expected_tasks):
         findings.append(
@@ -658,6 +658,119 @@ def _validate_task_bundle(
     return findings
 
 
+def _validate_adr(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the ADR directory export."""
+    findings: list[ValidationFinding] = []
+    if not artifact_path.is_dir():
+        return [
+            ValidationFinding(
+                code="adr.invalid_shape",
+                message="ADR export must be a directory.",
+                path=str(artifact_path),
+            )
+        ]
+
+    readme_path = artifact_path / "README.md"
+    if not readme_path.exists():
+        findings.append(
+            ValidationFinding(
+                code="adr.missing_readme",
+                message="ADR export is missing README.md.",
+                path=str(readme_path),
+            )
+        )
+        return findings
+
+    readme_content = readme_path.read_text()
+    for heading in [
+        f"# Architecture Decision Records: {execution_plan['id']}",
+        "## Source Blueprint",
+        "## ADR Index",
+    ]:
+        if not _has_heading(readme_content, heading):
+            findings.append(
+                ValidationFinding(
+                    code="adr.missing_heading",
+                    message=f"Missing required Markdown heading: {heading}",
+                    path=str(readme_path),
+                )
+            )
+
+    for snippet in [
+        f"- Plan ID: `{execution_plan['id']}`",
+        f"- Implementation Brief ID: `{implementation_brief['id']}`",
+    ]:
+        if snippet not in readme_content:
+            findings.append(
+                ValidationFinding(
+                    code="adr.missing_identifier",
+                    message=f"Missing required identifier text: {snippet}",
+                    path=str(readme_path),
+                )
+            )
+
+    adr_paths = sorted(path for path in artifact_path.glob("*.md") if path.name != "README.md")
+    if not adr_paths:
+        findings.append(
+            ValidationFinding(
+                code="adr.empty",
+                message="ADR export contains no ADR Markdown files.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    expected_pattern = re.compile(r"^\d{3}-[A-Za-z0-9._-]+-[A-Za-z0-9._-]+\.md$")
+    for adr_path in adr_paths:
+        if not expected_pattern.match(adr_path.name):
+            findings.append(
+                ValidationFinding(
+                    code="adr.invalid_filename",
+                    message=f"ADR filename is not deterministic: {adr_path.name}",
+                    path=str(adr_path),
+                )
+            )
+
+        adr_content = adr_path.read_text()
+        for heading in [
+            "# ADR-",
+            "## Status",
+            "## Context",
+            "## Decision",
+            "## Consequences",
+            "## Related Tasks",
+            "## Source Blueprint IDs",
+        ]:
+            if not _has_heading(adr_content, heading):
+                findings.append(
+                    ValidationFinding(
+                        code="adr.missing_heading",
+                        message=f"Missing required Markdown heading: {heading}",
+                        path=str(adr_path),
+                    )
+                )
+
+        for snippet in [
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief ID: `{implementation_brief['id']}`",
+            f"- Source Brief ID: `{implementation_brief['source_brief_id']}`",
+        ]:
+            if snippet not in adr_content:
+                findings.append(
+                    ValidationFinding(
+                        code="adr.missing_identifier",
+                        message=f"Missing required identifier text: {snippet}",
+                        path=str(adr_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_github_issues_bundle(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -706,7 +819,9 @@ def _validate_github_issues_bundle(
         ]
 
     required_keys = ["schema_version", "repository", "plan", "issues", "milestone_groups"]
-    findings.extend(_missing_keys(manifest, required_keys, "github_issues.missing_key", str(manifest_path)))
+    findings.extend(
+        _missing_keys(manifest, required_keys, "github_issues.missing_key", str(manifest_path))
+    )
 
     repository = manifest.get("repository")
     if isinstance(repository, dict):
@@ -846,9 +961,7 @@ def _validate_csv_tasks(
         findings.append(
             ValidationFinding(
                 code="csv.row_count_mismatch",
-                message=(
-                    "CSV export row count does not match the number of execution tasks."
-                ),
+                message=("CSV export row count does not match the number of execution tasks."),
                 path=str(artifact_path),
             )
         )
@@ -1208,6 +1321,7 @@ def _task_bundle_filename(index: int, task_id: str) -> str:
 
 
 _VALIDATORS: dict[str, ValidationCheck] = {
+    "adr": _validate_adr,
     "relay": _validate_relay,
     "codex": _validate_codex,
     "claude-code": _validate_claude_code,
