@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 from builtins import list as builtin_list
+from typing import Any
 
 import click
 from pydantic import ValidationError
@@ -1872,8 +1873,21 @@ def audit(plan_id: str, json_output: bool):
 @plan.command(name="dependency-repair")
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output repair suggestions as JSON")
-def dependency_repair(plan_id: str, json_output: bool):
-    """Suggest dependency edits for an execution plan without mutating it."""
+@click.option("--apply", "apply_edits", is_flag=True, help="Apply qualifying dependency edits")
+@click.option(
+    "--min-confidence",
+    type=click.FloatRange(0.0, 1.0),
+    default=0.8,
+    show_default=True,
+    help="Minimum suggestion confidence required when applying edits",
+)
+def dependency_repair(
+    plan_id: str,
+    json_output: bool,
+    apply_edits: bool,
+    min_confidence: float,
+):
+    """Suggest or apply dependency edits for an execution plan."""
     config = get_config()
     store = Store(config.db_path)
 
@@ -1882,6 +1896,39 @@ def dependency_repair(plan_id: str, json_output: bool):
         raise click.ClickException(f"Execution plan not found: {plan_id}")
 
     result = suggest_dependency_repairs(plan)
+
+    if apply_edits:
+        applied_edits = _apply_dependency_repairs(
+            store,
+            plan,
+            result,
+            min_confidence=min_confidence,
+        )
+        applied_plan = store.get_execution_plan(plan_id)
+        if not applied_plan:
+            raise click.ClickException(f"Execution plan not found after apply: {plan_id}")
+        audit_result = audit_execution_plan(applied_plan)
+        payload = {
+            "plan_id": plan_id,
+            "ok": audit_result.ok,
+            "summary": {
+                "applied": len(applied_edits),
+                "audit_errors": audit_result.error_count,
+                "audit_warnings": audit_result.warning_count,
+            },
+            "min_confidence": min_confidence,
+            "applied_edits": applied_edits,
+            "audit": audit_result.to_dict(),
+        }
+
+        if json_output:
+            click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            _emit_dependency_repair_apply(payload)
+
+        if not audit_result.ok:
+            raise click.exceptions.Exit(1)
+        return
 
     if json_output:
         click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
@@ -1941,6 +1988,134 @@ def _emit_dependency_repair(result: DependencyRepairResult) -> None:
             f"(confidence {suggestion.confidence:.2f}; affected: {affected})"
         )
         click.echo(f"    Rationale: {suggestion.rationale}")
+
+
+def _apply_dependency_repairs(
+    store: Store,
+    plan_dict: dict[str, Any],
+    result: DependencyRepairResult,
+    *,
+    min_confidence: float,
+) -> list[dict[str, Any]]:
+    """Apply concrete dependency repair suggestions to the stored plan."""
+    tasks_by_id = {
+        str(task.get("id") or ""): task
+        for task in plan_dict.get("tasks", [])
+        if isinstance(task, dict) and task.get("id")
+    }
+    applied_edits: list[dict[str, Any]] = []
+
+    for suggestion in result.suggestions:
+        if suggestion.confidence < min_confidence:
+            continue
+        if suggestion.action not in {"remove_dependency", "replace_dependency"}:
+            continue
+        if (
+            suggestion.action == "replace_dependency"
+            and not suggestion.replacement_dependency_id
+        ):
+            continue
+
+        task = tasks_by_id.get(suggestion.task_id)
+        if not task:
+            continue
+
+        before = _string_list(task.get("depends_on"))
+        if suggestion.action == "remove_dependency":
+            after = [
+                dependency_id
+                for dependency_id in before
+                if dependency_id != suggestion.dependency_id
+            ]
+        else:
+            after = _replace_dependency(
+                before,
+                suggestion.dependency_id,
+                str(suggestion.replacement_dependency_id),
+            )
+
+        if before == after:
+            continue
+
+        updated = store.update_execution_task_dependencies(
+            result.plan_id,
+            suggestion.task_id,
+            after,
+        )
+        if not updated:
+            continue
+
+        task["depends_on"] = after
+        edit = {
+            "action": suggestion.action,
+            "task_id": suggestion.task_id,
+            "dependency_id": suggestion.dependency_id,
+            "confidence": suggestion.confidence,
+            "before_depends_on": before,
+            "after_depends_on": after,
+        }
+        if suggestion.replacement_dependency_id is not None:
+            edit["replacement_dependency_id"] = suggestion.replacement_dependency_id
+        applied_edits.append(edit)
+
+    return applied_edits
+
+
+def _replace_dependency(
+    dependencies: list[str],
+    dependency_id: str,
+    replacement_dependency_id: str,
+) -> list[str]:
+    """Replace one dependency while preserving order and avoiding duplicates."""
+    replaced: list[str] = []
+    for current_dependency_id in dependencies:
+        next_dependency_id = (
+            replacement_dependency_id
+            if current_dependency_id == dependency_id
+            else current_dependency_id
+        )
+        if next_dependency_id not in replaced:
+            replaced.append(next_dependency_id)
+    return replaced
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, builtin_list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _emit_dependency_repair_apply(payload: dict[str, Any]) -> None:
+    """Render applied dependency repair edits."""
+    click.echo(f"Dependency repair apply: {payload['plan_id']}")
+    summary = payload["summary"]
+    click.echo(
+        f"Applied: {summary['applied']} edits "
+        f"(min confidence {payload['min_confidence']:.2f})"
+    )
+    click.echo(
+        "Post-apply audit: "
+        f"{'passed' if payload['audit']['ok'] else 'failed'} "
+        f"({summary['audit_errors']} errors, {summary['audit_warnings']} warnings)"
+    )
+
+    if not payload["applied_edits"]:
+        click.echo("No qualifying dependency edits applied.")
+        return
+
+    click.echo("\nApplied edits:")
+    for edit in payload["applied_edits"]:
+        if edit["action"] == "replace_dependency":
+            action = (
+                f"replace {edit['dependency_id']} with "
+                f"{edit['replacement_dependency_id']}"
+            )
+        else:
+            action = f"remove {edit['dependency_id']}"
+        click.echo(
+            f"  - [{edit['action']}] Task {edit['task_id']}: {action} "
+            f"(confidence {edit['confidence']:.2f})"
+        )
 
 
 @plan.command()

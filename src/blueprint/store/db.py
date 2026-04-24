@@ -548,6 +548,26 @@ class Store:
             session.commit()
             return True
 
+    def update_execution_task_dependencies(
+        self,
+        plan_id: str,
+        task_id: str,
+        depends_on: list[str],
+    ) -> bool:
+        """Update a task dependency list without changing status or metadata."""
+        with self.get_session() as session:
+            task = (
+                session.query(ExecutionTaskModel)
+                .filter_by(id=task_id, execution_plan_id=plan_id)
+                .first()
+            )
+            if not task:
+                return False
+
+            task.depends_on = list(depends_on)
+            session.commit()
+            return True
+
     # ============================================================================
     # Status History
     # ============================================================================
