@@ -34,6 +34,8 @@ from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
+from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
+from blueprint.exporters.wave_schedule import WaveScheduleExporter
 
 
 ValidationCheck = Callable[[Path, dict[str, Any], dict[str, Any]], list["ValidationFinding"]]
@@ -147,6 +149,7 @@ def create_exporter(target: str):
         "task-bundle": TaskBundleExporter(),
         "task-queue-jsonl": TaskQueueJsonlExporter(),
         "vscode-tasks": VSCodeTasksExporter(),
+        "wave-schedule": WaveScheduleExporter(),
     }
     exporter = exporters.get(target)
     if exporter is None:
@@ -1759,6 +1762,251 @@ def _validate_vscode_tasks(
     return findings
 
 
+def _validate_wave_schedule(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the dependency wave schedule JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="wave_schedule.invalid_json",
+                message=f"Wave schedule export is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="wave_schedule.invalid_shape",
+                message="Wave schedule export must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    findings.extend(
+        _missing_keys(
+            payload,
+            ["schema_version", "plan_id", "total_waves", "waves"],
+            "wave_schedule.missing_key",
+            str(artifact_path),
+        )
+    )
+
+    if payload.get("schema_version") != WAVE_SCHEDULE_SCHEMA_VERSION:
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.schema_version_mismatch",
+                message="Wave schedule schema_version is not supported.",
+                path=str(artifact_path),
+            )
+        )
+
+    if payload.get("plan_id") != execution_plan.get("id"):
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.plan_id_mismatch",
+                message="Wave schedule plan_id does not match the execution plan.",
+                path=str(artifact_path),
+            )
+        )
+
+    waves = payload.get("waves")
+    if not isinstance(waves, list):
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.waves.invalid_shape",
+                message="Wave schedule waves must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    if isinstance(payload.get("total_waves"), int) and payload["total_waves"] != len(waves):
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.total_waves_mismatch",
+                message="Wave schedule total_waves does not match rendered waves.",
+                path=str(artifact_path),
+            )
+        )
+
+    expected_task_ids = [task["id"] for task in execution_plan.get("tasks", [])]
+    expected_task_id_set = set(expected_task_ids)
+    rendered_task_counts: dict[str, int] = {}
+    task_wave_by_id: dict[str, int] = {}
+
+    for wave_index, wave in enumerate(waves, 1):
+        wave_path = f"{artifact_path}#/waves/{wave_index - 1}"
+        if not isinstance(wave, dict):
+            findings.append(
+                ValidationFinding(
+                    code="wave_schedule.wave.invalid_shape",
+                    message=f"Wave {wave_index} must be an object.",
+                    path=wave_path,
+                )
+            )
+            continue
+
+        findings.extend(
+            _missing_keys(
+                wave,
+                ["wave_number", "task_ids", "tasks"],
+                "wave_schedule.wave.missing_key",
+                wave_path,
+            )
+        )
+
+        wave_number = wave.get("wave_number")
+        if not isinstance(wave_number, int):
+            findings.append(
+                ValidationFinding(
+                    code="wave_schedule.wave_number.invalid_shape",
+                    message=f"Wave {wave_index} wave_number must be an integer.",
+                    path=wave_path,
+                )
+            )
+            wave_number = wave_index
+
+        task_ids = wave.get("task_ids")
+        tasks = wave.get("tasks")
+        if not isinstance(task_ids, list) or not all(
+            isinstance(task_id, str) for task_id in task_ids
+        ):
+            findings.append(
+                ValidationFinding(
+                    code="wave_schedule.task_ids.invalid_shape",
+                    message=f"Wave {wave_index} task_ids must be a list of strings.",
+                    path=wave_path,
+                )
+            )
+            task_ids = []
+
+        if not isinstance(tasks, list):
+            findings.append(
+                ValidationFinding(
+                    code="wave_schedule.tasks.invalid_shape",
+                    message=f"Wave {wave_index} tasks must be a list.",
+                    path=wave_path,
+                )
+            )
+            continue
+
+        rendered_ids_in_wave: list[str] = []
+        for task_index, task in enumerate(tasks, 1):
+            task_path = f"{wave_path}/tasks/{task_index - 1}"
+            if not isinstance(task, dict):
+                findings.append(
+                    ValidationFinding(
+                        code="wave_schedule.task.invalid_shape",
+                        message=f"Wave {wave_index} task {task_index} must be an object.",
+                        path=task_path,
+                    )
+                )
+                continue
+
+            findings.extend(
+                _missing_keys(
+                    task,
+                    [
+                        "id",
+                        "suggested_engine",
+                        "owner_type",
+                        "files_or_modules",
+                        "dependencies",
+                        "status",
+                        "status_metadata",
+                    ],
+                    "wave_schedule.task.missing_key",
+                    task_path,
+                )
+            )
+
+            task_id = task.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                findings.append(
+                    ValidationFinding(
+                        code="wave_schedule.task.missing_id",
+                        message=f"Wave {wave_index} task {task_index} is missing id.",
+                        path=task_path,
+                    )
+                )
+                continue
+
+            rendered_ids_in_wave.append(task_id)
+            rendered_task_counts[task_id] = rendered_task_counts.get(task_id, 0) + 1
+            task_wave_by_id[task_id] = wave_number
+
+        if task_ids and rendered_ids_in_wave != task_ids:
+            findings.append(
+                ValidationFinding(
+                    code="wave_schedule.task_ids_mismatch",
+                    message=f"Wave {wave_index} task_ids do not match task objects.",
+                    path=wave_path,
+                )
+            )
+
+    duplicate_task_ids = sorted(
+        task_id for task_id, count in rendered_task_counts.items() if count > 1
+    )
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.duplicate_task",
+                message=f"Wave schedule repeats task ids: {', '.join(duplicate_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    missing_task_ids = sorted(expected_task_id_set - set(rendered_task_counts))
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.missing_task",
+                message=f"Wave schedule is missing task ids: {', '.join(missing_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    unexpected_task_ids = sorted(set(rendered_task_counts) - expected_task_id_set)
+    if unexpected_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="wave_schedule.unexpected_task",
+                message=f"Wave schedule has unexpected task ids: {', '.join(unexpected_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    for task in execution_plan.get("tasks", []):
+        task_id = task["id"]
+        task_wave = task_wave_by_id.get(task_id)
+        if task_wave is None:
+            continue
+        for dependency_id in task.get("depends_on") or []:
+            dependency_wave = task_wave_by_id.get(dependency_id)
+            if dependency_wave is None:
+                continue
+            if dependency_wave >= task_wave:
+                findings.append(
+                    ValidationFinding(
+                        code="wave_schedule.dependency_order",
+                        message=(
+                            f"Task {task_id} is scheduled before or alongside dependency "
+                            f"{dependency_id}."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_github_actions(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -2167,6 +2415,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "mermaid": _validate_mermaid,
     "milestone-summary": _validate_milestone_summary,
     "vscode-tasks": _validate_vscode_tasks,
+    "wave-schedule": _validate_wave_schedule,
 }
 
 

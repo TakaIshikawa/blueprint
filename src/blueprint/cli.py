@@ -139,6 +139,7 @@ EXPORT_TARGET_CHOICES = (
     "task-bundle",
     "task-queue-jsonl",
     "vscode-tasks",
+    "wave-schedule",
     "all",
 )
 
@@ -3530,6 +3531,7 @@ def preview(
             "status-report",
             "task-bundle",
             "vscode-tasks",
+            "wave-schedule",
         ]
     ),
     help="Target execution engine",
@@ -3593,6 +3595,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "status-report",
             "task-bundle",
             "vscode-tasks",
+            "wave-schedule",
         ]
     ),
     help="Target execution engine",

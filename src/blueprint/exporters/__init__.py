@@ -20,6 +20,7 @@ from blueprint.exporters.source_brief import SourceBriefExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
+from blueprint.exporters.wave_schedule import WaveScheduleExporter
 
 __all__ = [
     "ADRExporter",
@@ -42,4 +43,5 @@ __all__ = [
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
     "VSCodeTasksExporter",
+    "WaveScheduleExporter",
 ]
