@@ -60,6 +60,12 @@ from blueprint.audits.source_similarity import (
     DEFAULT_THRESHOLD as SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
     find_similar_source_briefs,
 )
+from blueprint.audits.source_duplicates import (
+    DEFAULT_LIMIT as SOURCE_DUPLICATES_DEFAULT_LIMIT,
+    DEFAULT_THRESHOLD as SOURCE_DUPLICATES_DEFAULT_THRESHOLD,
+    SourceDuplicateReport,
+    find_duplicate_source_brief_groups,
+)
 from blueprint.config import get_config
 from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
@@ -997,6 +1003,91 @@ def similar(brief_id: str, limit: int, threshold: float, json_output: bool):
         )
 
     click.echo(f"\nTotal: {len(matches)} matches")
+
+
+@source.command()
+@click.option(
+    "--limit",
+    default=SOURCE_DUPLICATES_DEFAULT_LIMIT,
+    type=click.IntRange(min=0),
+    help="Maximum number of duplicate groups to show",
+)
+@click.option(
+    "--threshold",
+    default=SOURCE_DUPLICATES_DEFAULT_THRESHOLD,
+    type=click.FloatRange(min=0.0, max=1.0),
+    help="Minimum duplicate score from 0.0 to 1.0",
+)
+@click.option("--source-project", help="Filter candidate briefs by source project")
+@click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
+def duplicates(
+    limit: int,
+    threshold: float,
+    source_project: str | None,
+    json_output: bool,
+):
+    """Report likely duplicate source brief groups."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    candidates = store.list_source_briefs(source_project=source_project, limit=10000)
+    report = find_duplicate_source_brief_groups(
+        candidates,
+        threshold=threshold,
+        limit=limit,
+        source_project=source_project,
+    )
+
+    _emit_source_duplicate_report(report, json_output)
+
+
+def _emit_source_duplicate_report(
+    report: SourceDuplicateReport,
+    json_output: bool,
+) -> None:
+    if json_output:
+        click.echo(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        return
+
+    if not report.groups:
+        source_filter = (
+            f" for source project {report.source_project}"
+            if report.source_project
+            else ""
+        )
+        click.echo(
+            f"No duplicate source brief groups found{source_filter} "
+            f"at threshold {report.threshold:.4f}"
+        )
+        return
+
+    click.echo("Source brief duplicate report")
+    click.echo(f"Candidates: {report.candidate_count}")
+    if report.source_project:
+        click.echo(f"Source project: {report.source_project}")
+    click.echo(f"Threshold: {report.threshold:.4f}")
+    click.echo(f"Groups: {len(report.groups)}")
+
+    for index, group in enumerate(report.groups, start=1):
+        click.echo("")
+        click.echo(
+            f"{index}. canonical={group.canonical_id} "
+            f"score={group.score:.4f} briefs={len(group.briefs)}"
+        )
+        for brief in group.briefs:
+            marker = "*" if brief.id == group.canonical_id else "-"
+            source = (
+                f"{brief.source_project}/"
+                f"{brief.source_entity_type}/"
+                f"{brief.source_id}"
+            )
+            click.echo(f"   {marker} {brief.id:<15} {source:<32} {brief.title[:60]}")
+        pair_summaries = [
+            f"{pair.left_id}<->{pair.right_id} {pair.score:.4f} "
+            f"({', '.join(pair.matched_fields)})"
+            for pair in group.pairs
+        ]
+        click.echo(f"   evidence: {'; '.join(pair_summaries)}")
 
 
 # ============================================================================

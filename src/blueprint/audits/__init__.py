@@ -15,6 +15,13 @@ from blueprint.audits.source_similarity import (
     SourceBriefSimilarityMatch,
     find_similar_source_briefs,
 )
+from blueprint.audits.source_duplicates import (
+    SourceDuplicateBrief,
+    SourceDuplicateGroup,
+    SourceDuplicatePair,
+    SourceDuplicateReport,
+    find_duplicate_source_brief_groups,
+)
 from blueprint.audits.dependency_repair import (
     DependencyRepairResult,
     DependencyRepairSuggestion,
@@ -61,6 +68,10 @@ __all__ = [
     "RiskCoverageItem",
     "RiskCoverageResult",
     "SourceBriefSimilarityMatch",
+    "SourceDuplicateBrief",
+    "SourceDuplicateGroup",
+    "SourceDuplicatePair",
+    "SourceDuplicateReport",
     "TaskCompletenessFinding",
     "TaskCompletenessItem",
     "TaskCompletenessResult",
@@ -71,5 +82,6 @@ __all__ = [
     "audit_risk_coverage",
     "audit_task_completeness",
     "find_similar_source_briefs",
+    "find_duplicate_source_brief_groups",
     "suggest_dependency_repairs",
 ]
