@@ -708,6 +708,121 @@ def manual(file_path: str, replace: bool, skip_existing: bool):
         click.echo(f"✗ Import failed: {e}", err=True)
 
 
+@import_cmd.command(name="manual-dir")
+@click.argument(
+    "directory",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+)
+@click.option(
+    "--glob",
+    "glob_pattern",
+    default="*.md",
+    show_default=True,
+    help="File glob to import",
+)
+@click.option("--recursive", is_flag=True, help="Include files in nested directories")
+@click.option(
+    "--replace", is_flag=True, help="Replace existing imported briefs from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if a source brief already exists"
+)
+@click.option("--json", "json_output", is_flag=True, help="Output import results as JSON")
+def manual_dir(
+    directory: Path,
+    glob_pattern: str,
+    recursive: bool,
+    replace: bool,
+    skip_existing: bool,
+    json_output: bool,
+):
+    """Import manual design briefs from a directory of markdown files."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = ManualBriefImporter()
+    directory = directory.expanduser().resolve()
+    paths = _find_manual_directory_files(directory, glob_pattern, recursive)
+
+    results: list[dict[str, str | None]] = []
+    counts = {"imported": 0, "skipped": 0, "failed": 0, "total": len(paths)}
+
+    for path in paths:
+        result: dict[str, str | None] = {
+            "file": str(path),
+            "relative_path": path.relative_to(directory).as_posix(),
+            "status": None,
+            "source_brief_id": None,
+            "error": None,
+        }
+
+        try:
+            source_brief = importer.import_from_source(str(path))
+            existing_source_brief = store.get_source_brief_by_source(
+                source_project=source_brief["source_project"],
+                source_entity_type=source_brief["source_entity_type"],
+                source_id=source_brief["source_id"],
+            )
+            source_brief_id = store.upsert_source_brief(
+                source_brief,
+                replace=replace,
+                skip_existing=skip_existing,
+            )
+        except Exception as e:
+            result["status"] = "failed"
+            result["error"] = str(e)
+            counts["failed"] += 1
+            results.append(result)
+            continue
+
+        result["source_brief_id"] = source_brief_id
+        if existing_source_brief and not replace:
+            result["status"] = "skipped"
+            counts["skipped"] += 1
+        else:
+            result["status"] = "imported"
+            counts["imported"] += 1
+        results.append(result)
+
+    payload = {
+        "directory": str(directory),
+        "glob": glob_pattern,
+        "recursive": recursive,
+        "counts": counts,
+        "files": results,
+    }
+
+    if json_output:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    click.echo(f"Imported: {counts['imported']}")
+    click.echo(f"Skipped: {counts['skipped']}")
+    click.echo(f"Failed: {counts['failed']}")
+    click.echo(f"Total: {counts['total']}")
+
+    for result in results:
+        status = result["status"]
+        source_brief_id = result["source_brief_id"] or "N/A"
+        detail = f" ({result['error']})" if result["error"] else ""
+        click.echo(f"- {status}: {result['relative_path']} [{source_brief_id}]{detail}")
+
+
+def _find_manual_directory_files(
+    directory: Path,
+    glob_pattern: str,
+    recursive: bool,
+) -> list[Path]:
+    """Return matching directory files in deterministic relative-path order."""
+    iterator = directory.rglob(glob_pattern) if recursive else directory.glob(glob_pattern)
+    return sorted(
+        (path.resolve() for path in iterator if path.is_file()),
+        key=lambda path: path.relative_to(directory).as_posix(),
+    )
+
+
 # ============================================================================
 # Source Brief Commands
 # ============================================================================
