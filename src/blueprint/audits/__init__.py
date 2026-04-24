@@ -9,6 +9,11 @@ from blueprint.audits.source_similarity import (
     SourceBriefSimilarityMatch,
     find_similar_source_briefs,
 )
+from blueprint.audits.dependency_repair import (
+    DependencyRepairResult,
+    DependencyRepairSuggestion,
+    suggest_dependency_repairs,
+)
 from blueprint.audits.env_inventory import (
     EnvInventoryItem,
     EnvInventoryResult,
@@ -24,6 +29,8 @@ from blueprint.audits.risk_coverage import (
 __all__ = [
     "BriefReadinessFinding",
     "BriefReadinessResult",
+    "DependencyRepairResult",
+    "DependencyRepairSuggestion",
     "EnvInventoryItem",
     "EnvInventoryResult",
     "EnvInventorySource",
@@ -34,4 +41,5 @@ __all__ = [
     "build_env_inventory",
     "audit_risk_coverage",
     "find_similar_source_briefs",
+    "suggest_dependency_repairs",
 ]

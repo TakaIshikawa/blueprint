@@ -25,6 +25,10 @@ from blueprint.audits.execution_waves import (
     ExecutionWavesResult,
     analyze_execution_waves,
 )
+from blueprint.audits.dependency_repair import (
+    DependencyRepairResult,
+    suggest_dependency_repairs,
+)
 from blueprint.audits.env_inventory import EnvInventoryResult, build_env_inventory
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
@@ -1622,6 +1626,29 @@ def audit(plan_id: str, json_output: bool):
         raise click.exceptions.Exit(1)
 
 
+@plan.command(name="dependency-repair")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output repair suggestions as JSON")
+def dependency_repair(plan_id: str, json_output: bool):
+    """Suggest dependency edits for an execution plan without mutating it."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = suggest_dependency_repairs(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_dependency_repair(result)
+
+    if not result.ok:
+        raise click.exceptions.Exit(1)
+
+
 def _emit_plan_audit(result: PlanAuditResult) -> None:
     """Render human-readable plan audit results grouped by severity."""
     click.echo(f"Execution plan audit: {result.plan_id}")
@@ -1642,6 +1669,35 @@ def _emit_plan_audit(result: PlanAuditResult) -> None:
         click.echo(f"\n{heading}:")
         for issue in issues:
             click.echo(f"  - [{issue.code}] {issue.message}")
+
+
+def _emit_dependency_repair(result: DependencyRepairResult) -> None:
+    """Render actionable dependency repair suggestions."""
+    click.echo(f"Dependency repair suggestions: {result.plan_id}")
+    click.echo(
+        f"Result: {'clean' if result.ok else 'repairs suggested'} "
+        f"({result.suggestion_count} suggestions)"
+    )
+
+    if not result.suggestions:
+        click.echo("No dependency repair suggestions found.")
+        return
+
+    click.echo("\nSuggested edits:")
+    for suggestion in result.suggestions:
+        if suggestion.action == "replace_dependency":
+            edit = (
+                f"replace {suggestion.dependency_id} with "
+                f"{suggestion.replacement_dependency_id}"
+            )
+        else:
+            edit = f"remove {suggestion.dependency_id}"
+        affected = ", ".join(suggestion.affected_task_ids) or suggestion.task_id
+        click.echo(
+            f"  - [{suggestion.action}] Task {suggestion.task_id}: {edit} "
+            f"(confidence {suggestion.confidence:.2f}; affected: {affected})"
+        )
+        click.echo(f"    Rationale: {suggestion.rationale}")
 
 
 @plan.command()
