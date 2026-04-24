@@ -27,6 +27,7 @@ from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
+from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 
 
 ValidationCheck = Callable[[Path, dict[str, Any], dict[str, Any]], list["ValidationFinding"]]
@@ -133,6 +134,7 @@ def create_exporter(target: str):
         "release-notes": ReleaseNotesExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
+        "vscode-tasks": VSCodeTasksExporter(),
     }
     exporter = exporters.get(target)
     if exporter is None:
@@ -1195,6 +1197,113 @@ def _validate_junit_tasks(
     return findings
 
 
+def _validate_vscode_tasks(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the VS Code tasks.json export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="vscode_tasks.invalid_json",
+                message=f"VS Code tasks export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    if payload.get("version") != "2.0.0":
+        findings.append(
+            ValidationFinding(
+                code="vscode_tasks.invalid_version",
+                message="VS Code tasks export must use top-level version 2.0.0.",
+                path=str(artifact_path),
+            )
+        )
+
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return findings + [
+            ValidationFinding(
+                code="vscode_tasks.invalid_tasks",
+                message="VS Code tasks export must include a top-level tasks list.",
+                path=str(artifact_path),
+            )
+        ]
+
+    plan_tasks = execution_plan.get("tasks", [])
+    expected_labels = {
+        task["id"]: f"{task['id']}: {task['title']}"
+        for task in plan_tasks
+    }
+    rendered_by_label = {
+        task.get("label"): task
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("label"), str)
+    }
+
+    if len(tasks) != len(plan_tasks):
+        findings.append(
+            ValidationFinding(
+                code="vscode_tasks.task_count_mismatch",
+                message="VS Code tasks count does not match the execution plan.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task in plan_tasks:
+        label = expected_labels[task["id"]]
+        rendered = rendered_by_label.get(label)
+        if rendered is None:
+            findings.append(
+                ValidationFinding(
+                    code="vscode_tasks.missing_task",
+                    message=f"VS Code tasks export is missing task label: {label}",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        if rendered.get("type") != "shell":
+            findings.append(
+                ValidationFinding(
+                    code="vscode_tasks.invalid_task_type",
+                    message=f"VS Code task '{label}' must be a shell task.",
+                    path=str(artifact_path),
+                )
+            )
+        if not isinstance(rendered.get("command"), str) or not rendered.get("command"):
+            findings.append(
+                ValidationFinding(
+                    code="vscode_tasks.missing_command",
+                    message=f"VS Code task '{label}' must include a shell command.",
+                    path=str(artifact_path),
+                )
+            )
+
+        expected_dependencies = [
+            expected_labels[task_id]
+            for task_id in task.get("depends_on", [])
+            if task_id in expected_labels
+        ]
+        rendered_dependencies = rendered.get("dependsOn", [])
+        if isinstance(rendered_dependencies, str):
+            rendered_dependencies = [rendered_dependencies]
+        if rendered_dependencies != expected_dependencies:
+            findings.append(
+                ValidationFinding(
+                    code="vscode_tasks.dependency_mismatch",
+                    message=f"VS Code task '{label}' dependencies do not match the plan.",
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
 def _validate_mermaid(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -1498,6 +1607,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "file-impact-map": _validate_file_impact_map,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
+    "vscode-tasks": _validate_vscode_tasks,
 }
 
 

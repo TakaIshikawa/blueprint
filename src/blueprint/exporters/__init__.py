@@ -13,6 +13,7 @@ from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
+from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 
 __all__ = [
     "ADRExporter",
@@ -28,4 +29,5 @@ __all__ = [
     "ReleaseNotesExporter",
     "SourceBriefExporter",
     "TaskRosterExporter",
+    "VSCodeTasksExporter",
 ]

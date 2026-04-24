@@ -115,6 +115,7 @@ EXPORT_TARGET_CHOICES = (
     "release-notes",
     "status-report",
     "task-bundle",
+    "vscode-tasks",
     "all",
 )
 
@@ -3056,6 +3057,7 @@ def preview(
             "release-notes",
             "status-report",
             "task-bundle",
+            "vscode-tasks",
         ]
     ),
     help="Target execution engine",
@@ -3113,6 +3115,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "release-notes",
             "status-report",
             "task-bundle",
+            "vscode-tasks",
         ]
     ),
     help="Target execution engine",
