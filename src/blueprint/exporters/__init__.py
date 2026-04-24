@@ -2,6 +2,7 @@
 
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.archive import ArchiveExporter
+from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
@@ -28,6 +29,7 @@ from blueprint.exporters.wave_schedule import WaveScheduleExporter
 __all__ = [
     "ADRExporter",
     "ArchiveExporter",
+    "AzureDevOpsCsvExporter",
     "BriefReviewPacketExporter",
     "CalendarExporter",
     "ChecklistExporter",

@@ -135,6 +135,7 @@ EXPORT_TARGET_CHOICES = (
     "smoothie",
     "codex",
     "claude-code",
+    "azure-devops-csv",
     "calendar",
     "checklist",
     "coverage-matrix",
@@ -707,12 +708,8 @@ def graph_node(file_path: str, replace: bool, skip_existing: bool):
 @click.option("--id-column", default="source_id", show_default=True, help="CSV source ID column")
 @click.option("--links-column", default="links", show_default=True, help="CSV links column")
 @click.option("--tags-column", default="tags", show_default=True, help="CSV tags column")
-@click.option(
-    "--replace", is_flag=True, help="Replace existing imported rows from the same source"
-)
-@click.option(
-    "--skip-existing", is_flag=True, help="Skip import if a source brief already exists"
-)
+@click.option("--replace", is_flag=True, help="Replace existing imported rows from the same source")
+@click.option("--skip-existing", is_flag=True, help="Skip import if a source brief already exists")
 def csv_backlog(
     file_path: str,
     title_column: str,
@@ -869,9 +866,7 @@ def manual(file_path: str, replace: bool, skip_existing: bool):
 @click.option(
     "--replace", is_flag=True, help="Replace existing imported briefs from the same source"
 )
-@click.option(
-    "--skip-existing", is_flag=True, help="Skip import if a source brief already exists"
-)
+@click.option("--skip-existing", is_flag=True, help="Skip import if a source brief already exists")
 @click.option("--json", "json_output", is_flag=True, help="Output import results as JSON")
 def manual_dir(
     directory: Path,
@@ -1173,9 +1168,7 @@ def _emit_source_duplicate_report(
 
     if not report.groups:
         source_filter = (
-            f" for source project {report.source_project}"
-            if report.source_project
-            else ""
+            f" for source project {report.source_project}" if report.source_project else ""
         )
         click.echo(
             f"No duplicate source brief groups found{source_filter} "
@@ -1198,11 +1191,7 @@ def _emit_source_duplicate_report(
         )
         for brief in group.briefs:
             marker = "*" if brief.id == group.canonical_id else "-"
-            source = (
-                f"{brief.source_project}/"
-                f"{brief.source_entity_type}/"
-                f"{brief.source_id}"
-            )
+            source = f"{brief.source_project}/" f"{brief.source_entity_type}/" f"{brief.source_id}"
             click.echo(f"   {marker} {brief.id:<15} {source:<32} {brief.title[:60]}")
         pair_summaries = [
             f"{pair.left_id}<->{pair.right_id} {pair.score:.4f} "
@@ -2219,10 +2208,7 @@ def _emit_milestone_dependencies(result: MilestoneDependencyResult) -> None:
         click.echo(f"  {milestone}:")
         for finding in findings:
             target = f" Task {finding.task_id}:" if finding.task_id else ""
-            click.echo(
-                f"    - [{finding.severity}] {finding.code}:{target} "
-                f"{finding.message}"
-            )
+            click.echo(f"    - [{finding.severity}] {finding.code}:{target} " f"{finding.message}")
             if finding.dependency_task_id:
                 click.echo(
                     f"      Dependency: {finding.dependency_task_id} "
@@ -2281,10 +2267,7 @@ def _apply_dependency_repairs(
             continue
         if suggestion.action not in {"remove_dependency", "replace_dependency"}:
             continue
-        if (
-            suggestion.action == "replace_dependency"
-            and not suggestion.replacement_dependency_id
-        ):
+        if suggestion.action == "replace_dependency" and not suggestion.replacement_dependency_id:
             continue
 
         task = tasks_by_id.get(suggestion.task_id)
@@ -2361,8 +2344,7 @@ def _emit_dependency_repair_apply(payload: dict[str, Any]) -> None:
     click.echo(f"Dependency repair apply: {payload['plan_id']}")
     summary = payload["summary"]
     click.echo(
-        f"Applied: {summary['applied']} edits "
-        f"(min confidence {payload['min_confidence']:.2f})"
+        f"Applied: {summary['applied']} edits " f"(min confidence {payload['min_confidence']:.2f})"
     )
     click.echo(
         "Post-apply audit: "
@@ -2377,10 +2359,7 @@ def _emit_dependency_repair_apply(payload: dict[str, Any]) -> None:
     click.echo("\nApplied edits:")
     for edit in payload["applied_edits"]:
         if edit["action"] == "replace_dependency":
-            action = (
-                f"replace {edit['dependency_id']} with "
-                f"{edit['replacement_dependency_id']}"
-            )
+            action = f"replace {edit['dependency_id']} with " f"{edit['replacement_dependency_id']}"
         else:
             action = f"remove {edit['dependency_id']}"
         click.echo(
@@ -3254,10 +3233,7 @@ def _emit_task_completeness(result: TaskCompletenessResult) -> None:
 
     click.echo("\nTask scores:")
     for task_item in result.tasks:
-        click.echo(
-            f"  - {task_item.task_id} ({task_item.title}): "
-            f"{task_item.score}/100"
-        )
+        click.echo(f"  - {task_item.task_id} ({task_item.title}): " f"{task_item.score}/100")
 
 
 def _emit_task_split_audit(result: TaskSplittingResult) -> None:
@@ -3285,15 +3261,9 @@ def _emit_task_split_audit(result: TaskSplittingResult) -> None:
         ):
             click.echo(f"      {index}. {suggested_subtask.title}")
             if suggested_subtask.files_or_modules:
-                click.echo(
-                    "         Files: "
-                    + ", ".join(suggested_subtask.files_or_modules)
-                )
+                click.echo("         Files: " + ", ".join(suggested_subtask.files_or_modules))
             if suggested_subtask.acceptance_criteria:
-                click.echo(
-                    "         Criteria: "
-                    + "; ".join(suggested_subtask.acceptance_criteria)
-                )
+                click.echo("         Criteria: " + "; ".join(suggested_subtask.acceptance_criteria))
 
 
 def _emit_task_workload(result: WorkloadResult) -> None:
@@ -3699,6 +3669,35 @@ def archive(plan_id: str, output: Path):
 )
 def run(plan_id: str, target_arg: str | None, target: str | None, require_coherence: bool):
     """Export execution plan to target engine."""
+    _run_export_command(plan_id, target_arg, target, require_coherence)
+
+
+@export.command(name="render")
+@click.argument("plan_id")
+@click.argument("target_arg", required=False)
+@click.option(
+    "--target",
+    required=False,
+    type=str,
+    help="Target execution engine",
+)
+@click.option(
+    "--require-coherence",
+    is_flag=True,
+    help="Block export if the plan and brief coherence audit reports errors",
+)
+def render(plan_id: str, target_arg: str | None, target: str | None, require_coherence: bool):
+    """Render execution plan export artifacts."""
+    _run_export_command(plan_id, target_arg, target, require_coherence)
+
+
+def _run_export_command(
+    plan_id: str,
+    target_arg: str | None,
+    target: str | None,
+    require_coherence: bool,
+) -> None:
+    """Export execution plan to target engine."""
     config = get_config()
     store = Store(config.db_path)
 
@@ -3892,6 +3891,7 @@ def preview(
             "smoothie",
             "codex",
             "claude-code",
+            "azure-devops-csv",
             "calendar",
             "checklist",
             "coverage-matrix",
@@ -3959,6 +3959,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "smoothie",
             "codex",
             "claude-code",
+            "azure-devops-csv",
             "calendar",
             "checklist",
             "coverage-matrix",

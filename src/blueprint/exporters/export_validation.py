@@ -12,6 +12,7 @@ from typing import Any, Callable
 from xml.etree import ElementTree
 
 from blueprint.exporters.adr import ADRExporter
+from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
@@ -134,6 +135,7 @@ def create_exporter(target: str):
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
+        "azure-devops-csv": AzureDevOpsCsvExporter(),
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
         "coverage-matrix": CoverageMatrixExporter(),
@@ -916,9 +918,7 @@ def _validate_coverage_matrix(
     expected_sections = {
         "Scope Coverage": _string_items(implementation_brief.get("scope")),
         "Risk Coverage": _string_items(implementation_brief.get("risks")),
-        "Validation Coverage": [
-            str(implementation_brief.get("validation_plan") or "").strip()
-        ],
+        "Validation Coverage": [str(implementation_brief.get("validation_plan") or "").strip()],
         "Definition of Done Coverage": _string_items(
             implementation_brief.get("definition_of_done")
         ),
@@ -1485,6 +1485,63 @@ def _validate_jira_csv(
     return findings
 
 
+def _validate_azure_devops_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Azure DevOps CSV work item export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="azure_devops_csv.invalid_structure",
+                message=f"Azure DevOps CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    missing = [column for column in AzureDevOpsCsvExporter.FIELDNAMES if column not in fieldnames]
+    if missing:
+        findings.append(
+            ValidationFinding(
+                code="azure_devops_csv.missing_column",
+                message=(
+                    "Azure DevOps CSV export is missing required columns: " f"{', '.join(missing)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    tasks = execution_plan.get("tasks", [])
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="azure_devops_csv.row_count_mismatch",
+                message="Azure DevOps CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    for index, row in enumerate(rows, 1):
+        for column in ["Work Item Type", "Title", "Description", "Tags"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="azure_devops_csv.row_missing_required_value",
+                        message=f"Azure DevOps CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_linear(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -1976,10 +2033,7 @@ def _validate_vscode_tasks(
         ]
 
     plan_tasks = execution_plan.get("tasks", [])
-    expected_labels = {
-        task["id"]: f"{task['id']}: {task['title']}"
-        for task in plan_tasks
-    }
+    expected_labels = {task["id"]: f"{task['id']}: {task['title']}" for task in plan_tasks}
     rendered_by_label = {
         task.get("label"): task
         for task in tasks
@@ -2813,6 +2867,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "claude-code": _validate_claude_code,
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
+    "azure-devops-csv": _validate_azure_devops_csv,
     "github-issues": _validate_github_issues_bundle,
     "gitlab-issues": _validate_gitlab_issues,
     "jira-csv": _validate_jira_csv,
