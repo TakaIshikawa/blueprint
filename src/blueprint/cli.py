@@ -28,6 +28,10 @@ from blueprint.audits.execution_waves import (
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
+from blueprint.audits.risk_coverage import (
+    RiskCoverageResult,
+    audit_risk_coverage,
+)
 from blueprint.audits.source_similarity import (
     DEFAULT_LIMIT as SOURCE_SIMILARITY_DEFAULT_LIMIT,
     DEFAULT_THRESHOLD as SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
@@ -1017,6 +1021,67 @@ def update(brief_id: str, status: str, reason: str | None):
         click.echo(f"✓ Updated brief {brief_id} status to {status}")
     else:
         click.echo(f"Brief not found: {brief_id}", err=True)
+
+
+@brief.command(name="risk-coverage")
+@click.argument("brief_id")
+@click.option("--plan-id", required=True, help="Execution plan ID to audit")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def risk_coverage(brief_id: str, plan_id: str, json_output: bool):
+    """Audit whether implementation risks are covered by an execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    implementation_brief = store.get_implementation_brief(brief_id)
+    if not implementation_brief:
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    plan_brief_id = str(plan.get("implementation_brief_id") or "")
+    if plan_brief_id != brief_id:
+        raise click.ClickException(
+            f"Execution plan {plan_id} is linked to implementation brief "
+            f"{plan_brief_id or 'N/A'}, not {brief_id}"
+        )
+
+    result = audit_risk_coverage(implementation_brief, plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_risk_coverage(result)
+
+    if not result.ok:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_risk_coverage(result: RiskCoverageResult) -> None:
+    """Render human-readable implementation risk coverage results."""
+    click.echo(f"Risk coverage audit: {result.brief_id} against {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.ok else 'failed'} "
+        f"({len(result.covered_risks)}/{len(result.risks)} risks covered, "
+        f"{result.coverage_ratio:.2%})"
+    )
+
+    if not result.risks:
+        click.echo("No implementation risks found.")
+        return
+
+    if result.uncovered_risks:
+        click.echo("\nUncovered risks:")
+        for risk in result.uncovered_risks:
+            click.echo(f"  - {risk.risk}")
+    else:
+        click.echo("No uncovered risks found.")
+
+    if result.covered_risks:
+        click.echo("\nCovered risks:")
+        for risk in result.covered_risks:
+            click.echo(f"  - {risk.risk} (tasks: {', '.join(risk.matching_task_ids)})")
 
 
 # ============================================================================
