@@ -4,6 +4,7 @@ from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.calendar import CalendarExporter
+from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.kanban import KanbanExporter
@@ -16,6 +17,7 @@ __all__ = [
     "ArchiveExporter",
     "BriefReviewPacketExporter",
     "CalendarExporter",
+    "ChecklistExporter",
     "DependencyMatrixExporter",
     "ExportManifestExporter",
     "GitHubIssuesExporter",

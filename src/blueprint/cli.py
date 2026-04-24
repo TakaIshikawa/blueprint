@@ -100,6 +100,7 @@ EXPORT_TARGET_CHOICES = (
     "codex",
     "claude-code",
     "calendar",
+    "checklist",
     "mermaid",
     "csv-tasks",
     "github-issues",
@@ -2623,9 +2624,10 @@ def archive(plan_id: str, output: Path):
 
 @export.command()
 @click.argument("plan_id")
+@click.argument("target_arg", required=False)
 @click.option(
     "--target",
-    required=True,
+    required=False,
     type=str,
     help="Target execution engine",
 )
@@ -2634,12 +2636,13 @@ def archive(plan_id: str, output: Path):
     is_flag=True,
     help="Block export if the plan and brief coherence audit reports errors",
 )
-def run(plan_id: str, target: str, require_coherence: bool):
+def run(plan_id: str, target_arg: str | None, target: str | None, require_coherence: bool):
     """Export execution plan to target engine."""
     config = get_config()
     store = Store(config.db_path)
 
     try:
+        target = _resolve_export_target(target_arg, target)
         if target not in EXPORT_TARGET_CHOICES:
             click.echo(f"✗ Unknown target: {target}", err=True)
             return
@@ -2716,6 +2719,8 @@ def run(plan_id: str, target: str, require_coherence: bool):
 
     except click.exceptions.Exit:
         raise
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"✗ Export failed: {e}", err=True)
         import traceback
@@ -2725,9 +2730,10 @@ def run(plan_id: str, target: str, require_coherence: bool):
 
 @export.command()
 @click.argument("plan_id")
+@click.argument("target_arg", required=False)
 @click.option(
     "--target",
-    required=True,
+    required=False,
     type=str,
     help="Target execution engine",
 )
@@ -2741,12 +2747,19 @@ def run(plan_id: str, target: str, require_coherence: bool):
     is_flag=True,
     help="Block preview if the plan and brief coherence audit reports errors",
 )
-def preview(plan_id: str, target: str, output: Path | None, require_coherence: bool):
+def preview(
+    plan_id: str,
+    target_arg: str | None,
+    target: str | None,
+    output: Path | None,
+    require_coherence: bool,
+):
     """Preview an export target without recording it."""
     config = get_config()
     store = Store(config.db_path)
 
     try:
+        target = _resolve_export_target(target_arg, target)
         if target not in EXPORT_TARGET_CHOICES:
             click.echo(f"✗ Unknown target: {target}", err=True)
             return
@@ -2796,6 +2809,8 @@ def preview(plan_id: str, target: str, output: Path | None, require_coherence: b
 
     except click.exceptions.Exit:
         raise
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"✗ Export preview failed: {e}", err=True)
         import traceback
@@ -2817,6 +2832,7 @@ def preview(plan_id: str, target: str, output: Path | None, require_coherence: b
             "codex",
             "claude-code",
             "calendar",
+            "checklist",
             "mermaid",
             "csv-tasks",
             "github-issues",
@@ -2872,6 +2888,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "codex",
             "claude-code",
             "calendar",
+            "checklist",
             "mermaid",
             "csv-tasks",
             "github-issues",
@@ -2962,6 +2979,18 @@ def _get_exporter(target: str):
         return create_exporter(target)
     except ValueError:
         return None
+
+
+def _resolve_export_target(target_arg: str | None, target_option: str | None) -> str:
+    """Resolve export target from positional or option syntax."""
+    if target_arg and target_option and target_arg != target_option:
+        raise click.ClickException(
+            f"Conflicting export targets: positional '{target_arg}' and --target '{target_option}'"
+        )
+    resolved = target_option or target_arg
+    if not resolved:
+        raise click.ClickException("Missing export target. Provide TARGET or --target TARGET.")
+    return resolved
 
 
 def _maybe_require_brief_plan_coherence(

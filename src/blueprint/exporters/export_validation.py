@@ -13,6 +13,7 @@ from xml.etree import ElementTree
 
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.calendar import CalendarExporter
+from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
@@ -121,6 +122,7 @@ def create_exporter(target: str):
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
         "calendar": CalendarExporter(),
+        "checklist": ChecklistExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
         "github-issues": GitHubIssuesExporter(),
@@ -557,6 +559,84 @@ def _validate_kanban(
                 path=str(artifact_path),
             )
         )
+
+    return findings
+
+
+def _validate_checklist(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the execution checklist Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Execution Checklist: {implementation_brief['title']}",
+            "## Plan Metadata",
+            "## Milestones",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    rendered_task_ids = _checklist_rendered_task_ids(content)
+    expected_task_ids = [task["id"] for task in execution_plan.get("tasks", [])]
+
+    if len(rendered_task_ids) != len(expected_task_ids):
+        findings.append(
+            ValidationFinding(
+                code="checklist.task_count_mismatch",
+                message="Checklist task count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task_id in expected_task_ids:
+        occurrences = rendered_task_ids.count(task_id)
+        if occurrences != 1:
+            findings.append(
+                ValidationFinding(
+                    code="checklist.task_occurrence_mismatch",
+                    message=f"Task {task_id} appears {occurrences} times in the checklist.",
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(rendered_task_ids) - set(expected_task_ids))
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="checklist.unexpected_task",
+                message=f"Checklist contains unexpected tasks: {', '.join(extra_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    for task in execution_plan.get("tasks", []):
+        for dependency_id in task.get("depends_on") or []:
+            if dependency_id not in content:
+                findings.append(
+                    ValidationFinding(
+                        code="checklist.missing_dependency",
+                        message=f"Checklist is missing dependency {dependency_id} for {task['id']}.",
+                        path=str(artifact_path),
+                    )
+                )
+        for affected_file in task.get("files_or_modules") or []:
+            if affected_file not in content:
+                findings.append(
+                    ValidationFinding(
+                        code="checklist.missing_affected_file",
+                        message=f"Checklist is missing affected file {affected_file} for {task['id']}.",
+                        path=str(artifact_path),
+                    )
+                )
 
     return findings
 
@@ -1306,6 +1386,16 @@ def _kanban_rendered_tasks_by_column(content: str) -> dict[str, list[str]]:
     return rendered_tasks
 
 
+def _checklist_rendered_task_ids(content: str) -> list[str]:
+    """Extract rendered checklist task IDs from task checkbox lines."""
+    task_ids = []
+    for line in content.splitlines():
+        match = re.match(r"^- \[[ xX]\] `([^`]+)` .+", line.strip())
+        if match:
+            task_ids.append(match.group(1))
+    return task_ids
+
+
 def _xml_property_value(properties: ElementTree.Element, name: str) -> str | None:
     """Return the value of a JUnit property by name."""
     for property_node in properties.findall("property"):
@@ -1329,6 +1419,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
     "calendar": _validate_calendar,
+    "checklist": _validate_checklist,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "status-report": _validate_status_report,
