@@ -39,6 +39,7 @@ from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
+from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.plan_snapshot import SCHEMA_VERSION as PLAN_SNAPSHOT_SCHEMA_VERSION
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
@@ -162,6 +163,7 @@ def create_exporter(target: str):
         "critical-path-report": CriticalPathReportExporter(),
         "mermaid": MermaidExporter(),
         "milestone-summary": MilestoneSummaryExporter(),
+        "notion-markdown": NotionMarkdownExporter(),
         "plan-snapshot": PlanSnapshotExporter(),
         "raci-matrix": RaciMatrixExporter(),
         "csv-tasks": CsvTasksExporter(),
@@ -1007,6 +1009,116 @@ def _validate_release_notes(
             f"- Implementation Brief: `{implementation_brief['id']}`",
         ],
     )
+
+
+def _validate_notion_markdown(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Notion Markdown execution plan export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Execution Plan: {implementation_brief['title']}",
+            "## Plan Overview",
+            "## Milestones",
+            "## Task Database",
+            "## Dependency Table",
+            "## Risks",
+            "## Validation Checklist",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    rows = _notion_markdown_task_rows(content)
+    expected_task_ids = [task["id"] for task in execution_plan.get("tasks", [])]
+    rendered_task_ids = [_unwrapped_code_cell(row.get("task_id", "")) for row in rows]
+
+    if len(rendered_task_ids) != len(expected_task_ids):
+        findings.append(
+            ValidationFinding(
+                code="notion_markdown.task_count_mismatch",
+                message="Notion Markdown task table count does not match execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task_id in expected_task_ids:
+        occurrences = rendered_task_ids.count(task_id)
+        if occurrences != 1:
+            findings.append(
+                ValidationFinding(
+                    code="notion_markdown.task_occurrence_mismatch",
+                    message=(
+                        f"Task {task_id} appears {occurrences} times in the Notion task table."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(rendered_task_ids) - set(expected_task_ids))
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="notion_markdown.unexpected_task",
+                message=f"Notion Markdown contains unexpected tasks: {', '.join(extra_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    rows_by_task_id = {
+        _unwrapped_code_cell(row.get("task_id", "")): row
+        for row in rows
+        if row.get("task_id")
+    }
+    for task in execution_plan.get("tasks", []):
+        row = rows_by_task_id.get(task["id"])
+        if not row:
+            continue
+        for dependency_id in task.get("depends_on") or []:
+            if f"`{dependency_id}`" not in row.get("dependencies", ""):
+                findings.append(
+                    ValidationFinding(
+                        code="notion_markdown.missing_dependency",
+                        message=(
+                            f"Notion task row {task['id']} is missing dependency {dependency_id}."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+        for affected_file in task.get("files_or_modules") or []:
+            if _notion_markdown_table_cell(affected_file) not in row.get("files_modules", ""):
+                findings.append(
+                    ValidationFinding(
+                        code="notion_markdown.missing_file",
+                        message=(
+                            f"Notion task row {task['id']} is missing file/module {affected_file}."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+        for criterion in task.get("acceptance_criteria") or []:
+            if _notion_markdown_table_cell(criterion) not in row.get(
+                "acceptance_criteria", ""
+            ):
+                findings.append(
+                    ValidationFinding(
+                        code="notion_markdown.missing_acceptance_criterion",
+                        message=(
+                            f"Notion task row {task['id']} is missing acceptance criterion."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
 
 
 def _validate_risk_register(
@@ -3911,6 +4023,41 @@ def _risk_register_rendered_rows(content: str) -> list[dict[str, str]]:
     return rows
 
 
+def _notion_markdown_task_rows(content: str) -> list[dict[str, str]]:
+    """Extract task database rows from the Notion Markdown table."""
+    rows: list[dict[str, str]] = []
+    header = (
+        "| Task ID | Title | Status | Owner Type | Suggested Engine | Milestone | "
+        "Dependencies | Files/Modules | Acceptance Criteria |"
+    )
+    for line in _markdown_section_lines(content, "Task Database"):
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped in {
+            header,
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        }:
+            continue
+
+        cells = _split_markdown_table_row(stripped)
+        if len(cells) != 9:
+            rows.append({})
+            continue
+        rows.append(
+            {
+                "task_id": cells[0],
+                "title": cells[1],
+                "status": cells[2],
+                "owner_type": cells[3],
+                "suggested_engine": cells[4],
+                "milestone": cells[5],
+                "dependencies": cells[6],
+                "files_modules": cells[7],
+                "acceptance_criteria": cells[8],
+            }
+        )
+    return rows
+
+
 def _risk_register_referenced_task_ids(value: str) -> list[str]:
     """Extract Markdown code-formatted task references from a register cell."""
     return re.findall(r"`([^`]+)`", value)
@@ -3956,6 +4103,11 @@ def _coverage_table_cell(value: str) -> str:
 def _risk_register_table_cell(value: str) -> str:
     """Recreate risk register table escaping for validation."""
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _notion_markdown_table_cell(value: str) -> str:
+    """Recreate Notion Markdown table escaping for validation."""
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
 
 
 def _unwrapped_code_cell(value: str) -> str:
@@ -4202,6 +4354,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
     "milestone-summary": _validate_milestone_summary,
+    "notion-markdown": _validate_notion_markdown,
     "plan-snapshot": _validate_plan_snapshot,
     "raci-matrix": _validate_raci_matrix,
     "vscode-tasks": _validate_vscode_tasks,
