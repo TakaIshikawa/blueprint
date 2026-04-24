@@ -35,6 +35,8 @@ from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
+from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
+from blueprint.exporters.plan_snapshot import SCHEMA_VERSION as PLAN_SNAPSHOT_SCHEMA_VERSION
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
@@ -153,6 +155,7 @@ def create_exporter(target: str):
         "coverage-matrix": CoverageMatrixExporter(),
         "mermaid": MermaidExporter(),
         "milestone-summary": MilestoneSummaryExporter(),
+        "plan-snapshot": PlanSnapshotExporter(),
         "raci-matrix": RaciMatrixExporter(),
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
@@ -778,6 +781,144 @@ def _validate_milestone_summary(
                         "Milestone summary is missing cross-milestone dependency: "
                         f"{dependency_line}"
                     ),
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
+def _validate_plan_snapshot(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the immutable plan snapshot JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="plan_snapshot.invalid_json",
+                message=f"Plan snapshot is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="plan_snapshot.invalid_shape",
+                message="Plan snapshot must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    required_keys = [
+        "schema_version",
+        "exported_at",
+        "content_hash",
+        "hash_algorithm",
+        "plan",
+        "brief",
+        "milestones",
+        "tasks",
+        "dependencies",
+        "metrics",
+    ]
+    findings.extend(
+        _missing_keys(payload, required_keys, "plan_snapshot.missing_key", str(artifact_path))
+    )
+
+    if payload.get("schema_version") != PLAN_SNAPSHOT_SCHEMA_VERSION:
+        findings.append(
+            ValidationFinding(
+                code="plan_snapshot.schema_version_mismatch",
+                message="Plan snapshot schema_version is not supported.",
+                path=str(artifact_path),
+            )
+        )
+
+    content_hash = payload.get("content_hash")
+    if not isinstance(content_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+        findings.append(
+            ValidationFinding(
+                code="plan_snapshot.invalid_content_hash",
+                message="Plan snapshot must include a SHA-256 content_hash.",
+                path=str(artifact_path),
+            )
+        )
+
+    for section in ["plan", "brief", "metrics"]:
+        if section in payload and not isinstance(payload[section], dict):
+            findings.append(
+                ValidationFinding(
+                    code="plan_snapshot.section.invalid_shape",
+                    message=f"Plan snapshot section '{section}' must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for section in ["milestones", "tasks", "dependencies"]:
+        if section in payload and not isinstance(payload[section], list):
+            findings.append(
+                ValidationFinding(
+                    code="plan_snapshot.section.invalid_shape",
+                    message=f"Plan snapshot section '{section}' must be a list.",
+                    path=str(artifact_path),
+                )
+            )
+
+    plan_summary = payload.get("plan")
+    if isinstance(plan_summary, dict):
+        findings.extend(
+            _missing_keys(
+                plan_summary,
+                ["id", "implementation_brief_id", "status"],
+                "plan_snapshot.plan.missing_key",
+                str(artifact_path),
+            )
+        )
+        if plan_summary.get("id") != execution_plan.get("id"):
+            findings.append(
+                ValidationFinding(
+                    code="plan_snapshot.plan_id_mismatch",
+                    message="Plan snapshot plan.id does not match the execution plan.",
+                    path=str(artifact_path),
+                )
+            )
+
+    brief_summary = payload.get("brief")
+    if isinstance(brief_summary, dict):
+        findings.extend(
+            _missing_keys(
+                brief_summary,
+                ["id", "source_brief_id", "title", "problem_statement", "mvp_goal"],
+                "plan_snapshot.brief.missing_key",
+                str(artifact_path),
+            )
+        )
+        if brief_summary.get("id") != implementation_brief.get("id"):
+            findings.append(
+                ValidationFinding(
+                    code="plan_snapshot.brief_id_mismatch",
+                    message="Plan snapshot brief.id does not match the implementation brief.",
+                    path=str(artifact_path),
+                )
+            )
+
+    tasks = payload.get("tasks")
+    if isinstance(tasks, list):
+        expected_task_ids = {task["id"] for task in execution_plan.get("tasks", [])}
+        rendered_task_ids = {
+            task.get("id") for task in tasks if isinstance(task, dict) and task.get("id")
+        }
+        for missing_task_id in sorted(expected_task_ids - rendered_task_ids):
+            findings.append(
+                ValidationFinding(
+                    code="plan_snapshot.missing_task",
+                    message=f"Plan snapshot is missing task '{missing_task_id}'.",
                     path=str(artifact_path),
                 )
             )
@@ -3448,6 +3589,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
     "milestone-summary": _validate_milestone_summary,
+    "plan-snapshot": _validate_plan_snapshot,
     "raci-matrix": _validate_raci_matrix,
     "vscode-tasks": _validate_vscode_tasks,
     "wave-schedule": _validate_wave_schedule,
