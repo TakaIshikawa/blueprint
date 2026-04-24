@@ -12,6 +12,7 @@ from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
+from blueprint.exporters.gantt import GanttExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
@@ -51,6 +52,7 @@ __all__ = [
     "DependencyMatrixExporter",
     "ExportManifestExporter",
     "FileImpactMapExporter",
+    "GanttExporter",
     "GitHubActionsExporter",
     "GitHubIssuesExporter",
     "GitLabIssuesExporter",

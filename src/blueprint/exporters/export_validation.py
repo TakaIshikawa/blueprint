@@ -28,6 +28,7 @@ from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
+from blueprint.exporters.gantt import GanttExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
@@ -165,6 +166,7 @@ def create_exporter(target: str):
         "raci-matrix": RaciMatrixExporter(),
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
+        "gantt": GanttExporter(),
         "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
         "gitlab-issues": GitLabIssuesExporter(),
@@ -3494,6 +3496,111 @@ def _validate_mermaid(
     ]
 
 
+def _validate_gantt(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Mermaid Gantt export."""
+    content = artifact_path.read_text()
+    label = str(artifact_path)
+    if not content.startswith("gantt\n"):
+        return [
+            ValidationFinding(
+                code="gantt.missing_header",
+                message="Gantt export must start with 'gantt'.",
+                path=label,
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    for milestone in execution_plan.get("milestones", []):
+        name = milestone.get("name") or milestone.get("title")
+        if name and f"    section {name}" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="gantt.missing_milestone_section",
+                    message=f"Gantt export is missing milestone section: {name}",
+                    path=label,
+                )
+            )
+
+    rendered_tasks = _gantt_rendered_tasks_by_mermaid_id(content)
+    expected_ids = [task["id"] for task in execution_plan.get("tasks", [])]
+    mermaid_ids_by_task_id = {
+        task["id"]: _gantt_mermaid_id(task["id"], index)
+        for index, task in enumerate(execution_plan.get("tasks", []), 1)
+    }
+    task_id_by_mermaid_id = {
+        mermaid_id: task_id for task_id, mermaid_id in mermaid_ids_by_task_id.items()
+    }
+    rendered_task_ids = {
+        task_id_by_mermaid_id[mermaid_id]
+        for mermaid_id in rendered_tasks
+        if mermaid_id in task_id_by_mermaid_id
+    }
+    expected_id_set = set(expected_ids)
+    rendered_id_set = set(rendered_task_ids)
+
+    missing_task_ids = sorted(expected_id_set - rendered_id_set)
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="gantt.missing_task",
+                message=f"Gantt export is missing task ids: {', '.join(missing_task_ids)}",
+                path=label,
+            )
+        )
+
+    unexpected_task_ids = sorted(
+        mermaid_id for mermaid_id in rendered_tasks if mermaid_id not in task_id_by_mermaid_id
+    )
+    if unexpected_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="gantt.unexpected_task",
+                message=(
+                    "Gantt export has unexpected Mermaid task ids: "
+                    f"{', '.join(unexpected_task_ids)}"
+                ),
+                path=label,
+            )
+        )
+
+    rendered_order = {
+        task_id_by_mermaid_id[mermaid_id]: index
+        for index, mermaid_id in enumerate(rendered_tasks)
+        if mermaid_id in task_id_by_mermaid_id
+    }
+    for task in execution_plan.get("tasks", []):
+        task_id = task["id"]
+        rendered = rendered_tasks.get(mermaid_ids_by_task_id[task_id])
+        if rendered is None:
+            continue
+        timing = rendered["timing"]
+        if timing.startswith("after "):
+            dependency_mermaid_id = timing.removeprefix("after ").split(",", 1)[0].strip()
+            dependency_id = task_id_by_mermaid_id.get(dependency_mermaid_id)
+            if dependency_id is None or dependency_id not in task.get("depends_on", []):
+                findings.append(
+                    ValidationFinding(
+                        code="gantt.invalid_after_dependency",
+                        message=f"Gantt task {task_id} references an invalid after dependency.",
+                        path=label,
+                    )
+                )
+            elif rendered_order.get(dependency_id, -1) > rendered_order.get(task_id, -1):
+                findings.append(
+                    ValidationFinding(
+                        code="gantt.dependency_order",
+                        message=f"Gantt task {task_id} is rendered before dependency {dependency_id}.",
+                        path=label,
+                    )
+                )
+
+    return findings
+
+
 def _validate_calendar(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -3896,6 +4003,49 @@ def _checklist_rendered_task_ids(content: str) -> list[str]:
     return task_ids
 
 
+def _gantt_rendered_tasks_by_mermaid_id(content: str) -> dict[str, dict[str, str]]:
+    """Extract rendered Gantt task Mermaid ids and timing fields."""
+    rendered_tasks: dict[str, dict[str, str]] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped in {"gantt"}:
+            continue
+        if stripped.startswith(("title ", "dateFormat ", "axisFormat ", "section ")):
+            continue
+        if ":" not in stripped:
+            continue
+        label, fields_text = stripped.rsplit(":", 1)
+        fields = [field.strip() for field in fields_text.split(",") if field.strip()]
+        mermaid_id = next(
+            (
+                field
+                for field in fields
+                if field not in {"crit", "done", "active", "milestone"}
+                and not field.startswith("after ")
+                and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", field)
+                and not re.fullmatch(r"\d+d", field)
+            ),
+            None,
+        )
+        if mermaid_id is None:
+            continue
+        timing_fields = fields[fields.index(mermaid_id) + 1 :]
+        rendered_tasks[mermaid_id] = {
+            "label": label.strip(),
+            "mermaid_id": mermaid_id,
+            "timing": ", ".join(timing_fields),
+        }
+    return rendered_tasks
+
+
+def _gantt_mermaid_id(task_id: str, index: int) -> str:
+    """Recreate the Gantt exporter Mermaid id scheme."""
+    mermaid_id = re.sub(r"[^0-9A-Za-z_]", "_", task_id)
+    if not mermaid_id or mermaid_id[0].isdigit():
+        mermaid_id = f"task_{index}_{mermaid_id}"
+    return mermaid_id
+
+
 def _file_impact_rendered_sections(content: str) -> dict[str, list[str]]:
     """Extract rendered file impact task IDs by file/module heading."""
     sections: dict[str, list[str]] = {}
@@ -4047,6 +4197,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "task-queue-jsonl": _validate_task_queue_jsonl,
     "trello-json": _validate_trello_json,
     "file-impact-map": _validate_file_impact_map,
+    "gantt": _validate_gantt,
     "github-actions": _validate_github_actions,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
