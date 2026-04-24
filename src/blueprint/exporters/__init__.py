@@ -10,6 +10,7 @@ from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.manifest import ExportManifestExporter
+from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
@@ -26,6 +27,7 @@ __all__ = [
     "FileImpactMapExporter",
     "GitHubIssuesExporter",
     "KanbanExporter",
+    "MilestoneSummaryExporter",
     "ReleaseNotesExporter",
     "SourceBriefExporter",
     "TaskRosterExporter",

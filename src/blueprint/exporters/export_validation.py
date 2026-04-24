@@ -22,6 +22,7 @@ from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.mermaid import MermaidExporter
+from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.smoothie import SmoothieExporter
@@ -126,6 +127,7 @@ def create_exporter(target: str):
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
         "mermaid": MermaidExporter(),
+        "milestone-summary": MilestoneSummaryExporter(),
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
         "github-issues": GitHubIssuesExporter(),
@@ -444,6 +446,55 @@ def _validate_status_report(
             f"- Title: {implementation_brief['title']}",
         ],
     )
+
+
+def _validate_milestone_summary(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the milestone summary Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Milestone Summary: {implementation_brief['title']}",
+            "## Plan Overview",
+            "## Cross-Milestone Dependencies",
+            "## Milestones",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    for task in execution_plan.get("tasks", []):
+        if f"`{task['id']}`" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="milestone_summary.missing_task",
+                    message=f"Milestone summary is missing task {task['id']}.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for dependency_line in _expected_cross_milestone_dependency_lines(execution_plan):
+        if dependency_line not in content:
+            findings.append(
+                ValidationFinding(
+                    code="milestone_summary.missing_cross_dependency",
+                    message=(
+                        "Milestone summary is missing cross-milestone dependency: "
+                        f"{dependency_line}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
 
 
 def _validate_release_notes(
@@ -1607,8 +1658,32 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "file-impact-map": _validate_file_impact_map,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
+    "milestone-summary": _validate_milestone_summary,
     "vscode-tasks": _validate_vscode_tasks,
 }
+
+
+def _expected_cross_milestone_dependency_lines(
+    execution_plan: dict[str, Any],
+) -> list[str]:
+    """Return the cross-milestone dependency lines expected from the exporter."""
+    tasks = execution_plan.get("tasks", [])
+    tasks_by_id = {task["id"]: task for task in tasks}
+    lines: list[str] = []
+    for task in sorted(tasks, key=lambda item: item["id"]):
+        task_milestone = task.get("milestone") or "Ungrouped"
+        for dependency_id in task.get("depends_on") or []:
+            dependency = tasks_by_id.get(dependency_id)
+            if dependency is None:
+                continue
+            dependency_milestone = dependency.get("milestone") or "Ungrouped"
+            if dependency_milestone == task_milestone:
+                continue
+            lines.append(
+                f"- `{task['id']}` ({task_milestone}) depends on "
+                f"`{dependency_id}` ({dependency_milestone})"
+            )
+    return lines
 
 
 def _task_labels(task: dict[str, Any]) -> list[str]:
