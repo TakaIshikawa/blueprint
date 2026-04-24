@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 import yaml
 
 from blueprint.exporters.adr import ADRExporter
+from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
@@ -142,6 +143,7 @@ def create_exporter(target: str):
         "smoothie": SmoothieExporter(),
         "codex": CodexExporter(),
         "claude-code": ClaudeCodeExporter(),
+        "asana-csv": AsanaCsvExporter(),
         "azure-devops-csv": AzureDevOpsCsvExporter(),
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
@@ -1737,6 +1739,61 @@ def _validate_azure_devops_csv(
     return findings
 
 
+def _validate_asana_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Asana CSV task export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="asana_csv.invalid_structure",
+                message=f"Asana CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    missing = [column for column in AsanaCsvExporter.FIELDNAMES if column not in fieldnames]
+    if missing:
+        findings.append(
+            ValidationFinding(
+                code="asana_csv.missing_column",
+                message=f"Asana CSV export is missing required columns: {', '.join(missing)}",
+                path=str(artifact_path),
+            )
+        )
+
+    tasks = execution_plan.get("tasks", [])
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="asana_csv.row_count_mismatch",
+                message="Asana CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    for index, row in enumerate(rows, 1):
+        for column in ["Name", "Notes"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="asana_csv.row_missing_required_value",
+                        message=f"Asana CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_linear(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -3247,6 +3304,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "claude-code": _validate_claude_code,
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
+    "asana-csv": _validate_asana_csv,
     "azure-devops-csv": _validate_azure_devops_csv,
     "github-issues": _validate_github_issues_bundle,
     "gitlab-issues": _validate_gitlab_issues,
