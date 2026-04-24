@@ -16,6 +16,7 @@ from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
+from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
@@ -41,6 +42,7 @@ __all__ = [
     "KanbanExporter",
     "LinearExporter",
     "MilestoneSummaryExporter",
+    "RaciMatrixExporter",
     "ReleaseNotesExporter",
     "SlackDigestExporter",
     "SourceBriefExporter",

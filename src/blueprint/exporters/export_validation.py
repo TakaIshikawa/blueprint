@@ -28,6 +28,7 @@ from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
+from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
@@ -138,6 +139,7 @@ def create_exporter(target: str):
         "coverage-matrix": CoverageMatrixExporter(),
         "mermaid": MermaidExporter(),
         "milestone-summary": MilestoneSummaryExporter(),
+        "raci-matrix": RaciMatrixExporter(),
         "csv-tasks": CsvTasksExporter(),
         "file-impact-map": FileImpactMapExporter(),
         "github-actions": GitHubActionsExporter(),
@@ -641,6 +643,74 @@ def _validate_file_impact_map(
                         path=str(artifact_path),
                     )
                 )
+
+    return findings
+
+
+def _validate_raci_matrix(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the RACI matrix Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# RACI Matrix: {implementation_brief['title']}",
+            "## Plan Metadata",
+            "## Responsibility Matrix",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    rows = _raci_rendered_rows(content)
+    required_columns = [
+        "task_id",
+        "task",
+        "responsible",
+        "accountable",
+        "consulted",
+        "informed",
+        "milestone",
+        "suggested_engine",
+    ]
+    for index, row in enumerate(rows, 1):
+        missing_columns = [column for column in required_columns if column not in row]
+        if missing_columns:
+            findings.append(
+                ValidationFinding(
+                    code="raci_matrix.row_missing_columns",
+                    message=(
+                        f"RACI matrix row {index} is missing columns: "
+                        f"{', '.join(missing_columns)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    rendered_task_counts: dict[str, int] = {}
+    for row in rows:
+        task_id = _unwrapped_code_cell(row.get("task_id", ""))
+        if task_id:
+            rendered_task_counts[task_id] = rendered_task_counts.get(task_id, 0) + 1
+
+    for task in execution_plan.get("tasks", []):
+        task_id = str(task["id"])
+        count = rendered_task_counts.get(task_id, 0)
+        if count != 1:
+            findings.append(
+                ValidationFinding(
+                    code="raci_matrix.task_row_occurrence_mismatch",
+                    message=f"RACI matrix renders task {task_id} {count} times.",
+                    path=str(artifact_path),
+                )
+            )
 
     return findings
 
@@ -2576,6 +2646,56 @@ def _coverage_rendered_rows(section_lines: list[str]) -> list[dict[str, str]]:
     return rows
 
 
+def _raci_rendered_rows(content: str) -> list[dict[str, str]]:
+    """Extract RACI matrix rows from the responsibility table."""
+    rows: list[dict[str, str]] = []
+    for line in _markdown_section_lines(content, "Responsibility Matrix"):
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped in {
+            (
+                "| Task ID | Task | Responsible | Accountable | Consulted | Informed | "
+                "Milestone | Suggested Engine |"
+            ),
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        }:
+            continue
+
+        cells = _split_markdown_table_row(stripped)
+        if len(cells) != 8:
+            rows.append({})
+            continue
+        rows.append(
+            {
+                "task_id": cells[0],
+                "task": cells[1],
+                "responsible": cells[2],
+                "accountable": cells[3],
+                "consulted": cells[4],
+                "informed": cells[5],
+                "milestone": cells[6],
+                "suggested_engine": cells[7],
+            }
+        )
+    return rows
+
+
+def _markdown_section_lines(content: str, section: str) -> list[str]:
+    """Return lines belonging to one second-level Markdown section."""
+    lines: list[str] = []
+    in_section = False
+    heading = f"## {section}"
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == heading:
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## "):
+            break
+        if in_section:
+            lines.append(line)
+    return lines
+
+
 def _split_markdown_table_row(row: str) -> list[str]:
     """Split a simple Markdown table row while preserving escaped pipes."""
     inner = row.strip().strip("|")
@@ -2594,6 +2714,14 @@ def _split_markdown_table_row(row: str) -> list[str]:
 def _coverage_table_cell(value: str) -> str:
     """Recreate coverage matrix table escaping for validation."""
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _unwrapped_code_cell(value: str) -> str:
+    """Return a Markdown code cell value without wrapping backticks."""
+    stripped = value.strip()
+    if stripped.startswith("`") and stripped.endswith("`") and len(stripped) >= 2:
+        return stripped[1:-1]
+    return stripped
 
 
 def _string_items(value: Any) -> list[str]:
@@ -2703,6 +2831,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
     "milestone-summary": _validate_milestone_summary,
+    "raci-matrix": _validate_raci_matrix,
     "vscode-tasks": _validate_vscode_tasks,
     "wave-schedule": _validate_wave_schedule,
 }
