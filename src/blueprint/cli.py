@@ -114,6 +114,7 @@ EXPORT_TARGET_CHOICES = (
     "junit-tasks",
     "kanban",
     "release-notes",
+    "slack-digest",
     "status-report",
     "task-bundle",
     "vscode-tasks",

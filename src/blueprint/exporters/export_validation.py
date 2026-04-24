@@ -25,6 +25,7 @@ from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
+from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
@@ -134,6 +135,7 @@ def create_exporter(target: str):
         "junit-tasks": JUnitTasksExporter(),
         "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
+        "slack-digest": SlackDigestExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
         "vscode-tasks": VSCodeTasksExporter(),
@@ -446,6 +448,67 @@ def _validate_status_report(
             f"- Title: {implementation_brief['title']}",
         ],
     )
+
+
+def _validate_slack_digest(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Slack digest Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Slack Digest: {execution_plan['id']}",
+            "## Status Counts",
+            "## Ready Tasks",
+            "## Blocked Tasks",
+            "## Next Recommended Tasks",
+        ],
+        required_snippets=[
+            f"*Plan:* `{execution_plan['id']}`",
+            (
+                f"*Implementation Brief:* <blueprint://implementation-brief/"
+                f"{implementation_brief['id']}|{implementation_brief['title']}>"
+            ),
+        ],
+    )
+
+    for status in ["pending", "in_progress", "completed", "blocked", "skipped"]:
+        if f"*{status}:*" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="slack_digest.missing_status_count",
+                    message=f"Slack digest is missing status count for {status}.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for task in execution_plan.get("tasks", []):
+        if task.get("status") != "blocked":
+            continue
+        if f"`{task['id']}`" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="slack_digest.missing_blocked_task",
+                    message=f"Slack digest is missing blocked task {task['id']}.",
+                    path=str(artifact_path),
+                )
+            )
+        blocked_reason = _blocked_reason(task)
+        if blocked_reason and blocked_reason not in content:
+            findings.append(
+                ValidationFinding(
+                    code="slack_digest.missing_blocked_reason",
+                    message=f"Slack digest is missing blocked reason for {task['id']}.",
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
 
 
 def _validate_milestone_summary(
@@ -1641,6 +1704,12 @@ def _task_bundle_filename(index: int, task_id: str) -> str:
     return f"{index:03d}-{slug or 'task'}.md"
 
 
+def _blocked_reason(task: dict[str, Any]) -> str | None:
+    """Return a blocked reason from supported task shapes."""
+    metadata = task.get("metadata") or {}
+    return task.get("blocked_reason") or metadata.get("blocked_reason")
+
+
 _VALIDATORS: dict[str, ValidationCheck] = {
     "adr": _validate_adr,
     "relay": _validate_relay,
@@ -1653,6 +1722,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "checklist": _validate_checklist,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
+    "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
     "file-impact-map": _validate_file_impact_map,
