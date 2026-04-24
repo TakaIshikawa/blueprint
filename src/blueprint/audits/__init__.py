@@ -50,6 +50,12 @@ from blueprint.audits.task_completeness import (
     TaskCompletenessResult,
     audit_task_completeness,
 )
+from blueprint.audits.workload import (
+    CrossMilestoneDependencyCount,
+    WorkloadOverload,
+    WorkloadResult,
+    analyze_workload,
+)
 
 __all__ = [
     "BriefReadinessFinding",
@@ -57,6 +63,7 @@ __all__ = [
     "AcceptanceQualityFinding",
     "AcceptanceQualityResult",
     "AcceptanceQualityTaskResult",
+    "CrossMilestoneDependencyCount",
     "DependencyRepairResult",
     "DependencyRepairSuggestion",
     "EnvInventoryItem",
@@ -75,8 +82,11 @@ __all__ = [
     "TaskCompletenessFinding",
     "TaskCompletenessItem",
     "TaskCompletenessResult",
+    "WorkloadOverload",
+    "WorkloadResult",
     "audit_brief_readiness",
     "audit_acceptance_quality",
+    "analyze_workload",
     "build_env_inventory",
     "evaluate_plan_readiness",
     "audit_risk_coverage",

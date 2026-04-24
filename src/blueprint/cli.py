@@ -55,6 +55,7 @@ from blueprint.audits.task_completeness import (
     TaskCompletenessResult,
     audit_task_completeness,
 )
+from blueprint.audits.workload import WorkloadResult, analyze_workload
 from blueprint.audits.source_similarity import (
     DEFAULT_LIMIT as SOURCE_SIMILARITY_DEFAULT_LIMIT,
     DEFAULT_THRESHOLD as SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
@@ -2893,6 +2894,27 @@ def task_completeness(plan_id: str, json_output: bool):
         raise click.exceptions.Exit(1)
 
 
+@task.command(name="workload")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output workload as JSON")
+def task_workload(plan_id: str, json_output: bool):
+    """Summarize execution task workload distribution."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = analyze_workload(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return
+
+    _emit_task_workload(result)
+
+
 def _emit_critical_path(result: CriticalPathResult) -> None:
     """Render human-readable critical path analysis."""
     click.echo(f"Critical path for plan {result.plan_id}")
@@ -2979,6 +3001,67 @@ def _emit_task_completeness(result: TaskCompletenessResult) -> None:
             f"  - {task_item.task_id} ({task_item.title}): "
             f"{task_item.score}/100"
         )
+
+
+def _emit_task_workload(result: WorkloadResult) -> None:
+    """Render human-readable workload distribution results."""
+    click.echo(f"Task workload audit: {result.plan_id}")
+    click.echo(
+        f"Tasks: {result.task_count} "
+        f"(overload threshold: {result.overload_threshold} per owner/engine group)"
+    )
+
+    _emit_count_table(
+        "Distribution",
+        [
+            ("owner_type", result.counts_by_owner_type),
+            ("suggested_engine", result.counts_by_suggested_engine),
+            ("milestone", result.counts_by_milestone),
+            ("status", result.counts_by_status),
+            ("complexity", result.complexity_buckets),
+        ],
+    )
+
+    click.echo("\nFlags:")
+    if not result.has_flags:
+        click.echo("  none")
+    if result.unassigned_task_ids:
+        click.echo("  Unassigned tasks: " + ", ".join(result.unassigned_task_ids))
+    for overloaded_group in result.overloaded_groups:
+        click.echo(
+            "  Overloaded "
+            f"{overloaded_group.dimension}={overloaded_group.group}: "
+            f"{overloaded_group.task_count} tasks "
+            f"(threshold {overloaded_group.threshold})"
+        )
+
+    click.echo("\nCross-milestone dependencies:")
+    if not result.cross_milestone_dependencies:
+        click.echo("  none")
+        return
+    click.echo(f"  {'From':<20} {'To':<20} Count")
+    click.echo("  " + "-" * 48)
+    for dependency_count in result.cross_milestone_dependencies:
+        click.echo(
+            f"  {dependency_count.from_milestone[:18]:<20} "
+            f"{dependency_count.to_milestone[:18]:<20} "
+            f"{dependency_count.count}"
+        )
+
+
+def _emit_count_table(
+    title: str,
+    sections: list[tuple[str, dict[str, int]]],
+) -> None:
+    click.echo(f"\n{title}:")
+    click.echo(f"  {'Dimension':<18} {'Group':<24} Count")
+    click.echo("  " + "-" * 52)
+    for dimension, counts in sections:
+        if not counts:
+            click.echo(f"  {dimension:<18} {'none':<24} 0")
+            continue
+        for group, count in counts.items():
+            click.echo(f"  {dimension:<18} {group[:22]:<24} {count}")
 
 
 @task.command()
