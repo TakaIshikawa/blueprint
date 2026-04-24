@@ -38,6 +38,12 @@ from blueprint.audits.env_inventory import (
     EnvInventorySource,
     build_env_inventory,
 )
+from blueprint.audits.env_readiness import (
+    EnvReadinessFinding,
+    EnvReadinessResult,
+    EnvReadinessTaskResult,
+    audit_env_readiness,
+)
 from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyFinding,
     MilestoneDependencyResult,
@@ -94,6 +100,9 @@ __all__ = [
     "EnvInventoryCounts",
     "EnvInventoryResult",
     "EnvInventorySource",
+    "EnvReadinessFinding",
+    "EnvReadinessResult",
+    "EnvReadinessTaskResult",
     "MilestoneDependencyFinding",
     "MilestoneDependencyResult",
     "OwnershipGapFinding",
@@ -124,6 +133,7 @@ __all__ = [
     "audit_task_splitting",
     "analyze_workload",
     "build_env_inventory",
+    "audit_env_readiness",
     "evaluate_plan_readiness",
     "audit_risk_coverage",
     "audit_task_completeness",

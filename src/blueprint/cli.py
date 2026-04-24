@@ -40,6 +40,10 @@ from blueprint.audits.dependency_repair import (
     suggest_dependency_repairs,
 )
 from blueprint.audits.env_inventory import EnvInventoryResult, build_env_inventory
+from blueprint.audits.env_readiness import (
+    EnvReadinessResult,
+    audit_env_readiness,
+)
 from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyResult,
     audit_milestone_dependencies,
@@ -3128,6 +3132,29 @@ def task_completeness(plan_id: str, json_output: bool):
         raise click.exceptions.Exit(1)
 
 
+@task.command(name="env-readiness")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def task_env_readiness(plan_id: str, json_output: bool):
+    """Audit task environment setup and verification readiness."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_env_readiness(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_env_readiness(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 @task.command(name="split-audit")
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
@@ -3331,6 +3358,40 @@ def _emit_task_completeness(result: TaskCompletenessResult) -> None:
     click.echo("\nTask scores:")
     for task_item in result.tasks:
         click.echo(f"  - {task_item.task_id} ({task_item.title}): " f"{task_item.score}/100")
+
+
+def _emit_env_readiness(result: EnvReadinessResult) -> None:
+    """Render human-readable environment readiness audit results."""
+    click.echo(f"Task environment readiness audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"({result.blocking_count} blocking, {result.warning_count} warnings)"
+    )
+
+    if not result.tasks:
+        click.echo("No execution tasks found.")
+        return
+
+    grouped_findings = result.findings_by_severity()
+    if grouped_findings["blocking"]:
+        click.echo("\nBlocking findings:")
+        for finding in grouped_findings["blocking"]:
+            click.echo(
+                f"  - {finding.task_id} ({finding.task_title}) "
+                f"[{finding.code}]: {finding.message}"
+            )
+            click.echo(f"    Remediation: {finding.remediation}")
+    else:
+        click.echo("No blocking findings found.")
+
+    if grouped_findings["warning"]:
+        click.echo("\nWarnings:")
+        for finding in grouped_findings["warning"]:
+            click.echo(
+                f"  - {finding.task_id} ({finding.task_title}) "
+                f"[{finding.code}]: {finding.message}"
+            )
+            click.echo(f"    Remediation: {finding.remediation}")
 
 
 def _emit_task_split_audit(result: TaskSplittingResult) -> None:
