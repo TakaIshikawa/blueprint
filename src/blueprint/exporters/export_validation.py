@@ -16,6 +16,7 @@ from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
+from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
@@ -120,6 +121,7 @@ def create_exporter(target: str):
         "csv-tasks": CsvTasksExporter(),
         "github-issues": GitHubIssuesExporter(),
         "junit-tasks": JUnitTasksExporter(),
+        "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
@@ -458,6 +460,103 @@ def _validate_release_notes(
             f"- Implementation Brief: `{implementation_brief['id']}`",
         ],
     )
+
+
+def _validate_kanban(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Kanban board Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Execution Plan Kanban Board: {execution_plan['id']}",
+            "## pending",
+            "## in_progress",
+            "## blocked",
+            "## completed",
+            "## skipped",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    missing_column_findings = [
+        finding
+        for finding in findings
+        if finding.code == "markdown.missing_heading"
+        and finding.message.startswith("Missing required Markdown heading: ## ")
+    ]
+    for finding in missing_column_findings:
+        findings.append(
+            ValidationFinding(
+                code="kanban.missing_column",
+                message=finding.message.replace("Markdown heading", "Kanban column"),
+                path=finding.path,
+            )
+        )
+
+    rendered_tasks = _kanban_rendered_tasks_by_column(content)
+    expected_tasks = execution_plan.get("tasks", [])
+    rendered_task_ids = [
+        task_id for task_ids in rendered_tasks.values() for task_id in task_ids
+    ]
+
+    if len(rendered_task_ids) != len(expected_tasks):
+        findings.append(
+            ValidationFinding(
+                code="kanban.task_count_mismatch",
+                message="Kanban task count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task in expected_tasks:
+        expected_column = task.get("status") or "pending"
+        occurrences = [
+            column
+            for column, task_ids in rendered_tasks.items()
+            for task_id in task_ids
+            if task_id == task["id"]
+        ]
+        if len(occurrences) != 1:
+            findings.append(
+                ValidationFinding(
+                    code="kanban.task_occurrence_mismatch",
+                    message=f"Task {task['id']} appears {len(occurrences)} times in the Kanban board.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+        if occurrences[0] != expected_column:
+            findings.append(
+                ValidationFinding(
+                    code="kanban.task_wrong_column",
+                    message=(
+                        f"Task {task['id']} appears under {occurrences[0]} "
+                        f"instead of {expected_column}."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(rendered_task_ids) - {task["id"] for task in expected_tasks})
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="kanban.unexpected_task",
+                message=f"Kanban board contains unexpected tasks: {', '.join(extra_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
 
 
 def _validate_task_bundle(
@@ -908,6 +1007,26 @@ def _has_heading(content: str, expected: str) -> bool:
     return False
 
 
+def _kanban_rendered_tasks_by_column(content: str) -> dict[str, list[str]]:
+    """Extract rendered Kanban task IDs by status heading."""
+    columns = {"pending", "in_progress", "blocked", "completed", "skipped"}
+    rendered_tasks = {column: [] for column in columns}
+    current_column: str | None = None
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            heading = stripped[3:].strip()
+            current_column = heading if heading in columns else None
+            continue
+
+        match = re.match(r"^### `([^`]+)` - .+", stripped)
+        if match and current_column:
+            rendered_tasks[current_column].append(match.group(1))
+
+    return rendered_tasks
+
+
 def _xml_property_value(properties: ElementTree.Element, name: str) -> str | None:
     """Return the value of a JUnit property by name."""
     for property_node in properties.findall("property"):
@@ -929,6 +1048,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "smoothie": _validate_smoothie,
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
+    "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
