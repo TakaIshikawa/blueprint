@@ -39,6 +39,7 @@ from blueprint.audits.source_similarity import (
 )
 from blueprint.config import get_config
 from blueprint.exporters.archive import ArchiveExporter
+from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
 from blueprint.exporters.export_validation import create_exporter, validate_export
 from blueprint.exporters.mermaid import MermaidExporter
@@ -1431,6 +1432,39 @@ def plan_graph(plan_id: str, output_format: str, output: Path | None):
         return
 
     click.echo(content, nl=False)
+
+
+@plan.command(name="dependency-matrix")
+@click.argument("plan_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json"]),
+    default="json",
+    show_default=True,
+    help="Dependency matrix output format",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write dependency matrix to a file instead of stdout",
+)
+def plan_dependency_matrix(plan_id: str, output_format: str, output: Path | None):
+    """Export the full task dependency matrix as JSON."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    exporter = DependencyMatrixExporter()
+    try:
+        payload = exporter.render(plan, output_format)
+    except UnknownDependencyError as e:
+        raise click.ClickException(str(e)) from e
+
+    _emit_json_payload(payload, output)
 
 
 @plan.command()
