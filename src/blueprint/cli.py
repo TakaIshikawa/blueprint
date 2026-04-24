@@ -2077,6 +2077,55 @@ def list(brief_id: str | None, status: str | None, limit: int):
     click.echo(f"\nTotal: {len(plans)} plans")
 
 
+@plan.command(name="search")
+@click.argument("query")
+@click.option("--status", type=click.Choice(PLAN_STATUS_CHOICES), help="Filter by status")
+@click.option("--target-engine", help="Filter by target engine")
+@click.option("--limit", default=50, show_default=True, help="Maximum number of plans to show")
+@click.option("--json", "json_output", is_flag=True, help="Output search results as JSON")
+def plan_search(
+    query: str,
+    status: str | None,
+    target_engine: str | None,
+    limit: int,
+    json_output: bool,
+):
+    """Search execution plans and tasks."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    results = store.search_execution_plans(
+        query,
+        status=status,
+        target_engine=target_engine,
+        limit=limit,
+    )
+
+    if json_output:
+        click.echo(json.dumps(results, indent=2, sort_keys=True))
+        return
+
+    if not results:
+        click.echo("No execution plans matched")
+        return
+
+    click.echo(f"\nSearch results for: {query}")
+    click.echo("-" * 80)
+    for result in results:
+        target = result["target_engine"] or "N/A"
+        task_ids = ", ".join(result["matched_task_ids"]) or "N/A"
+        fields = ", ".join(result["matched_fields"])
+        click.echo(f"{result['plan_id']} ({result['status']}, {target})")
+        click.echo(f"  Tasks:  {task_ids}")
+        click.echo(f"  Fields: {fields}")
+        for match in result["matches"]:
+            task_suffix = f" [{match['task_id']}]" if match.get("task_id") else ""
+            click.echo(f"  - {match['field']}{task_suffix}: {match['snippet']}")
+        click.echo("")
+
+    click.echo(f"Total: {len(results)} plans")
+
+
 @plan.command()
 @click.argument("plan_id")
 @click.option("--status", required=True, type=click.Choice(PLAN_STATUS_CHOICES))

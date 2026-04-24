@@ -8,7 +8,9 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import create_engine
+from sqlalchemy import func
 from sqlalchemy import inspect as inspect_db
+from sqlalchemy import or_
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -415,6 +417,85 @@ class Store:
             query = query.order_by(ExecutionPlanModel.created_at.desc()).limit(limit)
             return [self._execution_plan_to_dict(p) for p in query.all()]
 
+    def search_execution_plans(
+        self,
+        query: str,
+        status: str | None = None,
+        target_engine: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search execution plans and tasks with deterministic ranking."""
+        search_text = query.strip()
+        if not search_text or limit <= 0:
+            return []
+
+        normalized_query = search_text.lower()
+        like_query = f"%{normalized_query}%"
+
+        with self.get_session() as session:
+            sql_query = session.query(ExecutionPlanModel).outerjoin(ExecutionTaskModel)
+            if status:
+                sql_query = sql_query.filter(ExecutionPlanModel.status == status)
+            if target_engine:
+                sql_query = sql_query.filter(
+                    ExecutionPlanModel.target_engine == target_engine
+                )
+
+            sql_query = sql_query.filter(
+                or_(
+                    func.lower(ExecutionPlanModel.id).like(like_query),
+                    func.lower(func.coalesce(ExecutionPlanModel.target_repo, "")).like(
+                        like_query
+                    ),
+                    func.lower(func.coalesce(ExecutionPlanModel.project_type, "")).like(
+                        like_query
+                    ),
+                    func.lower(func.coalesce(ExecutionPlanModel.handoff_prompt, "")).like(
+                        like_query
+                    ),
+                    func.lower(func.coalesce(ExecutionPlanModel.test_strategy, "")).like(
+                        like_query
+                    ),
+                    func.lower(ExecutionTaskModel.title).like(like_query),
+                    func.lower(ExecutionTaskModel.description).like(like_query),
+                    func.lower(func.coalesce(ExecutionTaskModel.acceptance_criteria, "")).like(
+                        like_query
+                    ),
+                    func.lower(func.coalesce(ExecutionTaskModel.files_or_modules, "")).like(
+                        like_query
+                    ),
+                )
+            )
+
+            candidate_plans = (
+                sql_query.distinct()
+                .order_by(ExecutionPlanModel.id.asc())
+                .limit(max(limit * 10, limit))
+                .all()
+            )
+
+            ranked_results = [
+                result
+                for plan in candidate_plans
+                if (
+                    result := self._build_execution_plan_search_result(
+                        plan,
+                        normalized_query,
+                    )
+                )
+            ]
+            ranked_results.sort(
+                key=lambda result: (
+                    -result["score"],
+                    result["first_match_order"],
+                    result["plan_id"],
+                )
+            )
+            for result in ranked_results:
+                result.pop("score", None)
+                result.pop("first_match_order", None)
+            return ranked_results[:limit]
+
     def update_execution_plan_status(
         self,
         plan_id: str,
@@ -459,6 +540,122 @@ class Store:
             "metadata": plan.plan_metadata or {},
             "tasks": [self._task_to_dict(t) for t in plan.tasks],
         }
+
+    def _build_execution_plan_search_result(
+        self,
+        plan: ExecutionPlanModel,
+        normalized_query: str,
+    ) -> dict[str, Any] | None:
+        """Build ranked search metadata for a candidate plan."""
+        matches: list[dict[str, Any]] = []
+        matched_task_ids: list[str] = []
+        matched_fields: list[str] = []
+        score = 0
+        first_match_order = 999
+
+        plan_fields: list[tuple[str, Any, int, int]] = [
+            ("id", plan.id, 100, 0),
+            ("target_repo", plan.target_repo, 70, 1),
+            ("project_type", plan.project_type, 60, 2),
+            ("handoff_prompt", plan.handoff_prompt, 40, 3),
+            ("test_strategy", plan.test_strategy, 40, 4),
+        ]
+        for field, value, weight, order in plan_fields:
+            match = self._build_search_match(field, value, normalized_query)
+            if not match:
+                continue
+            matches.append(match)
+            matched_fields.append(field)
+            score += weight
+            first_match_order = min(first_match_order, order)
+
+        task_fields: list[tuple[str, str, int, int]] = [
+            ("title", "tasks.title", 55, 10),
+            ("description", "tasks.description", 35, 11),
+            ("acceptance_criteria", "tasks.acceptance_criteria", 30, 12),
+            ("files_or_modules", "tasks.files_or_modules", 30, 13),
+        ]
+        for task in sorted(plan.tasks, key=lambda current_task: current_task.id):
+            for attribute, field, weight, order in task_fields:
+                match = self._build_search_match(
+                    field,
+                    getattr(task, attribute),
+                    normalized_query,
+                    task_id=task.id,
+                )
+                if not match:
+                    continue
+                matches.append(match)
+                matched_fields.append(field)
+                if task.id not in matched_task_ids:
+                    matched_task_ids.append(task.id)
+                score += weight
+                first_match_order = min(first_match_order, order)
+
+        if not matches:
+            return None
+
+        return {
+            "plan_id": plan.id,
+            "status": plan.status,
+            "target_engine": plan.target_engine,
+            "matched_task_ids": matched_task_ids,
+            "matched_fields": sorted(set(matched_fields)),
+            "matches": matches,
+            "score": score,
+            "first_match_order": first_match_order,
+        }
+
+    def _build_search_match(
+        self,
+        field: str,
+        value: Any,
+        normalized_query: str,
+        task_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return match metadata for a field when it contains the query."""
+        searchable_text = self._stringify_search_value(value)
+        if normalized_query not in searchable_text.lower():
+            return None
+
+        match: dict[str, Any] = {
+            "field": field,
+            "snippet": self._search_snippet(searchable_text, normalized_query),
+        }
+        if task_id:
+            match["task_id"] = task_id
+        return match
+
+    def _stringify_search_value(self, value: Any) -> str:
+        """Flatten scalar and JSON values into stable searchable text."""
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            return " ".join(self._stringify_search_value(item) for item in value)
+        if isinstance(value, dict):
+            return " ".join(
+                self._stringify_search_value(value[key])
+                for key in sorted(value)
+            )
+        return str(value)
+
+    def _search_snippet(
+        self,
+        text_value: str,
+        normalized_query: str,
+        context_chars: int = 36,
+    ) -> str:
+        """Return a short deterministic snippet around the first match."""
+        normalized_text = text_value.lower()
+        index = normalized_text.find(normalized_query)
+        if index == -1:
+            return text_value[: context_chars * 2].strip()
+
+        start = max(index - context_chars, 0)
+        end = min(index + len(normalized_query) + context_chars, len(text_value))
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(text_value) else ""
+        return f"{prefix}{text_value[start:end].strip()}{suffix}"
 
     def _task_to_dict(self, task: ExecutionTaskModel) -> dict[str, Any]:
         """Convert task model to dict."""
