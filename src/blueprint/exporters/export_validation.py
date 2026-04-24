@@ -16,6 +16,7 @@ from xml.etree import ElementTree
 import yaml
 
 from blueprint.audits.critical_path import analyze_critical_path
+from blueprint.audits.plan_audit import PlanAuditIssue, audit_execution_plan
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
@@ -49,6 +50,9 @@ from blueprint.exporters.relay import RelayExporter
 from blueprint.exporters.relay_yaml import RelayYamlExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.risk_register import risk_identifier
+from blueprint.exporters.sarif_audit import SARIF_VERSION
+from blueprint.exporters.sarif_audit import TOOL_NAME as SARIF_TOOL_NAME
+from blueprint.exporters.sarif_audit import SarifAuditExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
@@ -181,6 +185,7 @@ def create_exporter(target: str):
         "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
         "risk-register": RiskRegisterExporter(),
+        "sarif-audit": SarifAuditExporter(),
         "slack-digest": SlackDigestExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
@@ -985,6 +990,261 @@ def _validate_plan_snapshot(
             )
 
     return findings
+
+
+def _validate_sarif_audit(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the SARIF plan audit JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="sarif_audit.invalid_json",
+                message=f"SARIF audit export is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="sarif_audit.invalid_shape",
+                message="SARIF audit export must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    if payload.get("version") != SARIF_VERSION:
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.version_mismatch",
+                message="SARIF audit export must use SARIF version 2.1.0.",
+                path=str(artifact_path),
+            )
+        )
+
+    runs = payload.get("runs")
+    if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.runs.invalid_shape",
+                message="SARIF audit export must include exactly one run object.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    run = runs[0]
+    driver = _sarif_driver(run)
+    if driver is None:
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.tool.invalid_shape",
+                message="SARIF run must include tool.driver metadata.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    if driver.get("name") != SARIF_TOOL_NAME:
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.tool.name_mismatch",
+                message="SARIF tool.driver.name does not match the Blueprint audit tool.",
+                path=str(artifact_path),
+            )
+        )
+
+    rules = driver.get("rules")
+    if not isinstance(rules, list):
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.rules.invalid_shape",
+                message="SARIF tool.driver.rules must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        rules = []
+
+    rule_ids = {
+        rule.get("id")
+        for rule in rules
+        if isinstance(rule, dict) and isinstance(rule.get("id"), str)
+    }
+
+    results = run.get("results")
+    if not isinstance(results, list):
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.results.invalid_shape",
+                message="SARIF run.results must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        results = []
+
+    expected_issues = audit_execution_plan(execution_plan).issues
+    expected_rule_ids = {issue.code for issue in expected_issues}
+    missing_rules = expected_rule_ids - rule_ids
+    extra_rules = rule_ids - expected_rule_ids
+    for rule_id in sorted(missing_rules):
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.rule.missing",
+                message=f"SARIF rules are missing audit rule '{rule_id}'.",
+                path=str(artifact_path),
+            )
+        )
+    for rule_id in sorted(extra_rules):
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.rule.unexpected",
+                message=f"SARIF rules include unexpected audit rule '{rule_id}'.",
+                path=str(artifact_path),
+            )
+        )
+
+    findings.extend(_validate_sarif_results(results, rule_ids, expected_issues, artifact_path))
+    return findings
+
+
+def _sarif_driver(run: dict[str, Any]) -> dict[str, Any] | None:
+    tool = run.get("tool")
+    if not isinstance(tool, dict):
+        return None
+    driver = tool.get("driver")
+    if not isinstance(driver, dict):
+        return None
+    return driver
+
+
+def _validate_sarif_results(
+    results: list[Any],
+    rule_ids: set[str],
+    expected_issues: list[PlanAuditIssue],
+    artifact_path: Path,
+) -> list[ValidationFinding]:
+    findings: list[ValidationFinding] = []
+    rendered_signatures = Counter()
+
+    for index, result in enumerate(results):
+        if not isinstance(result, dict):
+            findings.append(
+                ValidationFinding(
+                    code="sarif_audit.result.invalid_shape",
+                    message=f"SARIF result {index} must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        rule_id = result.get("ruleId")
+        level = result.get("level")
+        message = result.get("message")
+        text = message.get("text") if isinstance(message, dict) else None
+        properties = result.get("properties") if isinstance(result.get("properties"), dict) else {}
+
+        if rule_id not in rule_ids:
+            findings.append(
+                ValidationFinding(
+                    code="sarif_audit.result.unknown_rule",
+                    message=f"SARIF result {index} references unknown ruleId '{rule_id}'.",
+                    path=str(artifact_path),
+                )
+            )
+        if level not in {"error", "warning"}:
+            findings.append(
+                ValidationFinding(
+                    code="sarif_audit.result.invalid_level",
+                    message=f"SARIF result {index} must use error or warning level.",
+                    path=str(artifact_path),
+                )
+            )
+        if not isinstance(text, str) or not text:
+            findings.append(
+                ValidationFinding(
+                    code="sarif_audit.result.missing_message",
+                    message=f"SARIF result {index} must include message.text.",
+                    path=str(artifact_path),
+                )
+            )
+
+        locations = result.get("locations")
+        if not _sarif_result_has_execution_plan_location(locations):
+            findings.append(
+                ValidationFinding(
+                    code="sarif_audit.result.missing_location",
+                    message=f"SARIF result {index} must point to execution-plan.json.",
+                    path=str(artifact_path),
+                )
+            )
+
+        rendered_signatures[_sarif_result_signature(rule_id, level, text, properties)] += 1
+
+    expected_signatures = Counter(_audit_issue_signature(issue) for issue in expected_issues)
+    if rendered_signatures != expected_signatures:
+        findings.append(
+            ValidationFinding(
+                code="sarif_audit.finding_count_mismatch",
+                message=(
+                    "SARIF results do not match the audit finding count or finding "
+                    "identity from audit_execution_plan."
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
+def _sarif_result_has_execution_plan_location(locations: Any) -> bool:
+    if not isinstance(locations, list):
+        return False
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        physical = location.get("physicalLocation")
+        if not isinstance(physical, dict):
+            continue
+        artifact = physical.get("artifactLocation")
+        if isinstance(artifact, dict) and artifact.get("uri") == "execution-plan.json":
+            return True
+    return False
+
+
+def _audit_issue_signature(issue: PlanAuditIssue) -> tuple[Any, ...]:
+    return (
+        issue.code,
+        issue.severity,
+        issue.message,
+        issue.task_id,
+        issue.dependency_id,
+        issue.milestone,
+        tuple(issue.cycle or []),
+    )
+
+
+def _sarif_result_signature(
+    rule_id: Any,
+    level: Any,
+    text: Any,
+    properties: dict[str, Any],
+) -> tuple[Any, ...]:
+    cycle = properties.get("cycle")
+    return (
+        rule_id,
+        level,
+        text,
+        properties.get("taskId"),
+        properties.get("dependencyId"),
+        properties.get("milestone"),
+        tuple(cycle if isinstance(cycle, list) else []),
+    )
 
 
 def _validate_release_notes(
@@ -4489,6 +4749,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "risk-register": _validate_risk_register,
+    "sarif-audit": _validate_sarif_audit,
     "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
