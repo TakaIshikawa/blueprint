@@ -32,6 +32,12 @@ from blueprint.audits.dependency_repair import (
     DependencyRepairSuggestion,
     suggest_dependency_repairs,
 )
+from blueprint.audits.dependency_gate import (
+    DependencyGateReason,
+    DependencyGateResult,
+    DependencyGateTask,
+    audit_dependency_gate,
+)
 from blueprint.audits.env_inventory import (
     EnvInventoryItem,
     EnvInventoryResult,
@@ -94,6 +100,9 @@ __all__ = [
     "AcceptanceQualityResult",
     "AcceptanceQualityTaskResult",
     "CrossMilestoneDependencyCount",
+    "DependencyGateReason",
+    "DependencyGateResult",
+    "DependencyGateTask",
     "DependencyRepairResult",
     "DependencyRepairSuggestion",
     "EnvInventoryItem",
@@ -128,6 +137,7 @@ __all__ = [
     "audit_blocked_impact",
     "audit_brief_readiness",
     "audit_acceptance_quality",
+    "audit_dependency_gate",
     "audit_milestone_dependencies",
     "audit_ownership_gaps",
     "audit_task_splitting",

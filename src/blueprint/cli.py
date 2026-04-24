@@ -39,6 +39,10 @@ from blueprint.audits.dependency_repair import (
     DependencyRepairResult,
     suggest_dependency_repairs,
 )
+from blueprint.audits.dependency_gate import (
+    DependencyGateResult,
+    audit_dependency_gate,
+)
 from blueprint.audits.env_inventory import EnvInventoryResult, build_env_inventory
 from blueprint.audits.env_readiness import (
     EnvReadinessResult,
@@ -3178,6 +3182,29 @@ def blocked_impact(plan_id: str, json_output: bool):
     _emit_blocked_impact(result)
 
 
+@task.command(name="dependency-gate")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output dependency gate as JSON")
+def dependency_gate(plan_id: str, json_output: bool):
+    """Classify pending tasks by dependency readiness."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_dependency_gate(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_dependency_gate(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 @task.command(name="critical-path")
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output critical path as JSON")
@@ -3409,6 +3436,39 @@ def _emit_blocked_impact(result: BlockedImpactResult) -> None:
             "  Critical dependency position: "
             + ("yes" if blocked_task.critical_dependency_position else "no")
         )
+
+
+def _emit_dependency_gate(result: DependencyGateResult) -> None:
+    """Render human-readable dependency gate classifications."""
+    click.echo(f"Dependency gate audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"({result.ready_count} ready, {result.waiting_count} waiting, "
+        f"{result.blocked_count} blocked, {result.error_count} errors)"
+    )
+
+    if not result.tasks:
+        click.echo("No pending execution tasks found.")
+        return
+
+    if result.ready_tasks:
+        click.echo("\nReady tasks:")
+        for task_result in result.ready_tasks:
+            click.echo(f"  - {task_result.task_id} ({task_result.title})")
+
+    if result.waiting_tasks:
+        click.echo("\nWaiting tasks:")
+        for task_result in result.waiting_tasks:
+            click.echo(f"  - {task_result.task_id} ({task_result.title})")
+            for reason in task_result.reasons:
+                click.echo(f"    [{reason.code}] {reason.message}")
+
+    if result.blocked_tasks:
+        click.echo("\nBlocked tasks:")
+        for task_result in result.blocked_tasks:
+            click.echo(f"  - {task_result.task_id} ({task_result.title})")
+            for reason in task_result.reasons:
+                click.echo(f"    [{reason.code}] {reason.message}")
 
 
 def _emit_execution_waves(result: ExecutionWavesResult) -> None:
