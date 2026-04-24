@@ -151,6 +151,7 @@ PLAN_STATUS_CHOICES = ("draft", "ready", "queued", "in_progress", "completed", "
 TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skipped")
 EXPORT_TARGET_CHOICES = (
     "adr",
+    "agent-prompt-pack",
     "relay",
     "relay-yaml",
     "smoothie",
@@ -4137,6 +4138,8 @@ def _run_export_command(
                         "brief_title": brief["title"],
                     },
                 }
+                if hasattr(exporter, "get_export_metadata"):
+                    export_record["export_metadata"].update(exporter.get_export_metadata())
                 store.insert_export_record(export_record)
 
                 click.echo(f"  ✓ Exported to: {result_path}")
@@ -4257,6 +4260,7 @@ def preview(
     type=click.Choice(
         [
             "adr",
+            "agent-prompt-pack",
             "relay",
             "smoothie",
             "codex",
@@ -4331,6 +4335,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
     type=click.Choice(
         [
             "adr",
+            "agent-prompt-pack",
             "relay",
             "smoothie",
             "codex",

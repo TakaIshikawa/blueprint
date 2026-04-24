@@ -1,6 +1,7 @@
 """Exporters for various execution engines."""
 
 from blueprint.exporters.adr import ADRExporter
+from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
 from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
@@ -37,6 +38,7 @@ from blueprint.exporters.wave_schedule import WaveScheduleExporter
 
 __all__ = [
     "ADRExporter",
+    "AgentPromptPackExporter",
     "ArchiveExporter",
     "AsanaCsvExporter",
     "AzureDevOpsCsvExporter",

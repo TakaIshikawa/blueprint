@@ -17,6 +17,7 @@ import yaml
 
 from blueprint.audits.critical_path import analyze_critical_path
 from blueprint.exporters.adr import ADRExporter
+from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
@@ -145,6 +146,7 @@ def create_exporter(target: str):
     """Create the exporter used by validation and export commands."""
     exporters = {
         "adr": ADRExporter(),
+        "agent-prompt-pack": AgentPromptPackExporter(),
         "relay": RelayExporter(),
         "relay-yaml": RelayYamlExporter(),
         "smoothie": SmoothieExporter(),
@@ -1571,6 +1573,149 @@ def _validate_task_bundle(
                 path=str(artifact_path),
             )
         )
+
+    return findings
+
+
+def _validate_agent_prompt_pack(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the agent prompt pack directory export."""
+    findings: list[ValidationFinding] = []
+    if not artifact_path.is_dir():
+        return [
+            ValidationFinding(
+                code="agent_prompt_pack.invalid_shape",
+                message="Agent prompt pack export must be a directory.",
+                path=str(artifact_path),
+            )
+        ]
+
+    manifest_path = artifact_path / "manifest.json"
+    if not manifest_path.exists():
+        return [
+            ValidationFinding(
+                code="agent_prompt_pack.missing_manifest",
+                message="Agent prompt pack export is missing manifest.json.",
+                path=str(manifest_path),
+            )
+        ]
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="agent_prompt_pack.invalid_manifest_json",
+                message=f"Agent prompt pack manifest is not valid JSON: {exc.msg}",
+                path=str(manifest_path),
+            )
+        ]
+
+    for key, expected in [
+        ("plan_id", execution_plan["id"]),
+        ("implementation_brief_id", implementation_brief["id"]),
+        ("prompt_format", "markdown"),
+        ("manifest_format", "json"),
+    ]:
+        if manifest.get(key) != expected:
+            findings.append(
+                ValidationFinding(
+                    code="agent_prompt_pack.invalid_manifest_field",
+                    message=f"Manifest field {key!r} must be {expected!r}.",
+                    path=str(manifest_path),
+                )
+            )
+
+    manifest_tasks = manifest.get("tasks")
+    if not isinstance(manifest_tasks, dict):
+        findings.append(
+            ValidationFinding(
+                code="agent_prompt_pack.invalid_manifest_tasks",
+                message="Manifest tasks must be an object keyed by task ID.",
+                path=str(manifest_path),
+            )
+        )
+        manifest_tasks = {}
+
+    for task in execution_plan.get("tasks", []):
+        entry = manifest_tasks.get(task["id"])
+        if not isinstance(entry, dict):
+            findings.append(
+                ValidationFinding(
+                    code="agent_prompt_pack.missing_manifest_task",
+                    message=f"Manifest is missing task entry for {task['id']}.",
+                    path=str(manifest_path),
+                )
+            )
+            continue
+
+        expected_dependencies = task.get("depends_on") or []
+        if entry.get("dependencies") != expected_dependencies:
+            findings.append(
+                ValidationFinding(
+                    code="agent_prompt_pack.invalid_dependencies",
+                    message=f"Manifest dependencies for {task['id']} do not match the plan.",
+                    path=str(manifest_path),
+                )
+            )
+
+        prompt_path_value = entry.get("prompt_path")
+        if not isinstance(prompt_path_value, str) or not prompt_path_value:
+            findings.append(
+                ValidationFinding(
+                    code="agent_prompt_pack.missing_prompt_path",
+                    message=f"Manifest task {task['id']} is missing prompt_path.",
+                    path=str(manifest_path),
+                )
+            )
+            continue
+
+        prompt_path = artifact_path / prompt_path_value
+        if not prompt_path.exists():
+            findings.append(
+                ValidationFinding(
+                    code="agent_prompt_pack.missing_prompt_file",
+                    message=f"Missing prompt file for {task['id']}: {prompt_path_value}",
+                    path=str(prompt_path),
+                )
+            )
+            continue
+
+        prompt_content = prompt_path.read_text()
+        for heading in [
+            f"# Agent Task: {task['title']}",
+            "## Operating Instructions",
+            "## Project Context",
+            "## Task",
+            "## Acceptance Criteria",
+            "## Plan Validation",
+        ]:
+            if not _has_heading(prompt_content, heading):
+                findings.append(
+                    ValidationFinding(
+                        code="agent_prompt_pack.missing_heading",
+                        message=f"Missing required Markdown heading: {heading}",
+                        path=str(prompt_path),
+                    )
+                )
+
+        for snippet in [
+            f"- Task ID: `{task['id']}`",
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Brief ID: `{implementation_brief['id']}`",
+            "- Work on an isolated branch for this task before making changes.",
+        ]:
+            if snippet not in prompt_content:
+                findings.append(
+                    ValidationFinding(
+                        code="agent_prompt_pack.missing_prompt_context",
+                        message=f"Missing required prompt context: {snippet}",
+                        path=str(prompt_path),
+                    )
+                )
 
     return findings
 
@@ -3611,6 +3756,7 @@ def _blocked_reason(task: dict[str, Any]) -> str | None:
 
 _VALIDATORS: dict[str, ValidationCheck] = {
     "adr": _validate_adr,
+    "agent-prompt-pack": _validate_agent_prompt_pack,
     "relay": _validate_relay,
     "relay-yaml": _validate_relay_yaml,
     "codex": _validate_codex,
