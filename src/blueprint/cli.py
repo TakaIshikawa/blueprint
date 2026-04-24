@@ -185,6 +185,7 @@ EXPORT_TARGET_CHOICES = (
     "task-bundle",
     "taskfile",
     "task-queue-jsonl",
+    "trello-json",
     "vscode-tasks",
     "wave-schedule",
     "all",
@@ -4346,6 +4347,7 @@ def preview(
             "status-report",
             "task-bundle",
             "taskfile",
+            "trello-json",
             "vscode-tasks",
             "wave-schedule",
         ]
@@ -4421,6 +4423,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "status-report",
             "task-bundle",
             "taskfile",
+            "trello-json",
             "vscode-tasks",
             "wave-schedule",
         ]

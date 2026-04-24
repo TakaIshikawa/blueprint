@@ -52,6 +52,7 @@ from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
+from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
@@ -179,6 +180,7 @@ def create_exporter(target: str):
         "task-bundle": TaskBundleExporter(),
         "taskfile": TaskfileExporter(),
         "task-queue-jsonl": TaskQueueJsonlExporter(),
+        "trello-json": TrelloJsonExporter(),
         "vscode-tasks": VSCodeTasksExporter(),
         "wave-schedule": WaveScheduleExporter(),
     }
@@ -2387,6 +2389,191 @@ def _validate_linear(
     return findings
 
 
+def _validate_trello_json(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Trello board JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="trello_json.invalid_json",
+                message=f"Trello JSON export is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="trello_json.invalid_shape",
+                message="Trello JSON export must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    findings.extend(
+        _missing_keys(
+            payload,
+            ["schema_version", "exporter", "board", "lists", "labels", "cards"],
+            "trello_json.missing_key",
+            str(artifact_path),
+        )
+    )
+
+    lists = payload.get("lists")
+    cards = payload.get("cards")
+    labels = payload.get("labels")
+    if not isinstance(lists, list):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.lists.invalid_shape",
+                message="Trello JSON lists must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        lists = []
+    if not isinstance(cards, list):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.cards.invalid_shape",
+                message="Trello JSON cards must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        cards = []
+    if not isinstance(labels, list):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.labels.invalid_shape",
+                message="Trello JSON labels must be a list.",
+                path=str(artifact_path),
+            )
+        )
+
+    expected_tasks = execution_plan.get("tasks", [])
+    if len(cards) != len(expected_tasks):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.card_count_mismatch",
+                message="Trello card count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    list_names = {
+        list_item.get("name")
+        for list_item in lists
+        if isinstance(list_item, dict) and isinstance(list_item.get("name"), str)
+    }
+    for list_name in _expected_trello_list_names(execution_plan):
+        if list_name not in list_names:
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.missing_list",
+                    message=f"Trello JSON export is missing list: {list_name}",
+                    path=str(artifact_path),
+                )
+            )
+
+    list_ids = {
+        list_item.get("id")
+        for list_item in lists
+        if isinstance(list_item, dict) and isinstance(list_item.get("id"), str)
+    }
+    task_occurrences: dict[str, int] = {}
+    expected_by_id = {task["id"]: task for task in expected_tasks}
+    for index, card in enumerate(cards, 1):
+        if not isinstance(card, dict):
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.card.invalid_shape",
+                    message=f"Trello card {index} must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        findings.extend(
+            _missing_keys(
+                card,
+                ["id", "name", "desc", "idList", "labels", "checklists", "metadata"],
+                "trello_json.card.missing_key",
+                str(artifact_path),
+            )
+        )
+        if card.get("idList") not in list_ids:
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.card.missing_list_reference",
+                    message=f"Trello card {index} references a missing list.",
+                    path=str(artifact_path),
+                )
+            )
+
+        metadata = card.get("metadata")
+        task_id = None
+        if isinstance(metadata, dict) and isinstance(metadata.get("taskId"), str):
+            task_id = metadata["taskId"]
+            task_occurrences[task_id] = task_occurrences.get(task_id, 0) + 1
+        else:
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.card.metadata.invalid_shape",
+                    message=f"Trello card {index} metadata must include a string taskId.",
+                    path=str(artifact_path),
+                )
+            )
+
+        checklists = card.get("checklists")
+        if not isinstance(checklists, list):
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.card.checklists.invalid_shape",
+                    message=f"Trello card {index} checklists must be a list.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        if task_id in expected_by_id:
+            _validate_trello_acceptance_checklist(
+                findings,
+                artifact_path,
+                index,
+                task_id,
+                expected_by_id[task_id],
+                checklists,
+            )
+
+    for task in expected_tasks:
+        occurrences = task_occurrences.get(task["id"], 0)
+        if occurrences != 1:
+            findings.append(
+                ValidationFinding(
+                    code="trello_json.task_occurrence_mismatch",
+                    message=f"Task {task['id']} appears {occurrences} times in the Trello JSON export.",
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(task_occurrences) - {task["id"] for task in expected_tasks})
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="trello_json.unexpected_task",
+                message=f"Trello JSON export contains unexpected tasks: {', '.join(extra_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
 def _validate_gitlab_issues(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -3754,6 +3941,82 @@ def _blocked_reason(task: dict[str, Any]) -> str | None:
     return task.get("blocked_reason") or metadata.get("blocked_reason")
 
 
+def _expected_trello_list_names(execution_plan: dict[str, Any]) -> list[str]:
+    """Return the list names expected from the Trello JSON exporter."""
+    tasks = execution_plan.get("tasks", [])
+    milestone_names = [
+        str(milestone.get("name")).strip()
+        for milestone in execution_plan.get("milestones", [])
+        if isinstance(milestone, dict) and str(milestone.get("name", "")).strip()
+    ]
+    task_milestones = [
+        str(task.get("milestone")).strip()
+        for task in tasks
+        if str(task.get("milestone") or "").strip()
+    ]
+    names: list[str] = []
+    for name in milestone_names + task_milestones:
+        if name and name not in names:
+            names.append(name)
+    if names:
+        if any(not str(task.get("milestone") or "").strip() for task in tasks):
+            names.append("Ungrouped")
+        return names
+    return ["pending", "in_progress", "blocked", "completed", "skipped"]
+
+
+def _validate_trello_acceptance_checklist(
+    findings: list[ValidationFinding],
+    artifact_path: Path,
+    card_index: int,
+    task_id: str,
+    task: dict[str, Any],
+    checklists: list[Any],
+) -> None:
+    """Validate one card's acceptance criteria checklist."""
+    acceptance_checklist = None
+    for checklist in checklists:
+        if isinstance(checklist, dict) and checklist.get("name") == "Acceptance Criteria":
+            acceptance_checklist = checklist
+            break
+
+    if not isinstance(acceptance_checklist, dict):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.card.missing_acceptance_checklist",
+                message=f"Trello card {card_index} for task {task_id} is missing an Acceptance Criteria checklist.",
+                path=str(artifact_path),
+            )
+        )
+        return
+
+    items = acceptance_checklist.get("items")
+    if not isinstance(items, list):
+        findings.append(
+            ValidationFinding(
+                code="trello_json.card.checklist_items.invalid_shape",
+                message=f"Trello card {card_index} Acceptance Criteria checklist items must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        return
+
+    rendered_items = [
+        item.get("name")
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+    expected_items = task.get("acceptance_criteria") or []
+    if rendered_items != expected_items:
+        findings.append(
+            ValidationFinding(
+                code="trello_json.card.acceptance_criteria_mismatch",
+                message=f"Trello card {card_index} checklist items do not match task {task_id} acceptance criteria.",
+                path=str(artifact_path),
+            )
+        )
+
+
 _VALIDATORS: dict[str, ValidationCheck] = {
     "adr": _validate_adr,
     "agent-prompt-pack": _validate_agent_prompt_pack,
@@ -3782,6 +4045,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "csv-tasks": _validate_csv_tasks,
     "taskfile": _validate_taskfile,
     "task-queue-jsonl": _validate_task_queue_jsonl,
+    "trello-json": _validate_trello_json,
     "file-impact-map": _validate_file_impact_map,
     "github-actions": _validate_github_actions,
     "junit-tasks": _validate_junit_tasks,

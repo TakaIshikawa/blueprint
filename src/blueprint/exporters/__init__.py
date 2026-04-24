@@ -33,6 +33,7 @@ from blueprint.exporters.status_timeline import StatusTimelineExporter
 from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
+from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
 
@@ -70,6 +71,7 @@ __all__ = [
     "TaskfileExporter",
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
+    "TrelloJsonExporter",
     "VSCodeTasksExporter",
     "WaveScheduleExporter",
 ]
