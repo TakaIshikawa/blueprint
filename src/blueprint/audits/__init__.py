@@ -25,6 +25,12 @@ from blueprint.audits.risk_coverage import (
     RiskCoverageResult,
     audit_risk_coverage,
 )
+from blueprint.audits.task_completeness import (
+    TaskCompletenessFinding,
+    TaskCompletenessItem,
+    TaskCompletenessResult,
+    audit_task_completeness,
+)
 
 __all__ = [
     "BriefReadinessFinding",
@@ -37,9 +43,13 @@ __all__ = [
     "RiskCoverageItem",
     "RiskCoverageResult",
     "SourceBriefSimilarityMatch",
+    "TaskCompletenessFinding",
+    "TaskCompletenessItem",
+    "TaskCompletenessResult",
     "audit_brief_readiness",
     "build_env_inventory",
     "audit_risk_coverage",
+    "audit_task_completeness",
     "find_similar_source_briefs",
     "suggest_dependency_repairs",
 ]

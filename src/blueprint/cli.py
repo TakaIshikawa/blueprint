@@ -41,6 +41,10 @@ from blueprint.audits.risk_coverage import (
     RiskCoverageResult,
     audit_risk_coverage,
 )
+from blueprint.audits.task_completeness import (
+    TaskCompletenessResult,
+    audit_task_completeness,
+)
 from blueprint.audits.source_similarity import (
     DEFAULT_LIMIT as SOURCE_SIMILARITY_DEFAULT_LIMIT,
     DEFAULT_THRESHOLD as SOURCE_SIMILARITY_DEFAULT_THRESHOLD,
@@ -2250,6 +2254,29 @@ def waves(plan_id: str, json_output: bool):
     _emit_execution_waves(result)
 
 
+@task.command(name="completeness")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def task_completeness(plan_id: str, json_output: bool):
+    """Audit execution tasks for autonomous-agent readiness."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_task_completeness(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_task_completeness(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 def _emit_critical_path(result: CriticalPathResult) -> None:
     """Render human-readable critical path analysis."""
     click.echo(f"Critical path for plan {result.plan_id}")
@@ -2294,6 +2321,48 @@ def _emit_execution_waves(result: ExecutionWavesResult) -> None:
             )
 
     click.echo(f"\nTotal: {result.task_count} tasks in {len(result.waves)} waves")
+
+
+def _emit_task_completeness(result: TaskCompletenessResult) -> None:
+    """Render human-readable task completeness audit results."""
+    click.echo(f"Task completeness audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"(score {result.score}/100, "
+        f"{result.blocking_count} blocking, {result.warning_count} warnings)"
+    )
+
+    if not result.tasks:
+        click.echo("No execution tasks found.")
+        return
+
+    grouped_findings = result.findings_by_severity()
+    if grouped_findings["blocking"]:
+        click.echo("\nBlocking findings:")
+        for finding in grouped_findings["blocking"]:
+            click.echo(
+                f"  - {finding.task_id} ({finding.task_title}) "
+                f"[{finding.code}]: {finding.message}"
+            )
+            click.echo(f"    Remediation: {finding.remediation}")
+    else:
+        click.echo("No blocking findings found.")
+
+    if grouped_findings["warning"]:
+        click.echo("\nWarnings:")
+        for finding in grouped_findings["warning"]:
+            click.echo(
+                f"  - {finding.task_id} ({finding.task_title}) "
+                f"[{finding.code}]: {finding.message}"
+            )
+            click.echo(f"    Remediation: {finding.remediation}")
+
+    click.echo("\nTask scores:")
+    for task_item in result.tasks:
+        click.echo(
+            f"  - {task_item.task_id} ({task_item.title}): "
+            f"{task_item.score}/100"
+        )
 
 
 @task.command()
