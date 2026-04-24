@@ -8,6 +8,7 @@ from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
+from blueprint.exporters.clickup_csv import ClickUpCsvExporter
 from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
@@ -50,6 +51,7 @@ __all__ = [
     "BriefReviewPacketExporter",
     "CalendarExporter",
     "ChecklistExporter",
+    "ClickUpCsvExporter",
     "CoverageMatrixExporter",
     "CriticalPathReportExporter",
     "DependencyMatrixExporter",

@@ -23,6 +23,7 @@ from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
+from blueprint.exporters.clickup_csv import ClickUpCsvExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
@@ -164,6 +165,7 @@ def create_exporter(target: str):
         "azure-devops-csv": AzureDevOpsCsvExporter(),
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
+        "clickup-csv": ClickUpCsvExporter(),
         "coverage-matrix": CoverageMatrixExporter(),
         "critical-path-report": CriticalPathReportExporter(),
         "mermaid": MermaidExporter(),
@@ -2630,6 +2632,122 @@ def _validate_asana_csv(
     return findings
 
 
+def _validate_clickup_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the ClickUp CSV task export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f, strict=True)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="clickup_csv.invalid_structure",
+                message=f"ClickUp CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    expected_columns = ClickUpCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        missing = [column for column in expected_columns if column not in fieldnames]
+        extra = [column for column in fieldnames if column not in expected_columns]
+        if missing:
+            findings.append(
+                ValidationFinding(
+                    code="clickup_csv.missing_column",
+                    message=f"ClickUp CSV export is missing required columns: {', '.join(missing)}",
+                    path=str(artifact_path),
+                )
+            )
+        if extra:
+            findings.append(
+                ValidationFinding(
+                    code="clickup_csv.unexpected_column",
+                    message=f"ClickUp CSV export has unexpected columns: {', '.join(extra)}",
+                    path=str(artifact_path),
+                )
+            )
+        if not missing and not extra:
+            findings.append(
+                ValidationFinding(
+                    code="clickup_csv.header_mismatch",
+                    message="ClickUp CSV columns are present but not in the expected order.",
+                    path=str(artifact_path),
+                )
+            )
+
+    tasks = execution_plan.get("tasks", [])
+    expected_task_ids = [task["id"] for task in tasks]
+    row_task_ids = [row.get("Task ID", "") for row in rows]
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="clickup_csv.row_count_mismatch",
+                message="ClickUp CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    missing_task_ids = [task_id for task_id in expected_task_ids if task_id not in row_task_ids]
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="clickup_csv.missing_tasks",
+                message=f"ClickUp CSV is missing task rows: {', '.join(missing_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    duplicate_task_ids = [
+        task_id for task_id, count in Counter(row_task_ids).items() if task_id and count > 1
+    ]
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="clickup_csv.duplicate_task_id",
+                message=f"ClickUp CSV contains duplicate task IDs: {', '.join(duplicate_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    expected_statuses = set(ClickUpCsvExporter.STATUS_MAP.values())
+    expected_priorities = {"Urgent", "High", "Normal", "Low"}
+    for index, row in enumerate(rows, 1):
+        for column in ["Task Name", "Task Description", "Status", "Task ID"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="clickup_csv.row_missing_required_value",
+                        message=f"ClickUp CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+        if row.get("Status") and row["Status"] not in expected_statuses:
+            findings.append(
+                ValidationFinding(
+                    code="clickup_csv.unknown_status",
+                    message=f"ClickUp CSV row {index} has unknown status '{row['Status']}'.",
+                    path=str(artifact_path),
+                )
+            )
+        if row.get("Priority") and row["Priority"] not in expected_priorities:
+            findings.append(
+                ValidationFinding(
+                    code="clickup_csv.unknown_priority",
+                    message=f"ClickUp CSV row {index} has unknown priority '{row['Priority']}'.",
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
 def _validate_github_projects_csv(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -4744,6 +4862,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "linear": _validate_linear,
     "calendar": _validate_calendar,
     "checklist": _validate_checklist,
+    "clickup-csv": _validate_clickup_csv,
     "coverage-matrix": _validate_coverage_matrix,
     "critical-path-report": _validate_critical_path_report,
     "kanban": _validate_kanban,
