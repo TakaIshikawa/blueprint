@@ -17,6 +17,7 @@ from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
+from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
@@ -125,6 +126,7 @@ def create_exporter(target: str):
         "checklist": ChecklistExporter(),
         "mermaid": MermaidExporter(),
         "csv-tasks": CsvTasksExporter(),
+        "file-impact-map": FileImpactMapExporter(),
         "github-issues": GitHubIssuesExporter(),
         "junit-tasks": JUnitTasksExporter(),
         "kanban": KanbanExporter(),
@@ -466,6 +468,50 @@ def _validate_release_notes(
             f"- Implementation Brief: `{implementation_brief['id']}`",
         ],
     )
+
+
+def _validate_file_impact_map(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the file impact map Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# File Impact Map: {execution_plan['id']}",
+            "## Files and Modules",
+            "## Unassigned",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    sections = _file_impact_rendered_sections(content)
+
+    for task in execution_plan.get("tasks", []):
+        files_or_modules = task.get("files_or_modules") or []
+        expected_sections = files_or_modules or [UNASSIGNED_SECTION]
+        for section_name in expected_sections:
+            rendered_task_ids = sections.get(section_name, [])
+            if task["id"] not in rendered_task_ids:
+                findings.append(
+                    ValidationFinding(
+                        code="file_impact_map.missing_task",
+                        message=(
+                            f"File impact map is missing task {task['id']} "
+                            f"from section {section_name}."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
 
 
 def _validate_kanban(
@@ -1396,6 +1442,31 @@ def _checklist_rendered_task_ids(content: str) -> list[str]:
     return task_ids
 
 
+def _file_impact_rendered_sections(content: str) -> dict[str, list[str]]:
+    """Extract rendered file impact task IDs by file/module heading."""
+    sections: dict[str, list[str]] = {}
+    current_section: str | None = None
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        file_match = re.match(r"^### `(.+)`$", stripped)
+        if file_match:
+            current_section = file_match.group(1)
+            sections.setdefault(current_section, [])
+            continue
+
+        if stripped == "## Unassigned":
+            current_section = UNASSIGNED_SECTION
+            sections.setdefault(current_section, [])
+            continue
+
+        task_match = re.match(r"^- `([^`]+)` .+", stripped)
+        if task_match and current_section:
+            sections[current_section].append(task_match.group(1))
+
+    return sections
+
+
 def _xml_property_value(properties: ElementTree.Element, name: str) -> str | None:
     """Return the value of a JUnit property by name."""
     for property_node in properties.findall("property"):
@@ -1424,6 +1495,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "release-notes": _validate_release_notes,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
+    "file-impact-map": _validate_file_impact_map,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
 }
