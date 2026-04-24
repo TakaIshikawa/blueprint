@@ -29,6 +29,7 @@ from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
+from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 
 
@@ -138,6 +139,7 @@ def create_exporter(target: str):
         "slack-digest": SlackDigestExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
+        "task-queue-jsonl": TaskQueueJsonlExporter(),
         "vscode-tasks": VSCodeTasksExporter(),
     }
     exporter = exporters.get(target)
@@ -1311,6 +1313,113 @@ def _validate_junit_tasks(
     return findings
 
 
+def _validate_task_queue_jsonl(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the JSON Lines task queue export."""
+    findings: list[ValidationFinding] = []
+    rows: list[dict[str, Any]] = []
+
+    for index, line in enumerate(artifact_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            findings.append(
+                ValidationFinding(
+                    code="task_queue_jsonl.blank_line",
+                    message=f"JSONL line {index} is blank.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            findings.append(
+                ValidationFinding(
+                    code="task_queue_jsonl.invalid_json",
+                    message=f"JSONL line {index} is not valid JSON: {exc.msg}",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+        if not isinstance(payload, dict):
+            findings.append(
+                ValidationFinding(
+                    code="task_queue_jsonl.invalid_line_shape",
+                    message=f"JSONL line {index} must be a JSON object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+        rows.append(payload)
+
+    expected_task_ids = [task["id"] for task in execution_plan.get("tasks", [])]
+    if len(rows) != len(expected_task_ids):
+        findings.append(
+            ValidationFinding(
+                code="task_queue_jsonl.line_count_mismatch",
+                message="JSONL line count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    seen_task_ids: dict[str, int] = {}
+    for index, row in enumerate(rows, 1):
+        if row.get("plan_id") != execution_plan["id"]:
+            findings.append(
+                ValidationFinding(
+                    code="task_queue_jsonl.plan_id_mismatch",
+                    message=f"JSONL line {index} has the wrong plan_id value.",
+                    path=str(artifact_path),
+                )
+            )
+        task_id = row.get("task_id")
+        if not task_id:
+            findings.append(
+                ValidationFinding(
+                    code="task_queue_jsonl.missing_task_id",
+                    message=f"JSONL line {index} is missing task_id.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+        seen_task_ids[task_id] = seen_task_ids.get(task_id, 0) + 1
+
+    duplicate_task_ids = sorted(task_id for task_id, count in seen_task_ids.items() if count > 1)
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="task_queue_jsonl.duplicate_task_id",
+                message=f"JSONL export repeats task ids: {', '.join(duplicate_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    expected_task_id_set = set(expected_task_ids)
+    missing_task_ids = sorted(expected_task_id_set - set(seen_task_ids))
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="task_queue_jsonl.missing_task",
+                message=f"JSONL export is missing task ids: {', '.join(missing_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    unexpected_task_ids = sorted(set(seen_task_ids) - expected_task_id_set)
+    if unexpected_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="task_queue_jsonl.unexpected_task",
+                message=f"JSONL export has unexpected task ids: {', '.join(unexpected_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
 def _validate_vscode_tasks(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -1725,6 +1834,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
+    "task-queue-jsonl": _validate_task_queue_jsonl,
     "file-impact-map": _validate_file_impact_map,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,

@@ -28,6 +28,7 @@ ExportFormat = Literal[
     "csv",
     "xml",
     "icalendar",
+    "jsonl",
 ]
 
 

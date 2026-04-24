@@ -117,6 +117,7 @@ EXPORT_TARGET_CHOICES = (
     "slack-digest",
     "status-report",
     "task-bundle",
+    "task-queue-jsonl",
     "vscode-tasks",
     "all",
 )

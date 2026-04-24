@@ -14,6 +14,7 @@ from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
+from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 
@@ -32,6 +33,7 @@ __all__ = [
     "ReleaseNotesExporter",
     "SlackDigestExporter",
     "SourceBriefExporter",
+    "TaskQueueJsonlExporter",
     "TaskRosterExporter",
     "VSCodeTasksExporter",
 ]
