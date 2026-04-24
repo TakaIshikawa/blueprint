@@ -121,6 +121,10 @@ from blueprint.importers.graph_importer import GraphImporter
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.manual_importer import ManualBriefImporter
 from blueprint.importers.max_importer import MaxImporter
+from blueprint.importers.plan_markdown_importer import (
+    PlanMarkdownImporter,
+    PlanMarkdownImportError,
+)
 from blueprint.llm.client import LLMClient
 from blueprint.llm.estimator import PromptEstimate, estimate_prompt
 from blueprint.llm.provider import LLMProvider
@@ -1978,6 +1982,37 @@ def clone(plan_id: str, preserve_statuses: bool, json_output: bool):
     click.echo(f"  Tasks: {len(task_id_map)}")
     click.echo(f"  Statuses: {'preserved' if preserve_statuses else 'reset'}")
     click.echo(f"\nView full plan: blueprint plan inspect {cloned_plan_id}")
+
+
+@plan.command(name="import-markdown")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--brief",
+    "brief_id",
+    required=True,
+    help="Implementation brief ID to attach the imported plan to",
+)
+def plan_import_markdown(file: Path, brief_id: str):
+    """Import an execution plan from structured markdown."""
+    config = get_config()
+    store = Store(config.db_path)
+    importer = PlanMarkdownImporter()
+
+    if not store.get_implementation_brief(brief_id):
+        raise click.ClickException(f"Implementation brief not found: {brief_id}")
+
+    try:
+        parsed = importer.import_file(file, implementation_brief_id=brief_id)
+        plan_id = store.insert_execution_plan(parsed.plan, parsed.tasks)
+    except PlanMarkdownImportError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except ValidationError as exc:
+        raise click.ClickException(f"Imported plan failed validation: {exc}") from exc
+
+    click.echo(f"✓ Imported execution plan {plan_id}")
+    click.echo(f"  Brief: {brief_id}")
+    click.echo(f"  Tasks: {len(parsed.tasks)}")
+    click.echo(f"\nView full plan: blueprint plan inspect {plan_id}")
 
 
 @plan.command()
