@@ -40,6 +40,7 @@ from blueprint.exporters.export_validation import create_exporter, validate_expo
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.task_handoff import TaskHandoffExporter
+from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.domain import (
     ImplementationBrief,
     UnknownSchemaModelError,
@@ -1955,6 +1956,45 @@ def inspect(task_id: str):
     click.echo(f"Created:         {current_task['created_at']}")
     click.echo(f"\nDescription:\n{current_task['description']}\n")
     _echo_task_metadata(current_task)
+
+
+@task.command()
+@click.argument("plan_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(("markdown", "json")),
+    default="markdown",
+    show_default=True,
+    help="Roster output format",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the roster to a file instead of stdout",
+)
+def roster(plan_id: str, output_format: str, output: Path | None):
+    """Render a task assignment roster for an execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    exporter = TaskRosterExporter()
+    if output_format == "json":
+        content = json.dumps(exporter.render_json(plan), indent=2, sort_keys=True) + "\n"
+    else:
+        content = exporter.render_markdown(plan)
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content)
+        click.echo(f"✓ Wrote task roster to: {output}")
+        return
+
+    click.echo(content, nl=False)
 
 
 @task.command()
