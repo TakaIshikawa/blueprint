@@ -20,6 +20,12 @@ from blueprint.audits.env_inventory import (
     EnvInventorySource,
     build_env_inventory,
 )
+from blueprint.audits.plan_readiness import (
+    EnvInventoryCounts,
+    PlanReadinessBlockingReason,
+    PlanReadinessResult,
+    evaluate_plan_readiness,
+)
 from blueprint.audits.risk_coverage import (
     RiskCoverageItem,
     RiskCoverageResult,
@@ -38,8 +44,11 @@ __all__ = [
     "DependencyRepairResult",
     "DependencyRepairSuggestion",
     "EnvInventoryItem",
+    "EnvInventoryCounts",
     "EnvInventoryResult",
     "EnvInventorySource",
+    "PlanReadinessBlockingReason",
+    "PlanReadinessResult",
     "RiskCoverageItem",
     "RiskCoverageResult",
     "SourceBriefSimilarityMatch",
@@ -48,6 +57,7 @@ __all__ = [
     "TaskCompletenessResult",
     "audit_brief_readiness",
     "build_env_inventory",
+    "evaluate_plan_readiness",
     "audit_risk_coverage",
     "audit_task_completeness",
     "find_similar_source_briefs",

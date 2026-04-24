@@ -33,6 +33,10 @@ from blueprint.audits.env_inventory import EnvInventoryResult, build_env_invento
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
+from blueprint.audits.plan_readiness import (
+    PlanReadinessResult,
+    evaluate_plan_readiness,
+)
 from blueprint.audits.brief_readiness import (
     BriefReadinessResult,
     audit_brief_readiness,
@@ -1923,6 +1927,94 @@ def coherence(plan_id: str, json_output: bool):
 
     if not result.ok:
         raise click.exceptions.Exit(1)
+
+
+@plan.command(name="readiness")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output readiness as JSON")
+def plan_readiness(plan_id: str, json_output: bool):
+    """Evaluate whether an execution plan is ready for autonomous handoff."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    implementation_brief_id = plan.get("implementation_brief_id")
+    implementation_brief = store.get_implementation_brief(str(implementation_brief_id or ""))
+    if not implementation_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {implementation_brief_id or 'N/A'}"
+        )
+
+    result = evaluate_plan_readiness(plan, implementation_brief)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_plan_readiness(result)
+
+    if not result.ready:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_plan_readiness(result: PlanReadinessResult) -> None:
+    """Render human-readable aggregate readiness results."""
+    click.echo(f"Plan readiness: {result.plan_id}")
+    click.echo(f"Implementation brief: {result.implementation_brief_id}")
+    click.echo(
+        f"Result: {'ready' if result.ready else 'blocked'} "
+        f"({len(result.blocking_reasons)} blocking reasons)"
+    )
+
+    click.echo("\nComponents:")
+    click.echo(
+        "  - Plan audit: "
+        f"{'passed' if result.plan_audit.ok else 'failed'} "
+        f"({result.plan_audit.error_count} errors, "
+        f"{result.plan_audit.warning_count} warnings)"
+    )
+    click.echo(
+        "  - Task completeness: "
+        f"{'passed' if result.task_completeness.passed else 'failed'} "
+        f"(score {result.task_completeness.score}/100, "
+        f"{result.task_completeness.blocking_count} blocking, "
+        f"{result.task_completeness.warning_count} warnings)"
+    )
+    click.echo(
+        "  - Brief-plan coherence: "
+        f"{'passed' if result.brief_plan_coherence.ok else 'failed'} "
+        f"({result.brief_plan_coherence.error_count} errors, "
+        f"{result.brief_plan_coherence.warning_count} warnings)"
+    )
+    click.echo(
+        "  - Risk coverage: "
+        f"{'passed' if result.risk_coverage.ok else 'failed'} "
+        f"({len(result.risk_coverage.covered_risks)}/"
+        f"{len(result.risk_coverage.risks)} risks covered)"
+    )
+    counts = result.env_inventory_counts
+    click.echo(
+        "  - Environment inventory: "
+        f"{len(result.env_inventory.items)} items "
+        f"({counts.required} required, {counts.optional} optional, "
+        f"{counts.unknown} unknown, {counts.missing_required} missing required)"
+    )
+
+    if not result.blocking_reasons:
+        click.echo("\nNo blocking reasons found.")
+        return
+
+    click.echo("\nBlocking reasons:")
+    for reason in result.blocking_reasons:
+        prefix = f"[{reason.component}:{reason.code}]"
+        if reason.task_id:
+            click.echo(f"  - {prefix} {reason.task_id}: {reason.message}")
+        elif reason.item_name:
+            click.echo(f"  - {prefix} {reason.item_name}: {reason.message}")
+        else:
+            click.echo(f"  - {prefix} {reason.message}")
 
 
 def _emit_plan_diff(result: PlanDiffResult) -> None:
