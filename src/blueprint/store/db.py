@@ -635,14 +635,16 @@ class Store:
     def list_export_records(
         self,
         plan_id: str | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> list[dict[str, Any]]:
         """List export records with optional filtering."""
         with self.get_session() as session:
             query = session.query(ExportRecordModel)
             if plan_id:
                 query = query.filter_by(execution_plan_id=plan_id)
-            query = query.order_by(ExportRecordModel.exported_at.desc()).limit(limit)
+            query = query.order_by(ExportRecordModel.exported_at.desc())
+            if limit is not None:
+                query = query.limit(limit)
             return [self._export_to_dict(e) for e in query.all()]
 
     def _export_to_dict(self, export: ExportRecordModel) -> dict[str, Any]:

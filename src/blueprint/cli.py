@@ -42,6 +42,7 @@ from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
 from blueprint.exporters.export_validation import create_exporter, validate_export
+from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
 from blueprint.exporters.task_handoff import TaskHandoffExporter
@@ -233,6 +234,29 @@ def _emit_json_payload(payload: dict, output: Path | None) -> None:
     click.echo(rendered, nl=False)
 
 
+def _emit_export_manifest(payload: dict, output: Path | None, json_output: bool) -> None:
+    """Write an export manifest to a file or stdout."""
+    if output or json_output:
+        _emit_json_payload(payload, output)
+        return
+
+    click.echo(f"Export manifest: {payload['plan_id']}")
+    click.echo(f"Generated: {payload['generated_at']}")
+    click.echo(f"Exports: {len(payload['exports'])}")
+    for export_record in payload["exports"]:
+        status = "present" if export_record["exists"] else "missing"
+        detail = (
+            f", {export_record['size_bytes']} bytes, sha256={export_record['checksum']}"
+            if export_record["checksum"]
+            else ""
+        )
+        click.echo(
+            f"- {export_record['export_record_id']} "
+            f"({export_record['target_engine']}, {export_record['format']}): "
+            f"{status}{detail} {export_record['path']}"
+        )
+
+
 def _create_llm_provider(config) -> LLMProvider:
     """Create the configured LLM provider."""
     if config.llm_provider == "anthropic":
@@ -247,6 +271,26 @@ def _create_llm_provider(config) -> LLMProvider:
 def _resolve_llm_model(model: str) -> str:
     """Resolve CLI model aliases against the default provider."""
     return LLMClient.resolve_model(model)
+
+
+@cli.command(name="export-manifest")
+@click.argument("plan_id")
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write manifest JSON to a file",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output manifest as JSON")
+def export_manifest(plan_id: str, output: Path | None, json_output: bool):
+    """Create a manifest of rendered export artifacts for one execution plan."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    if not store.get_execution_plan(plan_id):
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    manifest = ExportManifestExporter().build(store, plan_id)
+    _emit_export_manifest(manifest, output, json_output)
 
 
 # ============================================================================
