@@ -171,7 +171,7 @@ class Store:
                     "source_payload",
                     "source_links",
                 ):
-                    setattr(existing, field, brief_payload[field])
+                    setattr(existing, field, brief_payload.get(field))
                 existing.updated_at = brief_payload.get("updated_at") or datetime.utcnow()
                 session.commit()
 

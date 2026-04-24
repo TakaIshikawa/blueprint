@@ -93,6 +93,7 @@ from blueprint.generators.brief_scaffold import scaffold_implementation_brief
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.generators.plan_reviser import PlanReviser
+from blueprint.importers.csv_backlog_importer import CsvBacklogImporter
 from blueprint.importers.graph_importer import GraphImporter
 from blueprint.importers.github_issue_importer import GitHubIssueImporter
 from blueprint.importers.manual_importer import ManualBriefImporter
@@ -682,6 +683,107 @@ def graph_node(file_path: str, replace: bool, skip_existing: bool):
 
     except Exception as e:
         click.echo(f"✗ Import failed: {e}", err=True)
+
+
+@import_cmd.command(name="csv-backlog")
+@click.argument("file_path")
+@click.option("--title-column", default="title", show_default=True, help="CSV title column")
+@click.option("--summary-column", default="summary", show_default=True, help="CSV summary column")
+@click.option("--domain-column", default="domain", show_default=True, help="CSV domain column")
+@click.option("--id-column", default="source_id", show_default=True, help="CSV source ID column")
+@click.option("--links-column", default="links", show_default=True, help="CSV links column")
+@click.option("--tags-column", default="tags", show_default=True, help="CSV tags column")
+@click.option(
+    "--replace", is_flag=True, help="Replace existing imported rows from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if a source brief already exists"
+)
+def csv_backlog(
+    file_path: str,
+    title_column: str,
+    summary_column: str,
+    domain_column: str,
+    id_column: str,
+    links_column: str,
+    tags_column: str,
+    replace: bool,
+    skip_existing: bool,
+):
+    """Import a CSV backlog where each row becomes a source brief."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    store = Store(config.db_path)
+    importer = CsvBacklogImporter(
+        title_column=title_column,
+        summary_column=summary_column,
+        domain_column=domain_column,
+        id_column=id_column,
+        links_column=links_column,
+        tags_column=tags_column,
+    )
+
+    click.echo(f"Importing CSV backlog from: {file_path}")
+    try:
+        source_briefs = importer.import_file(file_path)
+    except Exception as e:
+        click.echo(f"✗ Import failed: {e}", err=True)
+        return
+
+    counts = {"imported": 0, "skipped": 0, "replaced": 0}
+    results: list[dict[str, str]] = []
+
+    for source_brief in source_briefs:
+        existing_source_brief = store.get_source_brief_by_source(
+            source_project=source_brief["source_project"],
+            source_entity_type=source_brief["source_entity_type"],
+            source_id=source_brief["source_id"],
+        )
+
+        try:
+            source_brief_id = store.upsert_source_brief(
+                source_brief,
+                replace=replace,
+                skip_existing=skip_existing,
+            )
+        except Exception as e:
+            click.echo(
+                f"✗ Import failed for CSV row {source_brief['source_id']}: {e}",
+                err=True,
+            )
+            continue
+
+        if existing_source_brief and replace:
+            status = "replaced"
+            counts["replaced"] += 1
+        elif existing_source_brief:
+            status = "skipped"
+            counts["skipped"] += 1
+        else:
+            status = "imported"
+            counts["imported"] += 1
+
+        results.append(
+            {
+                "status": status,
+                "source_brief_id": source_brief_id,
+                "source_id": source_brief["source_id"],
+                "title": source_brief["title"],
+            }
+        )
+
+    click.echo(f"Imported: {counts['imported']}")
+    click.echo(f"Skipped: {counts['skipped']}")
+    click.echo(f"Replaced: {counts['replaced']}")
+    click.echo(f"Total rows: {len(source_briefs)}")
+
+    for result in results:
+        click.echo(
+            f"- {result['status']}: {result['source_id']} "
+            f"[{result['source_brief_id']}] {result['title']}"
+        )
 
 
 @import_cmd.command()
