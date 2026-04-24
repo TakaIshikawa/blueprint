@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 
 import yaml
 
+from blueprint.audits.critical_path import analyze_critical_path
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
@@ -23,6 +24,7 @@ from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
+from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
 from blueprint.exporters.github_actions import GitHubActionsExporter
@@ -153,6 +155,7 @@ def create_exporter(target: str):
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
         "coverage-matrix": CoverageMatrixExporter(),
+        "critical-path-report": CriticalPathReportExporter(),
         "mermaid": MermaidExporter(),
         "milestone-summary": MilestoneSummaryExporter(),
         "plan-snapshot": PlanSnapshotExporter(),
@@ -781,6 +784,54 @@ def _validate_milestone_summary(
                         "Milestone summary is missing cross-milestone dependency: "
                         f"{dependency_line}"
                     ),
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
+def _validate_critical_path_report(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the critical path report Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Critical Path Report: {implementation_brief['title']}",
+            "## Plan Overview",
+            "## Critical Path",
+            "## Blocked Or Incomplete Critical Path Tasks",
+            "## Parallelizable Off-Path Tasks",
+            "## Per-Task Dependency Details",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    result = analyze_critical_path(execution_plan)
+    if f"- Critical Path Weight: {result.total_weight}" not in content:
+        findings.append(
+            ValidationFinding(
+                code="critical_path_report.missing_path_weight",
+                message="Critical path report is missing the computed path weight.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task_id in result.task_ids:
+        if f"`{task_id}`" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="critical_path_report.missing_critical_task",
+                    message=f"Critical path report is missing critical task {task_id}.",
                     path=str(artifact_path),
                 )
             )
@@ -3576,6 +3627,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "calendar": _validate_calendar,
     "checklist": _validate_checklist,
     "coverage-matrix": _validate_coverage_matrix,
+    "critical-path-report": _validate_critical_path_report,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "risk-register": _validate_risk_register,
