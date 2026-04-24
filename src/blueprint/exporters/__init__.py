@@ -11,6 +11,7 @@ from blueprint.exporters.github_actions import GitHubActionsExporter
 from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.kanban import KanbanExporter
+from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
@@ -33,6 +34,7 @@ __all__ = [
     "GitHubIssuesExporter",
     "JiraCsvExporter",
     "KanbanExporter",
+    "LinearExporter",
     "MilestoneSummaryExporter",
     "ReleaseNotesExporter",
     "SlackDigestExporter",

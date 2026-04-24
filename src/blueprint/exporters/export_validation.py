@@ -23,6 +23,7 @@ from blueprint.exporters.github_issues import GitHubIssuesExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
+from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
@@ -137,6 +138,7 @@ def create_exporter(target: str):
         "github-actions": GitHubActionsExporter(),
         "github-issues": GitHubIssuesExporter(),
         "jira-csv": JiraCsvExporter(),
+        "linear": LinearExporter(),
         "junit-tasks": JUnitTasksExporter(),
         "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
@@ -1326,6 +1328,141 @@ def _validate_jira_csv(
     return findings
 
 
+def _validate_linear(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Linear issue JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="linear.invalid_json",
+                message=f"Linear export is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="linear.invalid_shape",
+                message="Linear export must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    findings.extend(
+        _missing_keys(
+            payload,
+            ["schema_version", "exporter", "plan", "issues"],
+            "linear.missing_key",
+            str(artifact_path),
+        )
+    )
+
+    issues = payload.get("issues")
+    if not isinstance(issues, list):
+        findings.append(
+            ValidationFinding(
+                code="linear.issues.invalid_shape",
+                message="Linear export issues must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    expected_tasks = execution_plan.get("tasks", [])
+    if len(issues) != len(expected_tasks):
+        findings.append(
+            ValidationFinding(
+                code="linear.task_count_mismatch",
+                message="Linear issue count does not match the number of execution tasks.",
+                path=str(artifact_path),
+            )
+        )
+
+    task_occurrences: dict[str, int] = {}
+    for index, issue in enumerate(issues, 1):
+        if not isinstance(issue, dict):
+            findings.append(
+                ValidationFinding(
+                    code="linear.issue.invalid_shape",
+                    message=f"Linear issue {index} must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        findings.extend(
+            _missing_keys(
+                issue,
+                [
+                    "externalId",
+                    "title",
+                    "description",
+                    "teamKey",
+                    "labels",
+                    "priority",
+                    "estimate",
+                    "relations",
+                    "metadata",
+                ],
+                "linear.issue.missing_key",
+                str(artifact_path),
+            )
+        )
+
+        metadata = issue.get("metadata")
+        if isinstance(metadata, dict):
+            task_id = metadata.get("taskId")
+            if isinstance(task_id, str):
+                task_occurrences[task_id] = task_occurrences.get(task_id, 0) + 1
+        else:
+            findings.append(
+                ValidationFinding(
+                    code="linear.issue.metadata.invalid_shape",
+                    message=f"Linear issue {index} metadata must be an object.",
+                    path=str(artifact_path),
+                )
+            )
+
+        if not isinstance(issue.get("relations"), list):
+            findings.append(
+                ValidationFinding(
+                    code="linear.issue.relations.invalid_shape",
+                    message=f"Linear issue {index} relations must be a list.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for task in expected_tasks:
+        occurrences = task_occurrences.get(task["id"], 0)
+        if occurrences != 1:
+            findings.append(
+                ValidationFinding(
+                    code="linear.task_occurrence_mismatch",
+                    message=f"Task {task['id']} appears {occurrences} times in the Linear export.",
+                    path=str(artifact_path),
+                )
+            )
+
+    extra_task_ids = sorted(set(task_occurrences) - {task["id"] for task in expected_tasks})
+    if extra_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="linear.unexpected_task",
+                message=f"Linear export contains unexpected tasks: {', '.join(extra_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
+
+
 def _validate_junit_tasks(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -2015,6 +2152,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "task-bundle": _validate_task_bundle,
     "github-issues": _validate_github_issues_bundle,
     "jira-csv": _validate_jira_csv,
+    "linear": _validate_linear,
     "calendar": _validate_calendar,
     "checklist": _validate_checklist,
     "kanban": _validate_kanban,

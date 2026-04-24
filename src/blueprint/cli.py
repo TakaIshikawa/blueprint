@@ -130,6 +130,7 @@ EXPORT_TARGET_CHOICES = (
     "github-actions",
     "github-issues",
     "jira-csv",
+    "linear",
     "junit-tasks",
     "kanban",
     "release-notes",
@@ -3522,6 +3523,7 @@ def preview(
             "github-actions",
             "github-issues",
             "jira-csv",
+            "linear",
             "junit-tasks",
             "kanban",
             "release-notes",
@@ -3564,9 +3566,10 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
 
 @export.command()
 @click.argument("plan_id")
+@click.argument("target_arg", required=False)
 @click.option(
     "--target",
-    required=True,
+    required=False,
     type=click.Choice(
         [
             "adr",
@@ -3583,6 +3586,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "github-actions",
             "github-issues",
             "jira-csv",
+            "linear",
             "junit-tasks",
             "kanban",
             "release-notes",
@@ -3594,10 +3598,12 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
     help="Target execution engine",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output validation results as JSON")
-def validate(plan_id: str, target: str, json_output: bool):
+def validate(plan_id: str, target_arg: str | None, target: str | None, json_output: bool):
     """Validate a rendered export artifact for a target engine."""
     config = get_config()
     store = Store(config.db_path)
+
+    target = _resolve_export_target(target_arg, target)
 
     plan = store.get_execution_plan(plan_id)
     if not plan:
