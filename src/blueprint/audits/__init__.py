@@ -50,6 +50,13 @@ from blueprint.audits.task_completeness import (
     TaskCompletenessResult,
     audit_task_completeness,
 )
+from blueprint.audits.task_splitting import (
+    SuggestedSubtask,
+    TaskSplitReason,
+    TaskSplitRecommendation,
+    TaskSplittingResult,
+    audit_task_splitting,
+)
 from blueprint.audits.workload import (
     CrossMilestoneDependencyCount,
     WorkloadOverload,
@@ -79,13 +86,18 @@ __all__ = [
     "SourceDuplicateGroup",
     "SourceDuplicatePair",
     "SourceDuplicateReport",
+    "SuggestedSubtask",
     "TaskCompletenessFinding",
     "TaskCompletenessItem",
     "TaskCompletenessResult",
+    "TaskSplitReason",
+    "TaskSplitRecommendation",
+    "TaskSplittingResult",
     "WorkloadOverload",
     "WorkloadResult",
     "audit_brief_readiness",
     "audit_acceptance_quality",
+    "audit_task_splitting",
     "analyze_workload",
     "build_env_inventory",
     "evaluate_plan_readiness",

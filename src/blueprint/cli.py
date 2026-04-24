@@ -55,6 +55,10 @@ from blueprint.audits.task_completeness import (
     TaskCompletenessResult,
     audit_task_completeness,
 )
+from blueprint.audits.task_splitting import (
+    TaskSplittingResult,
+    audit_task_splitting,
+)
 from blueprint.audits.workload import WorkloadResult, analyze_workload
 from blueprint.audits.source_similarity import (
     DEFAULT_LIMIT as SOURCE_SIMILARITY_DEFAULT_LIMIT,
@@ -2996,6 +3000,29 @@ def task_completeness(plan_id: str, json_output: bool):
         raise click.exceptions.Exit(1)
 
 
+@task.command(name="split-audit")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def task_split_audit(plan_id: str, json_output: bool):
+    """Recommend split points for tasks that are too broad."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_task_splitting(plan)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_task_split_audit(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 @task.command(name="workload")
 @click.argument("plan_id")
 @click.option("--json", "json_output", is_flag=True, help="Output workload as JSON")
@@ -3103,6 +3130,42 @@ def _emit_task_completeness(result: TaskCompletenessResult) -> None:
             f"  - {task_item.task_id} ({task_item.title}): "
             f"{task_item.score}/100"
         )
+
+
+def _emit_task_split_audit(result: TaskSplittingResult) -> None:
+    """Render human-readable task split recommendations."""
+    click.echo(f"Task split audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'recommendations found'} "
+        f"({result.recommendation_count} recommendations)"
+    )
+
+    if not result.recommendations:
+        click.echo("No split recommendations found.")
+        return
+
+    click.echo("\nRecommendations:")
+    for recommendation in result.recommendations:
+        click.echo(f"  - {recommendation.task_id} ({recommendation.title})")
+        click.echo("    Reasons:")
+        for reason in recommendation.reasons:
+            click.echo(f"      - [{reason.code}] {reason.message} ({reason.value})")
+        click.echo("    Suggested subtasks:")
+        for index, suggested_subtask in enumerate(
+            recommendation.suggested_subtasks,
+            1,
+        ):
+            click.echo(f"      {index}. {suggested_subtask.title}")
+            if suggested_subtask.files_or_modules:
+                click.echo(
+                    "         Files: "
+                    + ", ".join(suggested_subtask.files_or_modules)
+                )
+            if suggested_subtask.acceptance_criteria:
+                click.echo(
+                    "         Criteria: "
+                    + "; ".join(suggested_subtask.acceptance_criteria)
+                )
 
 
 def _emit_task_workload(result: WorkloadResult) -> None:
