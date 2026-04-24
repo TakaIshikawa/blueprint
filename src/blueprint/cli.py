@@ -130,6 +130,7 @@ from blueprint.importers.plan_markdown_importer import (
     PlanMarkdownImporter,
     PlanMarkdownImportError,
 )
+from blueprint.importers.source_jsonl_importer import SourceJsonlImporter
 from blueprint.llm.client import LLMClient
 from blueprint.llm.estimator import PromptEstimate, estimate_prompt
 from blueprint.llm.provider import LLMProvider
@@ -877,6 +878,61 @@ def csv_backlog(
             f"- {result['status']}: {result['source_id']} "
             f"[{result['source_brief_id']}] {result['title']}"
         )
+
+
+@import_cmd.command(name="source-jsonl")
+@click.argument("file_path")
+@click.option("--dry-run", is_flag=True, help="Validate and summarize without writing")
+@click.option(
+    "--continue-on-error",
+    is_flag=True,
+    help="Import valid lines while reporting failed lines",
+)
+@click.option(
+    "--regenerate-missing-ids",
+    is_flag=True,
+    help="Generate SourceBrief IDs for records that omit id",
+)
+def source_jsonl(
+    file_path: str,
+    dry_run: bool,
+    continue_on_error: bool,
+    regenerate_missing_ids: bool,
+):
+    """Import newline-delimited SourceBrief records."""
+    config = get_config()
+    store = Store(config.db_path)
+    importer = SourceJsonlImporter()
+
+    click.echo(f"{'Validating' if dry_run else 'Importing'} source JSONL from: {file_path}")
+    try:
+        result = importer.import_file(
+            file_path,
+            store,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+            regenerate_missing_ids=regenerate_missing_ids,
+        )
+    except Exception as e:
+        raise click.ClickException(f"Import failed: {e}") from e
+
+    click.echo(f"Inserted: {result.inserted}")
+    click.echo(f"Updated: {result.updated}")
+    click.echo(f"Skipped: {result.skipped}")
+    click.echo(f"Errors: {result.error_count}")
+    click.echo(f"Total lines: {result.total_lines}")
+
+    for record in result.records:
+        click.echo(
+            f"- line {record.line_number}: {record.status} "
+            f"{record.source_id} [{record.source_brief_id}] {record.title}"
+        )
+
+    for error in result.errors:
+        click.echo(f"Line {error.line_number}: {error.message}", err=True)
+
+    if result.errors and not continue_on_error:
+        raise click.ClickException("Source JSONL import failed validation")
 
 
 @import_cmd.command()
