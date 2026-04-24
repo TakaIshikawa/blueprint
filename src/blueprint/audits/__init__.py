@@ -38,6 +38,11 @@ from blueprint.audits.env_inventory import (
     EnvInventorySource,
     build_env_inventory,
 )
+from blueprint.audits.milestone_dependencies import (
+    MilestoneDependencyFinding,
+    MilestoneDependencyResult,
+    audit_milestone_dependencies,
+)
 from blueprint.audits.plan_readiness import (
     EnvInventoryCounts,
     PlanReadinessBlockingReason,
@@ -84,6 +89,8 @@ __all__ = [
     "EnvInventoryCounts",
     "EnvInventoryResult",
     "EnvInventorySource",
+    "MilestoneDependencyFinding",
+    "MilestoneDependencyResult",
     "PlanReadinessBlockingReason",
     "PlanReadinessResult",
     "RiskCoverageItem",
@@ -105,6 +112,7 @@ __all__ = [
     "audit_blocked_impact",
     "audit_brief_readiness",
     "audit_acceptance_quality",
+    "audit_milestone_dependencies",
     "audit_task_splitting",
     "analyze_workload",
     "build_env_inventory",
