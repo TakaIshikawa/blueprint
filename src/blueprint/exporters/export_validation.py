@@ -32,6 +32,8 @@ from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay import RelayExporter
+from blueprint.exporters.risk_register import RiskRegisterExporter
+from blueprint.exporters.risk_register import risk_identifier
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
@@ -152,6 +154,7 @@ def create_exporter(target: str):
         "junit-tasks": JUnitTasksExporter(),
         "kanban": KanbanExporter(),
         "release-notes": ReleaseNotesExporter(),
+        "risk-register": RiskRegisterExporter(),
         "slack-digest": SlackDigestExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
@@ -603,6 +606,118 @@ def _validate_release_notes(
             f"- Implementation Brief: `{implementation_brief['id']}`",
         ],
     )
+
+
+def _validate_risk_register(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the risk register Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Risk Register: {implementation_brief['title']}",
+            "## Plan Metadata",
+            "## Register",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    rows = _risk_register_rendered_rows(content)
+    expected_risks = _string_items(implementation_brief.get("risks"))
+    valid_task_ids = {str(task["id"]) for task in execution_plan.get("tasks", [])}
+
+    if not expected_risks:
+        return findings
+
+    for index, risk in enumerate(expected_risks, 1):
+        risk_id = risk_identifier(index)
+        matching_rows = [
+            row for row in rows if _unwrapped_code_cell(row.get("risk_id", "")) == risk_id
+        ]
+        if len(matching_rows) != 1:
+            findings.append(
+                ValidationFinding(
+                    code="risk_register.risk_occurrence_mismatch",
+                    message=f"Risk register renders {risk_id} {len(matching_rows)} times.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        row = matching_rows[0]
+        if row.get("source_risk") != _risk_register_table_cell(risk):
+            findings.append(
+                ValidationFinding(
+                    code="risk_register.source_risk_mismatch",
+                    message=f"Risk register row {risk_id} does not match the brief risk text.",
+                    path=str(artifact_path),
+                )
+            )
+
+        referenced_task_ids = _risk_register_referenced_task_ids(row.get("affected", ""))
+        invalid_task_ids = sorted(set(referenced_task_ids) - valid_task_ids)
+        if invalid_task_ids:
+            findings.append(
+                ValidationFinding(
+                    code="risk_register.invalid_task_reference",
+                    message=(
+                        f"Risk register row {risk_id} references unknown tasks: "
+                        f"{', '.join(invalid_task_ids)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+        valid_references = [
+            task_id for task_id in referenced_task_ids if task_id in valid_task_ids
+        ]
+        if not valid_references:
+            findings.append(
+                ValidationFinding(
+                    code="risk_register.missing_risk_coverage",
+                    message=f"Risk register row {risk_id} has no valid linked task ids.",
+                    path=str(artifact_path),
+                )
+            )
+
+        if row.get("status") not in {"tracked", "mitigated", "blocked", "uncovered", "accepted"}:
+            findings.append(
+                ValidationFinding(
+                    code="risk_register.invalid_status",
+                    message=(
+                        f"Risk register row {risk_id} has invalid status "
+                        f"{row.get('status')!r}."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    expected_risk_ids = {risk_identifier(index) for index in range(1, len(expected_risks) + 1)}
+    extra_risk_ids = sorted(
+        {
+            _unwrapped_code_cell(row.get("risk_id", ""))
+            for row in rows
+            if _unwrapped_code_cell(row.get("risk_id", "")) not in expected_risk_ids
+        }
+    )
+    if extra_risk_ids:
+        findings.append(
+            ValidationFinding(
+                code="risk_register.unexpected_risk",
+                message=f"Risk register contains unexpected risks: {', '.join(extra_risk_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    return findings
 
 
 def _validate_file_impact_map(
@@ -2733,6 +2848,43 @@ def _raci_rendered_rows(content: str) -> list[dict[str, str]]:
     return rows
 
 
+def _risk_register_rendered_rows(content: str) -> list[dict[str, str]]:
+    """Extract risk register rows from the register table."""
+    rows: list[dict[str, str]] = []
+    header = (
+        "| Risk ID | Source Risk | Affected Milestones/Tasks | Mitigation Evidence | "
+        "Owner/Suggested Engine | Status |"
+    )
+    for line in _markdown_section_lines(content, "Register"):
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped in {
+            header,
+            "| --- | --- | --- | --- | --- | --- |",
+        }:
+            continue
+
+        cells = _split_markdown_table_row(stripped)
+        if len(cells) != 6:
+            rows.append({})
+            continue
+        rows.append(
+            {
+                "risk_id": cells[0],
+                "source_risk": cells[1],
+                "affected": cells[2],
+                "mitigation_evidence": cells[3],
+                "owner_suggested_engine": cells[4],
+                "status": cells[5],
+            }
+        )
+    return rows
+
+
+def _risk_register_referenced_task_ids(value: str) -> list[str]:
+    """Extract Markdown code-formatted task references from a register cell."""
+    return re.findall(r"`([^`]+)`", value)
+
+
 def _markdown_section_lines(content: str, section: str) -> list[str]:
     """Return lines belonging to one second-level Markdown section."""
     lines: list[str] = []
@@ -2767,6 +2919,11 @@ def _split_markdown_table_row(row: str) -> list[str]:
 
 def _coverage_table_cell(value: str) -> str:
     """Recreate coverage matrix table escaping for validation."""
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _risk_register_table_cell(value: str) -> str:
+    """Recreate risk register table escaping for validation."""
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
 
@@ -2877,6 +3034,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "coverage-matrix": _validate_coverage_matrix,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
+    "risk-register": _validate_risk_register,
     "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
