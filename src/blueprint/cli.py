@@ -70,6 +70,10 @@ from blueprint.audits.brief_readiness import (
     BriefReadinessResult,
     audit_brief_readiness,
 )
+from blueprint.audits.release_readiness import (
+    ReleaseReadinessResult,
+    audit_release_readiness,
+)
 from blueprint.audits.risk_coverage import (
     RiskCoverageResult,
     audit_risk_coverage,
@@ -2977,6 +2981,69 @@ def _emit_plan_readiness(result: PlanReadinessResult) -> None:
             click.echo(f"  - {prefix} {reason.item_name}: {reason.message}")
         else:
             click.echo(f"  - {prefix} {reason.message}")
+
+
+@plan.command(name="release-readiness")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output readiness as JSON")
+def plan_release_readiness(plan_id: str, json_output: bool):
+    """Evaluate whether an execution plan is ready for release handoff."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    implementation_brief_id = plan.get("implementation_brief_id")
+    implementation_brief = store.get_implementation_brief(str(implementation_brief_id or ""))
+    if not implementation_brief:
+        raise click.ClickException(
+            f"Implementation brief not found: {implementation_brief_id or 'N/A'}"
+        )
+
+    export_records = store.list_export_records(plan_id=plan_id, limit=None)
+    result = audit_release_readiness(plan, implementation_brief, export_records)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_release_readiness(result)
+
+    if not result.ok:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_release_readiness(result: ReleaseReadinessResult) -> None:
+    """Render human-readable release readiness results grouped by severity."""
+    click.echo(f"Plan release readiness: {result.plan_id}")
+    click.echo(f"Implementation brief: {result.implementation_brief_id}")
+    click.echo(
+        f"Result: {'passed' if result.ok else 'failed'} "
+        f"({result.blocking_count} blocking, {result.warning_count} warnings)"
+    )
+
+    if not result.findings:
+        click.echo("No release readiness findings found.")
+        return
+
+    grouped = result.findings_by_severity()
+    for severity, heading in (("blocking", "Blocking Findings"), ("warning", "Warnings")):
+        findings = grouped[severity]
+        if not findings:
+            continue
+        click.echo(f"\n{heading}:")
+        for finding in findings:
+            subject = _release_readiness_subject(finding.to_dict())
+            click.echo(f"  - [{finding.category}:{finding.code}] " f"{subject}{finding.message}")
+
+
+def _release_readiness_subject(finding: dict[str, Any]) -> str:
+    if finding.get("task_id"):
+        return f"{finding['task_id']}: "
+    if finding.get("export_target"):
+        return f"{finding['export_target']}: "
+    return ""
 
 
 def _emit_plan_diff(result: PlanDiffResult) -> None:

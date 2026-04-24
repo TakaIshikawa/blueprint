@@ -71,6 +71,11 @@ from blueprint.audits.risk_coverage import (
     RiskCoverageResult,
     audit_risk_coverage,
 )
+from blueprint.audits.release_readiness import (
+    ReleaseReadinessFinding,
+    ReleaseReadinessResult,
+    audit_release_readiness,
+)
 from blueprint.audits.task_completeness import (
     TaskCompletenessFinding,
     TaskCompletenessItem,
@@ -120,6 +125,8 @@ __all__ = [
     "PlanReadinessResult",
     "RiskCoverageItem",
     "RiskCoverageResult",
+    "ReleaseReadinessFinding",
+    "ReleaseReadinessResult",
     "SourceBriefSimilarityMatch",
     "SourceDuplicateBrief",
     "SourceDuplicateGroup",
@@ -145,6 +152,7 @@ __all__ = [
     "build_env_inventory",
     "audit_env_readiness",
     "evaluate_plan_readiness",
+    "audit_release_readiness",
     "audit_risk_coverage",
     "audit_task_completeness",
     "find_similar_source_briefs",
