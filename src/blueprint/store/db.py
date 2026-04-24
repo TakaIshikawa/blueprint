@@ -291,6 +291,7 @@ class Store:
             "updated_at": brief.updated_at.isoformat() if brief.updated_at else None,
             "generation_model": brief.generation_model,
             "generation_tokens": brief.generation_tokens,
+            "generation_prompt": brief.generation_prompt,
         }
 
     # ============================================================================

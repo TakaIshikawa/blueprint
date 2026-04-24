@@ -76,6 +76,7 @@ from blueprint.generators.brief_generator import (
     BriefGenerator,
     generate_implementation_brief_id,
 )
+from blueprint.generators.brief_scaffold import scaffold_implementation_brief
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.generators.plan_reviser import PlanReviser
@@ -1100,6 +1101,49 @@ def create(source_id: str, model: str):
         import traceback
 
         click.echo(traceback.format_exc(), err=True)
+
+
+@brief.command(name="scaffold")
+@click.argument("source_id")
+@click.option(
+    "--status",
+    type=click.Choice(["draft", "ready_for_planning"]),
+    default="draft",
+    show_default=True,
+    help="Initial implementation brief status",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output created IDs as JSON")
+def scaffold(source_id: str, status: str, json_output: bool):
+    """Create an offline implementation brief scaffold from a source brief."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    source_brief = store.get_source_brief(source_id)
+    if not source_brief:
+        raise click.ClickException(f"Source brief not found: {source_id}")
+
+    implementation_brief = scaffold_implementation_brief(source_brief)
+    implementation_brief["status"] = status
+    brief_id = store.insert_implementation_brief(implementation_brief)
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                {
+                    "brief_id": brief_id,
+                    "source_brief_id": source_id,
+                    "status": status,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+
+    click.echo(f"✓ Scaffolded implementation brief {brief_id}")
+    click.echo(f"  Source Brief: {source_id}")
+    click.echo(f"  Title: {implementation_brief['title']}")
+    click.echo(f"  Status: {status}")
 
 
 @brief.command(name="import")
