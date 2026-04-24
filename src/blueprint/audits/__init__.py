@@ -43,6 +43,11 @@ from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyResult,
     audit_milestone_dependencies,
 )
+from blueprint.audits.ownership_gaps import (
+    OwnershipGapFinding,
+    OwnershipGapResult,
+    audit_ownership_gaps,
+)
 from blueprint.audits.plan_readiness import (
     EnvInventoryCounts,
     PlanReadinessBlockingReason,
@@ -91,6 +96,8 @@ __all__ = [
     "EnvInventorySource",
     "MilestoneDependencyFinding",
     "MilestoneDependencyResult",
+    "OwnershipGapFinding",
+    "OwnershipGapResult",
     "PlanReadinessBlockingReason",
     "PlanReadinessResult",
     "RiskCoverageItem",
@@ -113,6 +120,7 @@ __all__ = [
     "audit_brief_readiness",
     "audit_acceptance_quality",
     "audit_milestone_dependencies",
+    "audit_ownership_gaps",
     "audit_task_splitting",
     "analyze_workload",
     "build_env_inventory",

@@ -44,6 +44,12 @@ from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyResult,
     audit_milestone_dependencies,
 )
+from blueprint.audits.ownership_gaps import (
+    DEFAULT_OWNERSHIP_THRESHOLD,
+    OwnershipGapFinding,
+    OwnershipGapResult,
+    audit_ownership_gaps,
+)
 from blueprint.audits.plan_audit import PlanAuditResult, audit_execution_plan
 from blueprint.audits.plan_diff import PlanDiffResult, diff_execution_plans
 from blueprint.audits.plan_metrics import PlanMetrics, calculate_plan_metrics
@@ -3111,6 +3117,38 @@ def task_workload(plan_id: str, json_output: bool):
     _emit_task_workload(result)
 
 
+@task.command(name="ownership-gaps")
+@click.argument("plan_id")
+@click.option(
+    "--threshold",
+    default=DEFAULT_OWNERSHIP_THRESHOLD,
+    show_default=True,
+    help="Maximum tasks allowed in one owner group",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+def task_ownership_gaps(plan_id: str, threshold: int, json_output: bool):
+    """Audit ambiguous task ownership and overloaded owner lanes."""
+    if threshold < 1:
+        raise click.UsageError("--threshold must be greater than zero")
+
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_ownership_gaps(plan, threshold=threshold)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_ownership_gaps(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 def _emit_critical_path(result: CriticalPathResult) -> None:
     """Render human-readable critical path analysis."""
     click.echo(f"Critical path for plan {result.plan_id}")
@@ -3314,6 +3352,41 @@ def _emit_task_workload(result: WorkloadResult) -> None:
             f"{dependency_count.to_milestone[:18]:<20} "
             f"{dependency_count.count}"
         )
+
+
+def _emit_ownership_gaps(result: OwnershipGapResult) -> None:
+    """Render human-readable task ownership audit results."""
+    click.echo(f"Task ownership gap audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"({result.blocking_count} blocking, {result.warning_count} warnings, "
+        f"threshold {result.threshold})"
+    )
+
+    if not result.findings:
+        click.echo("No ownership gaps found.")
+        return
+
+    grouped_findings = result.findings_by_severity()
+    if grouped_findings["blocking"]:
+        click.echo("\nBlocking findings:")
+        for finding in grouped_findings["blocking"]:
+            _emit_ownership_gap_finding(finding)
+
+    if grouped_findings["warning"]:
+        click.echo("\nWarnings:")
+        for finding in grouped_findings["warning"]:
+            _emit_ownership_gap_finding(finding)
+
+
+def _emit_ownership_gap_finding(finding: OwnershipGapFinding) -> None:
+    click.echo(f"  - [{finding.code}] {finding.message}")
+    click.echo("    Task IDs: " + (", ".join(finding.task_ids) if finding.task_ids else "none"))
+    if finding.owner_type:
+        click.echo(f"    Owner type: {finding.owner_type}")
+    if finding.suggested_engine:
+        click.echo(f"    Suggested engine: {finding.suggested_engine}")
+    click.echo(f"    Remediation: {finding.remediation}")
 
 
 def _emit_count_table(
