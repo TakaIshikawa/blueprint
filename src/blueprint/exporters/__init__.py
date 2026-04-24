@@ -22,6 +22,7 @@ from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
+from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
@@ -50,6 +51,7 @@ __all__ = [
     "RiskRegisterExporter",
     "SlackDigestExporter",
     "SourceBriefExporter",
+    "TaskfileExporter",
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
     "VSCodeTasksExporter",

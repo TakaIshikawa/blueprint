@@ -156,6 +156,7 @@ EXPORT_TARGET_CHOICES = (
     "slack-digest",
     "status-report",
     "task-bundle",
+    "taskfile",
     "task-queue-jsonl",
     "vscode-tasks",
     "wave-schedule",
@@ -3912,6 +3913,7 @@ def preview(
             "risk-register",
             "status-report",
             "task-bundle",
+            "taskfile",
             "vscode-tasks",
             "wave-schedule",
         ]
@@ -3981,6 +3983,7 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
             "risk-register",
             "status-report",
             "task-bundle",
+            "taskfile",
             "vscode-tasks",
             "wave-schedule",
         ]

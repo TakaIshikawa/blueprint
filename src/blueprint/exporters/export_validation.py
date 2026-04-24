@@ -38,6 +38,7 @@ from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
+from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
@@ -158,6 +159,7 @@ def create_exporter(target: str):
         "slack-digest": SlackDigestExporter(),
         "status-report": StatusReportExporter(),
         "task-bundle": TaskBundleExporter(),
+        "taskfile": TaskfileExporter(),
         "task-queue-jsonl": TaskQueueJsonlExporter(),
         "vscode-tasks": VSCodeTasksExporter(),
         "wave-schedule": WaveScheduleExporter(),
@@ -2214,6 +2216,148 @@ def _validate_vscode_tasks(
     return findings
 
 
+def _validate_taskfile(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the go-task Taskfile.yml export."""
+    try:
+        import yaml
+
+        payload = yaml.safe_load(artifact_path.read_text())
+    except yaml.YAMLError as exc:
+        return [
+            ValidationFinding(
+                code="taskfile.invalid_yaml",
+                message=f"Taskfile export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="taskfile.invalid_shape",
+                message="Taskfile export must be a YAML object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    if str(payload.get("version")) != "3":
+        findings.append(
+            ValidationFinding(
+                code="taskfile.invalid_version",
+                message="Taskfile export must use top-level version 3.",
+                path=str(artifact_path),
+            )
+        )
+
+    rendered_tasks = payload.get("tasks")
+    if not isinstance(rendered_tasks, dict):
+        return findings + [
+            ValidationFinding(
+                code="taskfile.invalid_tasks",
+                message="Taskfile export must include a top-level tasks object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    plan_tasks = execution_plan.get("tasks", [])
+    expected_names = TaskfileExporter().task_names_by_id(plan_tasks)
+    generated_names = set(expected_names.values())
+
+    if "default" not in rendered_tasks:
+        findings.append(
+            ValidationFinding(
+                code="taskfile.missing_default",
+                message="Taskfile export must include a default task.",
+                path=str(artifact_path),
+            )
+        )
+
+    for task_id, task_name in expected_names.items():
+        rendered = rendered_tasks.get(task_name)
+        if not isinstance(rendered, dict):
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.missing_task",
+                    message=f"Taskfile export is missing generated task: {task_name}",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        if not isinstance(rendered.get("desc"), str) or not rendered.get("desc"):
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.missing_desc",
+                    message=f"Taskfile task '{task_name}' must include a description.",
+                    path=str(artifact_path),
+                )
+            )
+
+        if not isinstance(rendered.get("cmds"), list) or not rendered.get("cmds"):
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.missing_cmds",
+                    message=f"Taskfile task '{task_name}' must include commands.",
+                    path=str(artifact_path),
+                )
+            )
+
+        rendered_deps = rendered.get("deps", [])
+        if isinstance(rendered_deps, str):
+            rendered_deps = [rendered_deps]
+        if not isinstance(rendered_deps, list):
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.invalid_deps",
+                    message=f"Taskfile task '{task_name}' deps must be a list.",
+                    path=str(artifact_path),
+                )
+            )
+            continue
+
+        unknown_deps = [
+            dep
+            for dep in rendered_deps
+            if not isinstance(dep, str) or dep not in rendered_tasks
+        ]
+        if unknown_deps:
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.unknown_dependency",
+                    message=(
+                        f"Taskfile task '{task_name}' references unknown deps: "
+                        + ", ".join(str(dep) for dep in unknown_deps)
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+        plan_task = next(task for task in plan_tasks if task["id"] == task_id)
+        expected_deps = [
+            expected_names[dependency_id]
+            for dependency_id in plan_task.get("depends_on", [])
+            if dependency_id in expected_names
+        ]
+        generated_rendered_deps = [
+            dep for dep in rendered_deps if isinstance(dep, str) and dep in generated_names
+        ]
+        if generated_rendered_deps != expected_deps:
+            findings.append(
+                ValidationFinding(
+                    code="taskfile.dependency_mismatch",
+                    message=f"Taskfile task '{task_name}' dependencies do not match the plan.",
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
 def _validate_wave_schedule(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -3038,6 +3182,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
+    "taskfile": _validate_taskfile,
     "task-queue-jsonl": _validate_task_queue_jsonl,
     "file-impact-map": _validate_file_impact_map,
     "github-actions": _validate_github_actions,
