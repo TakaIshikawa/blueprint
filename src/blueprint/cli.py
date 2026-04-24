@@ -59,6 +59,7 @@ from blueprint.exporters.export_validation import create_exporter, validate_expo
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
+from blueprint.exporters.source_brief import SourceBriefExporter
 from blueprint.exporters.task_handoff import TaskHandoffExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.domain import (
@@ -893,6 +894,34 @@ def inspect(brief_id: str):
         for key, value in brief["source_links"].items():
             click.echo(f"  {key}: {value}")
         click.echo()
+
+
+@source.command(name="export")
+@click.argument("brief_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["markdown", "json"]),
+    default="markdown",
+    show_default=True,
+    help="Export format",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write export to a file instead of stdout",
+)
+def source_export(brief_id: str, output_format: str, output: Path | None):
+    """Export a normalized source brief for external review."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    brief = store.get_source_brief(brief_id)
+    if not brief:
+        raise click.ClickException(f"Source brief not found: {brief_id}")
+
+    rendered = SourceBriefExporter().render(brief, output_format=output_format)
+    _emit_text_payload(rendered, output)
 
 
 @source.command()
