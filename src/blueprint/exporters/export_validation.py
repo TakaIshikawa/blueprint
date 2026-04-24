@@ -16,6 +16,7 @@ from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.codex import CodexExporter
+from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
 from blueprint.exporters.github_actions import GitHubActionsExporter
@@ -133,6 +134,7 @@ def create_exporter(target: str):
         "claude-code": ClaudeCodeExporter(),
         "calendar": CalendarExporter(),
         "checklist": ChecklistExporter(),
+        "coverage-matrix": CoverageMatrixExporter(),
         "mermaid": MermaidExporter(),
         "milestone-summary": MilestoneSummaryExporter(),
         "csv-tasks": CsvTasksExporter(),
@@ -807,6 +809,86 @@ def _validate_checklist(
                     ValidationFinding(
                         code="checklist.missing_affected_file",
                         message=f"Checklist is missing affected file {affected_file} for {task['id']}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
+def _validate_coverage_matrix(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the brief coverage matrix Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Coverage Matrix: {implementation_brief['title']}",
+            "## Plan Metadata",
+            "## Scope Coverage",
+            "## Risk Coverage",
+            "## Validation Coverage",
+            "## Definition of Done Coverage",
+        ],
+        required_snippets=[
+            f"- Plan ID: `{execution_plan['id']}`",
+            f"- Implementation Brief: `{implementation_brief['id']}`",
+        ],
+    )
+
+    expected_sections = {
+        "Scope Coverage": _string_items(implementation_brief.get("scope")),
+        "Risk Coverage": _string_items(implementation_brief.get("risks")),
+        "Validation Coverage": [
+            str(implementation_brief.get("validation_plan") or "").strip()
+        ],
+        "Definition of Done Coverage": _string_items(
+            implementation_brief.get("definition_of_done")
+        ),
+    }
+
+    for section, expected_items in expected_sections.items():
+        section_lines = _coverage_section_lines(content, section)
+        for expected_item in expected_items:
+            occurrences = _coverage_item_occurrences(section_lines, expected_item)
+            if occurrences != 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coverage_matrix.item_occurrence_mismatch",
+                        message=(
+                            f"Coverage matrix section '{section}' renders item "
+                            f"{expected_item!r} {occurrences} times."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+
+        rendered_rows = _coverage_rendered_rows(section_lines)
+        for row in rendered_rows:
+            if row["status"] not in {"covered", "partial", "uncovered"}:
+                findings.append(
+                    ValidationFinding(
+                        code="coverage_matrix.invalid_status",
+                        message=(
+                            f"Coverage matrix item {row['item']!r} has invalid status "
+                            f"{row['status']!r}."
+                        ),
+                        path=str(artifact_path),
+                    )
+                )
+            if row["status"] == "uncovered" and row["matching_tasks"] != "none":
+                findings.append(
+                    ValidationFinding(
+                        code="coverage_matrix.uncovered_has_matches",
+                        message=(
+                            f"Coverage matrix item {row['item']!r} is uncovered but lists "
+                            "matching tasks."
+                        ),
                         path=str(artifact_path),
                     )
                 )
@@ -2316,6 +2398,80 @@ def _has_heading(content: str, expected: str) -> bool:
     return False
 
 
+def _coverage_section_lines(content: str, section: str) -> list[str]:
+    """Return lines belonging to one coverage matrix section."""
+    lines: list[str] = []
+    in_section = False
+    heading = f"## {section}"
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == heading:
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## "):
+            break
+        if in_section:
+            lines.append(line)
+    return lines
+
+
+def _coverage_item_occurrences(section_lines: list[str], expected_item: str) -> int:
+    """Count expected item rows in a coverage matrix section."""
+    expected = _coverage_table_cell(expected_item)
+    return sum(1 for row in _coverage_rendered_rows(section_lines) if row["item"] == expected)
+
+
+def _coverage_rendered_rows(section_lines: list[str]) -> list[dict[str, str]]:
+    """Extract coverage matrix rows from a Markdown table."""
+    rows: list[dict[str, str]] = []
+    for line in section_lines:
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped in {
+            "| Item | Status | Matching Tasks |",
+            "| --- | --- | --- |",
+        }:
+            continue
+
+        cells = _split_markdown_table_row(stripped)
+        if len(cells) != 3:
+            continue
+        rows.append(
+            {
+                "item": cells[0],
+                "status": cells[1],
+                "matching_tasks": cells[2],
+            }
+        )
+    return rows
+
+
+def _split_markdown_table_row(row: str) -> list[str]:
+    """Split a simple Markdown table row while preserving escaped pipes."""
+    inner = row.strip().strip("|")
+    cells: list[str] = []
+    current: list[str] = []
+    for index, char in enumerate(inner):
+        if char == "|" and (index == 0 or inner[index - 1] != "\\"):
+            cells.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _coverage_table_cell(value: str) -> str:
+    """Recreate coverage matrix table escaping for validation."""
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _string_items(value: Any) -> list[str]:
+    """Return non-empty string representations from a list."""
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
 def _kanban_rendered_tasks_by_column(content: str) -> dict[str, list[str]]:
     """Extract rendered Kanban task IDs by status heading."""
     columns = {"pending", "in_progress", "blocked", "completed", "skipped"}
@@ -2403,6 +2559,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "linear": _validate_linear,
     "calendar": _validate_calendar,
     "checklist": _validate_checklist,
+    "coverage-matrix": _validate_coverage_matrix,
     "kanban": _validate_kanban,
     "release-notes": _validate_release_notes,
     "slack-digest": _validate_slack_digest,

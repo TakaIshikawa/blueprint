@@ -5,6 +5,7 @@ from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.calendar import CalendarExporter
 from blueprint.exporters.checklist import ChecklistExporter
+from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
@@ -28,6 +29,7 @@ __all__ = [
     "BriefReviewPacketExporter",
     "CalendarExporter",
     "ChecklistExporter",
+    "CoverageMatrixExporter",
     "DependencyMatrixExporter",
     "ExportManifestExporter",
     "FileImpactMapExporter",
