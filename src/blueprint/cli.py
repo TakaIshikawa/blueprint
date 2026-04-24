@@ -17,6 +17,11 @@ from blueprint.audits.critical_path import (
     CriticalPathResult,
     analyze_critical_path,
 )
+from blueprint.audits.acceptance_quality import (
+    DEFAULT_MIN_LENGTH as ACCEPTANCE_QUALITY_DEFAULT_MIN_LENGTH,
+    AcceptanceQualityResult,
+    audit_acceptance_quality,
+)
 from blueprint.audits.brief_plan_coherence import (
     BriefPlanCoherenceResult,
     audit_brief_plan_coherence,
@@ -2146,6 +2151,61 @@ def coherence(plan_id: str, json_output: bool):
 
     if not result.ok:
         raise click.exceptions.Exit(1)
+
+
+@plan.command(name="acceptance-audit")
+@click.argument("plan_id")
+@click.option("--json", "json_output", is_flag=True, help="Output audit results as JSON")
+@click.option(
+    "--min-length",
+    type=click.IntRange(1),
+    default=ACCEPTANCE_QUALITY_DEFAULT_MIN_LENGTH,
+    show_default=True,
+    help="Minimum acceptance criterion length",
+)
+def plan_acceptance_audit(plan_id: str, json_output: bool, min_length: int):
+    """Audit task acceptance criteria for observable validation quality."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    plan = store.get_execution_plan(plan_id)
+    if not plan:
+        raise click.ClickException(f"Execution plan not found: {plan_id}")
+
+    result = audit_acceptance_quality(plan, min_length=min_length)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    else:
+        _emit_acceptance_quality(result)
+
+    if not result.passed:
+        raise click.exceptions.Exit(1)
+
+
+def _emit_acceptance_quality(result: AcceptanceQualityResult) -> None:
+    """Render human-readable acceptance criteria quality results."""
+    click.echo(f"Acceptance criteria quality audit: {result.plan_id}")
+    click.echo(
+        f"Result: {'passed' if result.passed else 'failed'} "
+        f"({result.high_count} high, {result.medium_count} medium findings)"
+    )
+
+    grouped_findings = result.findings_by_task()
+    if not grouped_findings:
+        click.echo("No weak acceptance criteria found.")
+        return
+
+    click.echo("\nFindings by task:")
+    for task in result.tasks:
+        findings = grouped_findings.get(task.task_id)
+        if not findings:
+            continue
+        click.echo(f"  {task.task_id} ({task.title}):")
+        for finding in findings:
+            criterion = finding.criterion_text or "<missing>"
+            click.echo(f"    - [{finding.severity}] {finding.code}: {criterion}")
+            click.echo(f"      Reason: {finding.reason}")
 
 
 @plan.command(name="readiness")

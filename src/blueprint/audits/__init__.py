@@ -5,6 +5,12 @@ from blueprint.audits.brief_readiness import (
     BriefReadinessResult,
     audit_brief_readiness,
 )
+from blueprint.audits.acceptance_quality import (
+    AcceptanceQualityFinding,
+    AcceptanceQualityResult,
+    AcceptanceQualityTaskResult,
+    audit_acceptance_quality,
+)
 from blueprint.audits.source_similarity import (
     SourceBriefSimilarityMatch,
     find_similar_source_briefs,
@@ -41,6 +47,9 @@ from blueprint.audits.task_completeness import (
 __all__ = [
     "BriefReadinessFinding",
     "BriefReadinessResult",
+    "AcceptanceQualityFinding",
+    "AcceptanceQualityResult",
+    "AcceptanceQualityTaskResult",
     "DependencyRepairResult",
     "DependencyRepairSuggestion",
     "EnvInventoryItem",
@@ -56,6 +65,7 @@ __all__ = [
     "TaskCompletenessItem",
     "TaskCompletenessResult",
     "audit_brief_readiness",
+    "audit_acceptance_quality",
     "build_env_inventory",
     "evaluate_plan_readiness",
     "audit_risk_coverage",
