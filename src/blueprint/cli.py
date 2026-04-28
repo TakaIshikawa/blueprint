@@ -148,7 +148,7 @@ from blueprint.importers.source_jsonl_importer import SourceJsonlImporter
 from blueprint.llm.client import LLMClient
 from blueprint.llm.estimator import PromptEstimate, estimate_prompt
 from blueprint.llm.provider import LLMProvider
-from blueprint.store import Store, init_db
+from blueprint.store import Store, current_db_revision, init_db, migrate_db
 
 
 BRIEF_STATUS_CHOICES = (
@@ -549,6 +549,26 @@ def init():
     click.echo(f"Initializing database at {config.db_path}...")
     init_db(config.db_path)
     click.echo("✓ Database initialized successfully")
+
+
+@db.command()
+def migrate():
+    """Upgrade Blueprint database to the latest migration."""
+    config = get_config()
+    click.echo(f"Migrating database at {config.db_path}...")
+    migrate_db(config.db_path)
+    click.echo("✓ Database migrated to head")
+
+
+@db.command()
+def current():
+    """Show the current database migration revision."""
+    config = get_config()
+    revision = current_db_revision(config.db_path)
+    if revision is None:
+        click.echo("No migration revision found")
+        return
+    click.echo(revision)
 
 
 # ============================================================================

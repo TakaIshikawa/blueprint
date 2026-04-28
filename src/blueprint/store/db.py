@@ -7,6 +7,9 @@ import uuid
 
 from datetime import datetime
 
+from alembic import command
+from alembic.config import Config
+from alembic.migration import MigrationContext
 from sqlalchemy import create_engine
 from sqlalchemy import func
 from sqlalchemy import inspect as inspect_db
@@ -33,13 +36,31 @@ from blueprint.store.models import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ALEMBIC_INI_PATH = PROJECT_ROOT / "alembic.ini"
+MIGRATIONS_PATH = PROJECT_ROOT / "migrations"
+
+
+def _database_url(db_path: str) -> str:
+    """Build a SQLite URL for a configured database path."""
+    return f"sqlite:///{Path(db_path).expanduser()}"
+
+
+def _alembic_config(db_path: str) -> Config:
+    """Create an Alembic config bound to the configured database path."""
+    config = Config(str(ALEMBIC_INI_PATH))
+    config.set_main_option("script_location", str(MIGRATIONS_PATH))
+    config.set_main_option("sqlalchemy.url", _database_url(db_path))
+    return config
+
+
 class Store:
     """Blueprint database store."""
 
     def __init__(self, db_path: str):
         """Initialize store with database path."""
         self.db_path = db_path
-        self.engine = create_engine(f"sqlite:///{db_path}")
+        self.engine = create_engine(_database_url(db_path))
         self.SessionLocal = sessionmaker(bind=self.engine)
         if Path(self.db_path).exists():
             self._migrate_schema()
@@ -50,6 +71,7 @@ class Store:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         Base.metadata.create_all(self.engine)
         self._migrate_schema()
+        stamp_db_head(self.db_path)
 
     def _migrate_schema(self):
         """Apply lightweight migrations for existing SQLite databases."""
@@ -963,3 +985,35 @@ def init_db(db_path: str):
     store = Store(db_path)
     store.init_db()
     return store
+
+
+def migrate_db(db_path: str, revision: str = "head") -> None:
+    """Upgrade a database to the requested Alembic revision."""
+    Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    engine = create_engine(_database_url(db_path))
+
+    with engine.connect() as connection:
+        inspector = inspect_db(connection)
+        tables = set(inspector.get_table_names())
+        current_revision = MigrationContext.configure(connection).get_current_revision()
+
+    if tables - {"alembic_version"} and current_revision is None:
+        store = Store(db_path)
+        Base.metadata.create_all(store.engine)
+        store._migrate_schema()
+        stamp_db_head(db_path)
+        return
+
+    command.upgrade(_alembic_config(db_path), revision)
+
+
+def current_db_revision(db_path: str) -> str | None:
+    """Return the current Alembic revision for a database, if versioned."""
+    engine = create_engine(_database_url(db_path))
+    with engine.connect() as connection:
+        return MigrationContext.configure(connection).get_current_revision()
+
+
+def stamp_db_head(db_path: str) -> None:
+    """Mark the database as being at the latest migration revision."""
+    command.stamp(_alembic_config(db_path), "head")
