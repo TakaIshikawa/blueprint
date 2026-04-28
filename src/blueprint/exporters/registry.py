@@ -30,6 +30,7 @@ from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.mermaid import MermaidExporter
+from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
@@ -83,6 +84,7 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("coverage-matrix", CoverageMatrixExporter, "markdown", ".md"),
     ExporterRegistration("critical-path-report", CriticalPathReportExporter, "markdown", ".md"),
     ExporterRegistration("mermaid", MermaidExporter, "mermaid", ".mmd"),
+    ExporterRegistration("milestone-burndown-csv", MilestoneBurndownCsvExporter, "csv", ".csv"),
     ExporterRegistration("milestone-summary", MilestoneSummaryExporter, "markdown", ".md"),
     ExporterRegistration("notion-markdown", NotionMarkdownExporter, "markdown", ".md"),
     ExporterRegistration("plan-snapshot", PlanSnapshotExporter, "json", ".json"),

@@ -17,12 +17,21 @@ import yaml
 
 from blueprint.audits.critical_path import analyze_critical_path
 from blueprint.audits.plan_audit import PlanAuditIssue, audit_execution_plan
+from blueprint.exporters.asana_csv import AsanaCsvExporter
+from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
+from blueprint.exporters.calendar import CalendarExporter
+from blueprint.exporters.clickup_csv import ClickUpCsvExporter
+from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.file_impact_map import UNASSIGNED_SECTION
+from blueprint.exporters.github_projects_csv import GitHubProjectsCsvExporter
+from blueprint.exporters.jira_csv import JiraCsvExporter
+from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.plan_snapshot import SCHEMA_VERSION as PLAN_SNAPSHOT_SCHEMA_VERSION
 from blueprint.exporters.registry import create_exporter, resolve_target_name
 from blueprint.exporters.risk_register import risk_identifier
 from blueprint.exporters.sarif_audit import SARIF_VERSION
 from blueprint.exporters.sarif_audit import TOOL_NAME as SARIF_TOOL_NAME
+from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
 
 
@@ -2328,6 +2337,70 @@ def _validate_csv_tasks(
                     path=str(artifact_path),
                 )
             )
+
+    return findings
+
+
+def _validate_milestone_burndown_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the milestone burndown CSV export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="milestone_burndown_csv.invalid_structure",
+                message=f"Milestone burndown CSV could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    expected_columns = MilestoneBurndownCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        missing = [column for column in expected_columns if column not in fieldnames]
+        extra = [column for column in fieldnames if column not in expected_columns]
+        if missing:
+            findings.append(
+                ValidationFinding(
+                    code="milestone_burndown_csv.missing_column",
+                    message=(
+                        "Milestone burndown CSV is missing required columns: "
+                        f"{', '.join(missing)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        if extra:
+            findings.append(
+                ValidationFinding(
+                    code="milestone_burndown_csv.unexpected_column",
+                    message=(
+                        "Milestone burndown CSV has unexpected columns: "
+                        f"{', '.join(extra)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    expected_rows = MilestoneBurndownCsvExporter().rows(
+        execution_plan,
+        implementation_brief,
+    )
+    if rows != expected_rows:
+        findings.append(
+            ValidationFinding(
+                code="milestone_burndown_csv.row_mismatch",
+                message="Milestone burndown CSV rows do not match execution plan aggregates.",
+                path=str(artifact_path),
+            )
+        )
 
     return findings
 
@@ -4781,6 +4854,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "github-actions": _validate_github_actions,
     "junit-tasks": _validate_junit_tasks,
     "mermaid": _validate_mermaid,
+    "milestone-burndown-csv": _validate_milestone_burndown_csv,
     "milestone-summary": _validate_milestone_summary,
     "notion-markdown": _validate_notion_markdown,
     "plan-snapshot": _validate_plan_snapshot,

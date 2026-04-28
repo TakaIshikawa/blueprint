@@ -28,6 +28,7 @@ from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
+from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
@@ -89,6 +90,7 @@ __all__ = [
     "KanbanExporter",
     "LinearExporter",
     "MermaidExporter",
+    "MilestoneBurndownCsvExporter",
     "MilestoneSummaryExporter",
     "NotionMarkdownExporter",
     "PlanSnapshotExporter",

@@ -897,6 +897,18 @@ def csv_backlog(
             source_id=source_brief["source_id"],
         )
 
+        if existing_source_brief and not replace:
+            counts["skipped"] += 1
+            results.append(
+                {
+                    "status": "skipped",
+                    "source_brief_id": existing_source_brief["id"],
+                    "source_id": source_brief["source_id"],
+                    "title": source_brief["title"],
+                }
+            )
+            continue
+
         try:
             source_brief_id, created = store.upsert_source_brief(
                 source_brief,
