@@ -127,6 +127,7 @@ from blueprint.generators.brief_generator import (
     BriefGenerator,
     generate_implementation_brief_id,
 )
+from blueprint.generators.brief_reviser import BriefReviser
 from blueprint.generators.brief_scaffold import scaffold_implementation_brief
 from blueprint.generators.heuristic_plan_generator import HeuristicPlanGenerator
 from blueprint.generators.plan_generator import PlanGenerator
@@ -1886,6 +1887,83 @@ def create(source_id: str, model: str, dry_run_prompt: bool):
             click.echo(f"✗ Generation failed: {e}", err=True)
     except Exception as e:
         click.echo(f"✗ Generation failed: {e}", err=True)
+        import traceback
+
+        click.echo(traceback.format_exc(), err=True)
+
+
+@brief.command(name="revise")
+@click.argument("brief_id")
+@click.option(
+    "--feedback",
+    required=True,
+    help="Human feedback text, or a path to a file containing feedback",
+)
+@click.option(
+    "--model",
+    type=click.Choice(["opus", "sonnet"]),
+    default="opus",
+    help="LLM model to use",
+)
+def brief_revise(brief_id: str, feedback: str, model: str):
+    """Generate a revised implementation brief from an existing brief and feedback."""
+    config = get_config()
+    store = Store(config.db_path)
+
+    try:
+        existing_brief = store.get_implementation_brief(brief_id)
+        if not existing_brief:
+            click.echo(f"✗ Implementation brief not found: {brief_id}", err=True)
+            return
+
+        source_brief = store.get_source_brief(existing_brief["source_brief_id"])
+        if not source_brief:
+            click.echo(
+                f"✗ Source brief not found: {existing_brief['source_brief_id']}",
+                err=True,
+            )
+            return
+
+        feedback_text, feedback_source = _read_feedback(feedback)
+        if not feedback_text.strip():
+            raise click.UsageError("--feedback cannot be empty")
+
+        llm_client = _create_llm_provider(config)
+        generator = BriefReviser(llm_client)
+
+        click.echo(f"Revising implementation brief {brief_id} using {model}...")
+        click.echo(f"Source: {source_brief['title']}")
+        click.echo(
+            f"\n⏳ Calling {_resolve_llm_model(model)}... " f"(this may take 10-30 seconds)\n"
+        )
+
+        revised_brief = generator.generate(
+            existing_brief=existing_brief,
+            source_brief=source_brief,
+            feedback=feedback_text,
+            model=_resolve_llm_model(model),
+        )
+
+        revised_brief_id = store.insert_implementation_brief(revised_brief)
+
+        click.echo(f"✓ Generated revised implementation brief {revised_brief_id}")
+        click.echo(f"  Revised from: {brief_id}")
+        click.echo(f"  Source Brief: {revised_brief['source_brief_id']}")
+        click.echo(f"  Feedback: {feedback_source}")
+        click.echo(f"  Title: {revised_brief['title']}")
+        click.echo(f"  Tokens used: {revised_brief['generation_tokens']}")
+        click.echo(f"\nView full brief: blueprint brief inspect {revised_brief_id}")
+
+    except ValueError as e:
+        if "ANTHROPIC_API_KEY" in str(e):
+            click.echo(f"✗ Error: {e}", err=True)
+            click.echo("  Set ANTHROPIC_API_KEY environment variable", err=True)
+        else:
+            click.echo(f"✗ Revision failed: {e}", err=True)
+    except click.ClickException:
+        raise
+    except Exception as e:
+        click.echo(f"✗ Revision failed: {e}", err=True)
         import traceback
 
         click.echo(traceback.format_exc(), err=True)
