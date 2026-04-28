@@ -17,53 +17,13 @@ import yaml
 
 from blueprint.audits.critical_path import analyze_critical_path
 from blueprint.audits.plan_audit import PlanAuditIssue, audit_execution_plan
-from blueprint.exporters.adr import ADRExporter
-from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
-from blueprint.exporters.asana_csv import AsanaCsvExporter
-from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
-from blueprint.exporters.calendar import CalendarExporter
-from blueprint.exporters.checklist import ChecklistExporter
-from blueprint.exporters.clickup_csv import ClickUpCsvExporter
-from blueprint.exporters.claude_code import ClaudeCodeExporter
-from blueprint.exporters.codex import CodexExporter
-from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
-from blueprint.exporters.critical_path_report import CriticalPathReportExporter
-from blueprint.exporters.csv_tasks import CsvTasksExporter
-from blueprint.exporters.file_impact_map import FileImpactMapExporter, UNASSIGNED_SECTION
-from blueprint.exporters.gantt import GanttExporter
-from blueprint.exporters.github_actions import GitHubActionsExporter
-from blueprint.exporters.github_issues import GitHubIssuesExporter
-from blueprint.exporters.github_projects_csv import GitHubProjectsCsvExporter
-from blueprint.exporters.gitlab_issues import GitLabIssuesExporter
-from blueprint.exporters.html_report import HtmlReportExporter
-from blueprint.exporters.jira_csv import JiraCsvExporter
-from blueprint.exporters.junit_tasks import JUnitTasksExporter
-from blueprint.exporters.kanban import KanbanExporter
-from blueprint.exporters.linear import LinearExporter
-from blueprint.exporters.mermaid import MermaidExporter
-from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
-from blueprint.exporters.notion_markdown import NotionMarkdownExporter
-from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
+from blueprint.exporters.file_impact_map import UNASSIGNED_SECTION
 from blueprint.exporters.plan_snapshot import SCHEMA_VERSION as PLAN_SNAPSHOT_SCHEMA_VERSION
-from blueprint.exporters.raci_matrix import RaciMatrixExporter
-from blueprint.exporters.release_notes import ReleaseNotesExporter
-from blueprint.exporters.relay import RelayExporter
-from blueprint.exporters.relay_yaml import RelayYamlExporter
-from blueprint.exporters.risk_register import RiskRegisterExporter
+from blueprint.exporters.registry import create_exporter, resolve_target_name
 from blueprint.exporters.risk_register import risk_identifier
 from blueprint.exporters.sarif_audit import SARIF_VERSION
 from blueprint.exporters.sarif_audit import TOOL_NAME as SARIF_TOOL_NAME
-from blueprint.exporters.sarif_audit import SarifAuditExporter
-from blueprint.exporters.slack_digest import SlackDigestExporter
-from blueprint.exporters.smoothie import SmoothieExporter
-from blueprint.exporters.status_report import StatusReportExporter
-from blueprint.exporters.task_bundle import TaskBundleExporter
-from blueprint.exporters.taskfile import TaskfileExporter
-from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
-from blueprint.exporters.trello_json import TrelloJsonExporter
-from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
-from blueprint.exporters.wave_schedule import WaveScheduleExporter
 
 
 ValidationCheck = Callable[[Path, dict[str, Any], dict[str, Any]], list["ValidationFinding"]]
@@ -115,6 +75,7 @@ def validate_export(
     target: str,
 ) -> ExportValidationResult:
     """Render a target export to a temporary artifact and validate it."""
+    target = resolve_target_name(target)
     exporter = create_exporter(target)
     with tempfile.TemporaryDirectory() as temp_dir:
         artifact_path = _render_temporary_artifact(
@@ -140,6 +101,10 @@ def validate_rendered_export(
     implementation_brief: dict[str, Any],
 ) -> list[ValidationFinding]:
     """Validate a previously rendered export artifact."""
+    try:
+        target = resolve_target_name(target)
+    except ValueError:
+        pass
     validator = _VALIDATORS.get(target)
     if validator is None:
         return [
@@ -149,58 +114,6 @@ def validate_rendered_export(
             )
         ]
     return validator(artifact_path, execution_plan, implementation_brief)
-
-
-def create_exporter(target: str):
-    """Create the exporter used by validation and export commands."""
-    exporters = {
-        "adr": ADRExporter(),
-        "agent-prompt-pack": AgentPromptPackExporter(),
-        "relay": RelayExporter(),
-        "relay-yaml": RelayYamlExporter(),
-        "smoothie": SmoothieExporter(),
-        "codex": CodexExporter(),
-        "claude-code": ClaudeCodeExporter(),
-        "asana-csv": AsanaCsvExporter(),
-        "azure-devops-csv": AzureDevOpsCsvExporter(),
-        "calendar": CalendarExporter(),
-        "checklist": ChecklistExporter(),
-        "clickup-csv": ClickUpCsvExporter(),
-        "coverage-matrix": CoverageMatrixExporter(),
-        "critical-path-report": CriticalPathReportExporter(),
-        "mermaid": MermaidExporter(),
-        "milestone-summary": MilestoneSummaryExporter(),
-        "notion-markdown": NotionMarkdownExporter(),
-        "plan-snapshot": PlanSnapshotExporter(),
-        "raci-matrix": RaciMatrixExporter(),
-        "csv-tasks": CsvTasksExporter(),
-        "file-impact-map": FileImpactMapExporter(),
-        "gantt": GanttExporter(),
-        "github-actions": GitHubActionsExporter(),
-        "github-issues": GitHubIssuesExporter(),
-        "github-projects-csv": GitHubProjectsCsvExporter(),
-        "gitlab-issues": GitLabIssuesExporter(),
-        "html-report": HtmlReportExporter(),
-        "jira-csv": JiraCsvExporter(),
-        "linear": LinearExporter(),
-        "junit-tasks": JUnitTasksExporter(),
-        "kanban": KanbanExporter(),
-        "release-notes": ReleaseNotesExporter(),
-        "risk-register": RiskRegisterExporter(),
-        "sarif-audit": SarifAuditExporter(),
-        "slack-digest": SlackDigestExporter(),
-        "status-report": StatusReportExporter(),
-        "task-bundle": TaskBundleExporter(),
-        "taskfile": TaskfileExporter(),
-        "task-queue-jsonl": TaskQueueJsonlExporter(),
-        "trello-json": TrelloJsonExporter(),
-        "vscode-tasks": VSCodeTasksExporter(),
-        "wave-schedule": WaveScheduleExporter(),
-    }
-    exporter = exporters.get(target)
-    if exporter is None:
-        raise ValueError(f"Unknown export target: {target}")
-    return exporter
 
 
 def _render_temporary_artifact(
@@ -598,8 +511,7 @@ class _HtmlReportParser(HTMLParser):
             self.sections.add(section)
 
         if tag == "table" and (
-            attrs_dict.get("id") == "task-table"
-            or attrs_dict.get("data-task-table") == "true"
+            attrs_dict.get("id") == "task-table" or attrs_dict.get("data-task-table") == "true"
         ):
             self._in_task_table = True
             self._table_depth = 1
@@ -1338,9 +1250,7 @@ def _validate_notion_markdown(
         )
 
     rows_by_task_id = {
-        _unwrapped_code_cell(row.get("task_id", "")): row
-        for row in rows
-        if row.get("task_id")
+        _unwrapped_code_cell(row.get("task_id", "")): row for row in rows if row.get("task_id")
     }
     for task in execution_plan.get("tasks", []):
         row = rows_by_task_id.get(task["id"])
@@ -1369,15 +1279,11 @@ def _validate_notion_markdown(
                     )
                 )
         for criterion in task.get("acceptance_criteria") or []:
-            if _notion_markdown_table_cell(criterion) not in row.get(
-                "acceptance_criteria", ""
-            ):
+            if _notion_markdown_table_cell(criterion) not in row.get("acceptance_criteria", ""):
                 findings.append(
                     ValidationFinding(
                         code="notion_markdown.missing_acceptance_criterion",
-                        message=(
-                            f"Notion task row {task['id']} is missing acceptance criterion."
-                        ),
+                        message=(f"Notion task row {task['id']} is missing acceptance criterion."),
                         path=str(artifact_path),
                     )
                 )
@@ -1453,9 +1359,7 @@ def _validate_risk_register(
                 )
             )
 
-        valid_references = [
-            task_id for task_id in referenced_task_ids if task_id in valid_task_ids
-        ]
+        valid_references = [task_id for task_id in referenced_task_ids if task_id in valid_task_ids]
         if not valid_references:
             findings.append(
                 ValidationFinding(
@@ -1470,8 +1374,7 @@ def _validate_risk_register(
                 ValidationFinding(
                     code="risk_register.invalid_status",
                     message=(
-                        f"Risk register row {risk_id} has invalid status "
-                        f"{row.get('status')!r}."
+                        f"Risk register row {risk_id} has invalid status " f"{row.get('status')!r}."
                     ),
                     path=str(artifact_path),
                 )
@@ -3727,9 +3630,7 @@ def _validate_taskfile(
             continue
 
         unknown_deps = [
-            dep
-            for dep in rendered_deps
-            if not isinstance(dep, str) or dep not in rendered_tasks
+            dep for dep in rendered_deps if not isinstance(dep, str) or dep not in rendered_tasks
         ]
         if unknown_deps:
             findings.append(

@@ -103,10 +103,15 @@ from blueprint.exporters.archive import ArchiveExporter
 from blueprint.exporters.brief_review import BriefReviewPacketExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.export_diff import compare_rendered_exports
-from blueprint.exporters.export_validation import create_exporter, validate_export
+from blueprint.exporters.export_validation import validate_export
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.plan_graph import PlanGraphExporter, UnknownDependencyError
+from blueprint.exporters.registry import (
+    create_exporter,
+    resolve_target_name,
+    supported_target_names,
+)
 from blueprint.exporters.source_brief import SourceBriefExporter
 from blueprint.exporters.source_manifest import SourceManifestExporter
 from blueprint.exporters.status_timeline import StatusTimelineExporter
@@ -157,51 +162,8 @@ BRIEF_STATUS_CHOICES = (
 )
 PLAN_STATUS_CHOICES = ("draft", "ready", "queued", "in_progress", "completed", "failed")
 TASK_STATUS_CHOICES = ("pending", "in_progress", "completed", "blocked", "skipped")
-EXPORT_TARGET_CHOICES = (
-    "adr",
-    "agent-prompt-pack",
-    "relay",
-    "relay-yaml",
-    "smoothie",
-    "codex",
-    "claude-code",
-    "asana-csv",
-    "azure-devops-csv",
-    "calendar",
-    "checklist",
-    "clickup-csv",
-    "coverage-matrix",
-    "critical-path-report",
-    "mermaid",
-    "milestone-summary",
-    "notion-markdown",
-    "plan-snapshot",
-    "csv-tasks",
-    "file-impact-map",
-    "gantt",
-    "github-actions",
-    "github-issues",
-    "github-projects-csv",
-    "gitlab-issues",
-    "html-report",
-    "jira-csv",
-    "linear",
-    "junit-tasks",
-    "kanban",
-    "raci-matrix",
-    "release-notes",
-    "risk-register",
-    "sarif-audit",
-    "slack-digest",
-    "status-report",
-    "task-bundle",
-    "taskfile",
-    "task-queue-jsonl",
-    "trello-json",
-    "vscode-tasks",
-    "wave-schedule",
-    "all",
-)
+EXPORT_SINGLE_TARGET_CHOICES = supported_target_names(include_aliases=True)
+EXPORT_TARGET_CHOICES = (*EXPORT_SINGLE_TARGET_CHOICES, "all")
 
 
 @click.group()
@@ -4399,11 +4361,11 @@ def archive(plan_id: str, output: Path):
 
 @export.command()
 @click.argument("plan_id")
-@click.argument("target_arg", required=False)
+@click.argument("target_arg", required=False, type=click.Choice(EXPORT_TARGET_CHOICES))
 @click.option(
     "--target",
     required=False,
-    type=str,
+    type=click.Choice(EXPORT_TARGET_CHOICES),
     help="Target execution engine",
 )
 @click.option(
@@ -4418,11 +4380,11 @@ def run(plan_id: str, target_arg: str | None, target: str | None, require_cohere
 
 @export.command(name="render")
 @click.argument("plan_id")
-@click.argument("target_arg", required=False)
+@click.argument("target_arg", required=False, type=click.Choice(EXPORT_TARGET_CHOICES))
 @click.option(
     "--target",
     required=False,
-    type=str,
+    type=click.Choice(EXPORT_TARGET_CHOICES),
     help="Target execution engine",
 )
 @click.option(
@@ -4476,11 +4438,7 @@ def _run_export_command(
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # Export to target(s)
-        targets = (
-            [choice for choice in EXPORT_TARGET_CHOICES if choice != "all"]
-            if target == "all"
-            else [target]
-        )
+        targets = list(supported_target_names()) if target == "all" else [target]
 
         for target_name in targets:
             click.echo(f"\nExporting to {target_name}...")
@@ -4536,11 +4494,11 @@ def _run_export_command(
 
 @export.command()
 @click.argument("plan_id")
-@click.argument("target_arg", required=False)
+@click.argument("target_arg", required=False, type=click.Choice(EXPORT_TARGET_CHOICES))
 @click.option(
     "--target",
     required=False,
-    type=str,
+    type=click.Choice(EXPORT_TARGET_CHOICES),
     help="Target execution engine",
 )
 @click.option(
@@ -4588,11 +4546,7 @@ def preview(
             require_coherence=require_coherence,
         )
 
-        targets = (
-            [choice for choice in EXPORT_TARGET_CHOICES if choice != "all"]
-            if target == "all"
-            else [target]
-        )
+        targets = list(supported_target_names()) if target == "all" else [target]
 
         preview_sections = []
         for target_name in targets:
@@ -4630,54 +4584,13 @@ def preview(
 @click.option(
     "--target",
     required=True,
-    type=click.Choice(
-        [
-            "adr",
-            "agent-prompt-pack",
-            "relay",
-            "smoothie",
-            "codex",
-            "claude-code",
-            "asana-csv",
-            "azure-devops-csv",
-            "calendar",
-            "checklist",
-            "clickup-csv",
-            "coverage-matrix",
-            "critical-path-report",
-            "mermaid",
-            "milestone-summary",
-            "notion-markdown",
-            "plan-snapshot",
-            "csv-tasks",
-            "file-impact-map",
-            "gantt",
-            "github-actions",
-            "github-issues",
-            "github-projects-csv",
-            "gitlab-issues",
-            "html-report",
-            "jira-csv",
-            "linear",
-            "junit-tasks",
-            "kanban",
-            "raci-matrix",
-            "release-notes",
-            "risk-register",
-            "sarif-audit",
-            "status-report",
-            "task-bundle",
-            "taskfile",
-            "trello-json",
-            "vscode-tasks",
-            "wave-schedule",
-        ]
-    ),
+    type=click.Choice(EXPORT_SINGLE_TARGET_CHOICES),
     help="Target execution engine",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output diff results as JSON")
 def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output: bool):
     """Compare two rendered exports for the same target engine."""
+    target = resolve_target_name(target)
     config = get_config()
     store = Store(config.db_path)
 
@@ -4707,53 +4620,11 @@ def export_diff(left_plan_id: str, right_plan_id: str, target: str, json_output:
 
 @export.command()
 @click.argument("plan_id")
-@click.argument("target_arg", required=False)
+@click.argument("target_arg", required=False, type=click.Choice(EXPORT_SINGLE_TARGET_CHOICES))
 @click.option(
     "--target",
     required=False,
-    type=click.Choice(
-        [
-            "adr",
-            "agent-prompt-pack",
-            "relay",
-            "smoothie",
-            "codex",
-            "claude-code",
-            "asana-csv",
-            "azure-devops-csv",
-            "calendar",
-            "checklist",
-            "clickup-csv",
-            "coverage-matrix",
-            "critical-path-report",
-            "mermaid",
-            "milestone-summary",
-            "notion-markdown",
-            "plan-snapshot",
-            "csv-tasks",
-            "file-impact-map",
-            "gantt",
-            "github-actions",
-            "github-issues",
-            "github-projects-csv",
-            "gitlab-issues",
-            "html-report",
-            "jira-csv",
-            "linear",
-            "junit-tasks",
-            "kanban",
-            "raci-matrix",
-            "release-notes",
-            "risk-register",
-            "sarif-audit",
-            "status-report",
-            "task-bundle",
-            "taskfile",
-            "trello-json",
-            "vscode-tasks",
-            "wave-schedule",
-        ]
-    ),
+    type=click.Choice(EXPORT_SINGLE_TARGET_CHOICES),
     help="Target execution engine",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output validation results as JSON")
@@ -4840,14 +4711,26 @@ def _get_exporter(target: str):
 
 def _resolve_export_target(target_arg: str | None, target_option: str | None) -> str:
     """Resolve export target from positional or option syntax."""
-    if target_arg and target_option and target_arg != target_option:
+    canonical_arg = _canonical_export_target(target_arg)
+    canonical_option = _canonical_export_target(target_option)
+    if canonical_arg and canonical_option and canonical_arg != canonical_option:
         raise click.ClickException(
             f"Conflicting export targets: positional '{target_arg}' and --target '{target_option}'"
         )
-    resolved = target_option or target_arg
+    resolved = canonical_option or canonical_arg
     if not resolved:
         raise click.ClickException("Missing export target. Provide TARGET or --target TARGET.")
     return resolved
+
+
+def _canonical_export_target(target: str | None) -> str | None:
+    """Return the canonical registry name for a target or alias."""
+    if target is None or target == "all":
+        return target
+    try:
+        return resolve_target_name(target)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _maybe_require_brief_plan_coherence(
