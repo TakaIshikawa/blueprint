@@ -51,7 +51,10 @@ class BriefGenerator:
             system=self._get_system_prompt(),
         )
 
-        brief_data = parse_json_response(response["content"])
+        brief_data = parse_json_response(
+            response["content"],
+            context="implementation brief generation",
+        )
 
         # Build implementation brief dict
         implementation_brief = {

@@ -17,7 +17,7 @@ class LLMJsonParseError(ValueError):
         message: str,
         *,
         original_error: Exception | None,
-        debug_file: str,
+        debug_file: str | None,
     ) -> None:
         self.original_error = original_error
         self.debug_file = debug_file
@@ -32,7 +32,12 @@ class JsonCandidate:
     content: str
 
 
-def parse_json_response(content: str) -> dict[str, Any]:
+def parse_json_response(
+    content: str,
+    *,
+    context: str = "LLM response",
+    write_debug_file: bool = True,
+) -> dict[str, Any]:
     """
     Parse JSON from an LLM response using common response extraction strategies.
 
@@ -40,31 +45,35 @@ def parse_json_response(content: str) -> dict[str, Any]:
     and JSON objects surrounded by commentary. It does not mutate malformed JSON.
     """
     last_error: json.JSONDecodeError | None = None
+    last_stage = "no candidates"
 
     for candidate in build_json_candidates(content):
         try:
             parsed = json.loads(candidate.content)
         except json.JSONDecodeError as exc:
             last_error = exc
+            last_stage = candidate.stage
             continue
 
         if not isinstance(parsed, dict):
-            debug_file = write_debug_response(content)
+            debug_file = _maybe_write_debug_response(content, write_debug_file)
             raise LLMJsonParseError(
-                "Failed to parse LLM response as a JSON object.\n"
+                f"Failed to parse LLM response for {context} as a JSON object.\n"
                 f"Last stage: {candidate.stage}\n"
                 f"Last error: parsed JSON was {type(parsed).__name__}\n"
-                f"Response saved to: {debug_file}",
+                f"{_debug_file_message(debug_file)}",
                 original_error=None,
                 debug_file=debug_file,
             )
         return parsed
 
-    debug_file = write_debug_response(content)
+    debug_file = _maybe_write_debug_response(content, write_debug_file)
     message = (
-        "Failed to parse LLM response as JSON after trying multiple strategies.\n"
+        f"Failed to parse LLM response for {context} as JSON after trying "
+        "multiple strategies.\n"
+        f"Last stage: {last_stage}\n"
         f"Last error: {last_error}\n"
-        f"Response saved to: {debug_file}"
+        f"{_debug_file_message(debug_file)}"
     )
     raise LLMJsonParseError(
         message,
@@ -105,6 +114,20 @@ def write_debug_response(content: str) -> str:
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as handle:
         handle.write(content)
         return handle.name
+
+
+def _maybe_write_debug_response(content: str, enabled: bool) -> str | None:
+    """Persist debug content when requested."""
+    if not enabled:
+        return None
+    return write_debug_response(content)
+
+
+def _debug_file_message(debug_file: str | None) -> str:
+    """Format the debug-file portion of an error message."""
+    if debug_file is None:
+        return "Response debug file was not written."
+    return f"Response saved to: {debug_file}"
 
 
 def _extract_json_fenced_blocks(content: str) -> list[str]:

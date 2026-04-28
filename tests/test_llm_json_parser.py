@@ -51,11 +51,30 @@ def test_parse_json_response_failure_includes_debug_file_and_original_error():
     content = "This is not JSON."
 
     with pytest.raises(LLMJsonParseError) as exc_info:
-        parse_json_response(content)
+        parse_json_response(content, context="brief generation")
 
     error = exc_info.value
     assert isinstance(error.original_error, json.JSONDecodeError)
+    assert "brief generation" in str(error)
+    assert "Last stage:" in str(error)
     assert "Last error:" in str(error)
     assert "Response saved to:" in str(error)
     assert error.debug_file
     assert Path(error.debug_file).read_text() == content
+
+
+def test_parse_json_response_can_skip_debug_file_writing():
+    content = "This is not JSON."
+
+    with pytest.raises(LLMJsonParseError) as exc_info:
+        parse_json_response(
+            content,
+            context="plan generation",
+            write_debug_file=False,
+        )
+
+    error = exc_info.value
+    assert isinstance(error.original_error, json.JSONDecodeError)
+    assert "plan generation" in str(error)
+    assert "Response debug file was not written." in str(error)
+    assert error.debug_file is None
