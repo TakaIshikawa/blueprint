@@ -34,6 +34,7 @@ from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.notion_markdown import NotionMarkdownExporter
+from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.relay import RelayExporter
@@ -90,6 +91,7 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("milestone-burndown-csv", MilestoneBurndownCsvExporter, "csv", ".csv"),
     ExporterRegistration("milestone-summary", MilestoneSummaryExporter, "markdown", ".md"),
     ExporterRegistration("notion-markdown", NotionMarkdownExporter, "markdown", ".md"),
+    ExporterRegistration("openproject-csv", OpenProjectCsvExporter, "csv", ".csv"),
     ExporterRegistration("plan-snapshot", PlanSnapshotExporter, "json", ".json"),
     ExporterRegistration("csv-tasks", CsvTasksExporter, "csv", ".csv"),
     ExporterRegistration("file-impact-map", FileImpactMapExporter, "markdown", ".md"),

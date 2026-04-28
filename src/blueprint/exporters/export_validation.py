@@ -26,6 +26,7 @@ from blueprint.exporters.file_impact_map import UNASSIGNED_SECTION
 from blueprint.exporters.github_projects_csv import GitHubProjectsCsvExporter
 from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
+from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.plan_snapshot import SCHEMA_VERSION as PLAN_SNAPSHOT_SCHEMA_VERSION
 from blueprint.exporters.registry import create_exporter, resolve_target_name
 from blueprint.exporters.risk_register import risk_identifier
@@ -2892,6 +2893,137 @@ def _validate_teamwork_csv(
     return findings
 
 
+def _validate_openproject_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the OpenProject CSV work package export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f, strict=True)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="openproject_csv.invalid_structure",
+                message=f"OpenProject CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    expected_columns = OpenProjectCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        missing = [column for column in expected_columns if column not in fieldnames]
+        extra = [column for column in fieldnames if column not in expected_columns]
+        if missing:
+            findings.append(
+                ValidationFinding(
+                    code="openproject_csv.missing_column",
+                    message=(
+                        "OpenProject CSV export is missing required columns: "
+                        f"{', '.join(missing)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        if extra:
+            findings.append(
+                ValidationFinding(
+                    code="openproject_csv.unexpected_column",
+                    message=(
+                        "OpenProject CSV export has unexpected columns: "
+                        f"{', '.join(extra)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        if not missing and not extra:
+            findings.append(
+                ValidationFinding(
+                    code="openproject_csv.header_mismatch",
+                    message="OpenProject CSV columns are present but not in the expected order.",
+                    path=str(artifact_path),
+                )
+            )
+
+    tasks = execution_plan.get("tasks", [])
+    expected_task_ids = [task["id"] for task in tasks]
+    row_task_ids = [row.get("Blueprint task ID", "") for row in rows]
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="openproject_csv.row_count_mismatch",
+                message="OpenProject CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    missing_task_ids = [task_id for task_id in expected_task_ids if task_id not in row_task_ids]
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="openproject_csv.missing_tasks",
+                message=f"OpenProject CSV is missing task rows: {', '.join(missing_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    duplicate_task_ids = [
+        task_id for task_id, count in Counter(row_task_ids).items() if task_id and count > 1
+    ]
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="openproject_csv.duplicate_task_id",
+                message=(
+                    "OpenProject CSV contains duplicate task IDs: "
+                    f"{', '.join(duplicate_task_ids)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    expected_statuses = set(OpenProjectCsvExporter.STATUS_MAP.values())
+    expected_priorities = {"Immediate", "High", "Normal", "Low"}
+    for index, row in enumerate(rows, 1):
+        for column in ["Subject", "Description", "Type", "Status", "Priority", "Blueprint task ID"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="openproject_csv.row_missing_required_value",
+                        message=f"OpenProject CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+        if row.get("Status") and row["Status"] not in expected_statuses:
+            findings.append(
+                ValidationFinding(
+                    code="openproject_csv.unknown_status",
+                    message=(
+                        f"OpenProject CSV row {index} has unknown status "
+                        f"'{row['Status']}'."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        if row.get("Priority") and row["Priority"] not in expected_priorities:
+            findings.append(
+                ValidationFinding(
+                    code="openproject_csv.unknown_priority",
+                    message=(
+                        f"OpenProject CSV row {index} has unknown priority "
+                        f"'{row['Priority']}'."
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+
+    return findings
+
+
 def _validate_github_projects_csv(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -5037,6 +5169,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "milestone-burndown-csv": _validate_milestone_burndown_csv,
     "milestone-summary": _validate_milestone_summary,
     "notion-markdown": _validate_notion_markdown,
+    "openproject-csv": _validate_openproject_csv,
     "plan-snapshot": _validate_plan_snapshot,
     "raci-matrix": _validate_raci_matrix,
     "vscode-tasks": _validate_vscode_tasks,
