@@ -12,6 +12,7 @@ from blueprint.generators.json_repair import (
 )
 from blueprint.generators.plan_generator import _format_repository_rules_section
 from blueprint.generators.plan_generator import _format_repository_context_section
+from blueprint.generators.plan_generator import _repository_validation_metadata
 from blueprint.llm.provider import LLMProvider
 
 
@@ -110,6 +111,7 @@ class StagedPlanGenerator:
             "generation_model": model or self.llm.default_model,
             "generation_tokens": total_tokens,
             "generation_prompt": "Staged generation (milestones + tasks separately)",
+            "metadata": _repository_validation_metadata(repo_context),
         }
 
         validate_execution_plan_payload(execution_plan, all_tasks)
@@ -324,6 +326,8 @@ Requirements:
 - estimated_hours should be a realistic decimal effort estimate
 - risk_level should reflect implementation uncertainty and blast radius
 - test_command should be a focused validation command when known, otherwise null
+- Prefer test_command values from the Repository Context recommended validation commands
+  when they fit the task
 - Files should match the project (check product surface)
 - Acceptance criteria should be measurable
 - No dependencies needed (we'll add those later)

@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from blueprint.exporters.base import TargetExporter
+from blueprint.validation_commands import flatten_validation_commands
 
 
 class RelayExporter(TargetExporter):
@@ -91,6 +92,7 @@ class RelayExporter(TargetExporter):
             "validation": {
                 "test_strategy": execution_plan.get("test_strategy", ""),
                 "commands": self._extract_validation_commands(
+                    execution_plan,
                     implementation_brief,
                     execution_plan.get("tasks", []),
                 ),
@@ -114,14 +116,21 @@ class RelayExporter(TargetExporter):
 
     def _extract_validation_commands(
         self,
+        plan: dict[str, Any],
         brief: dict[str, Any],
         tasks: list[dict[str, Any]] | None = None,
     ) -> list[str]:
         """Extract validation commands from brief."""
         commands = []
 
+        commands.extend(
+            flatten_validation_commands(
+                (plan.get("metadata") or {}).get("validation_commands")
+            )
+        )
+
         # Common commands based on project type
-        if brief.get("product_surface"):
+        if not commands and brief.get("product_surface"):
             surface = brief["product_surface"].lower()
             if "python" in surface or "library" in surface:
                 commands.extend(["pytest", "black --check src/", "ruff check src/"])

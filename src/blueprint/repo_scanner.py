@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
+from blueprint.validation_commands import (
+    format_validation_commands,
+    recommend_validation_commands,
+)
 
 IGNORED_DIRS = {
     ".cache",
@@ -73,6 +78,18 @@ def scan_repository(repo_path: str | Path) -> dict[str, Any]:
     package_managers = _detect_package_managers(root, root_file_names)
     important_files = _important_files(root, root_entries, all_files)
     test_commands = _detect_test_commands(root, root_file_names, package_managers)
+    node_scripts = _detect_node_scripts(root)
+    python_tools = _detect_python_tools(root)
+    validation_commands = recommend_validation_commands(
+        {
+            "languages": languages,
+            "package_managers": package_managers,
+            "important_files": important_files,
+            "test_commands": test_commands,
+            "node_scripts": node_scripts,
+            "python_tools": python_tools,
+        }
+    )
 
     return {
         "path": str(root),
@@ -80,6 +97,9 @@ def scan_repository(repo_path: str | Path) -> dict[str, Any]:
         "package_managers": package_managers,
         "important_files": important_files,
         "test_commands": test_commands,
+        "validation_commands": validation_commands,
+        "node_scripts": node_scripts,
+        "python_tools": python_tools,
         "top_level_structure": top_level,
         "ignored_directories": sorted(name for name in IGNORED_DIRS if name in root_dir_names),
     }
@@ -93,6 +113,8 @@ def format_repository_context(summary: dict[str, Any]) -> str:
         f"Package managers: {_format_list(summary.get('package_managers'))}",
         f"Important files: {_format_list(summary.get('important_files'))}",
         f"Likely test commands: {_format_list(summary.get('test_commands'))}",
+        "Recommended validation commands:",
+        format_validation_commands(summary.get("validation_commands")),
         f"Ignored directories: {_format_list(summary.get('ignored_directories'))}",
         "Top-level structure:",
     ]
@@ -245,6 +267,43 @@ def _read_package_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _detect_node_scripts(root: Path) -> list[str]:
+    package_json = _read_package_json(root / "package.json")
+    scripts = package_json.get("scripts", {}) if isinstance(package_json, dict) else {}
+    if not isinstance(scripts, dict):
+        return []
+    return sorted(key for key in scripts if isinstance(key, str))
+
+
+def _detect_python_tools(root: Path) -> list[str]:
+    pyproject = _read_pyproject(root / "pyproject.toml")
+    tools = pyproject.get("tool", {}) if isinstance(pyproject, dict) else {}
+    detected: set[str] = set()
+
+    if isinstance(tools, dict):
+        for tool_name in ("black", "ruff", "pytest", "mypy", "pyright"):
+            if tool_name in tools:
+                detected.add(tool_name)
+        poetry = tools.get("poetry")
+        if isinstance(poetry, dict):
+            dependencies_text = json.dumps(poetry).lower()
+            for tool_name in ("black", "ruff", "pytest", "mypy", "pyright"):
+                if f'"{tool_name}"' in dependencies_text:
+                    detected.add(tool_name)
+
+    return sorted(detected)
+
+
+def _read_pyproject(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 

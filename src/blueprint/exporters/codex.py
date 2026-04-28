@@ -5,6 +5,7 @@ from typing import Any
 from blueprint.config import Config
 from blueprint.exporters.base import TargetExporter
 from blueprint.exporters.templates import MarkdownTemplateRenderer
+from blueprint.validation_commands import format_validation_commands
 
 
 class CodexExporter(TargetExporter):
@@ -135,6 +136,10 @@ class CodexExporter(TargetExporter):
         sections.append("\n## Quality Requirements")
 
         sections.append(f"\n**Test Strategy:** {plan.get('test_strategy', 'TBD')}")
+        validation_commands = (plan.get("metadata") or {}).get("validation_commands")
+        if validation_commands:
+            sections.append("\n**Recommended Validation Commands:**")
+            sections.append(format_validation_commands(validation_commands))
 
         sections.append("\n**Acceptance:**")
         for item in brief.get("definition_of_done", []):
