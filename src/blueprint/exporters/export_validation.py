@@ -681,6 +681,94 @@ def _validate_slack_digest(
     return findings
 
 
+def _validate_discord_digest(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Discord digest Markdown export."""
+    content = artifact_path.read_text()
+    findings = _validate_markdown(
+        artifact_path,
+        execution_plan,
+        implementation_brief,
+        required_headings=[
+            f"# Discord Digest: {execution_plan['id']}",
+            "## Priority",
+            "## Blocked",
+            "## Upcoming",
+            "## Ready Next",
+        ],
+        required_snippets=[
+            f"**Plan:** `{execution_plan['id']}`",
+            f"**Brief:** `{implementation_brief['id']}`",
+            "**Status:**",
+            "**Summary:**",
+        ],
+    )
+
+    for status in ["pending", "in_progress", "completed", "blocked", "skipped"]:
+        if f"**{status}:**" not in content:
+            findings.append(
+                ValidationFinding(
+                    code="discord_digest.missing_status_count",
+                    message=f"Discord digest is missing status count for {status}.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for task in execution_plan.get("tasks", []):
+        task_id = task["id"]
+        metadata = task.get("metadata") or {}
+        if task.get("status") == "blocked":
+            if f"`{task_id}`" not in content:
+                findings.append(
+                    ValidationFinding(
+                        code="discord_digest.missing_blocked_task",
+                        message=f"Discord digest is missing blocked task {task_id}.",
+                        path=str(artifact_path),
+                    )
+                )
+            blocked_reason = _blocked_reason(task)
+            if blocked_reason and not _content_includes_compacted_text(
+                content,
+                blocked_reason,
+                max_length=140,
+            ):
+                findings.append(
+                    ValidationFinding(
+                        code="discord_digest.missing_blocked_reason",
+                        message=f"Discord digest is missing blocked reason for {task_id}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+        priority_values = [
+            task.get("priority"),
+            task.get("risk_level"),
+            metadata.get("priority"),
+            metadata.get("discord_priority"),
+            metadata.get("risk_level"),
+        ]
+        is_priority = any(
+            str(value).strip().lower()
+            in {"p0", "p1", "urgent", "critical", "high", "highest", "blocker"}
+            for value in priority_values
+            if value
+        )
+        if is_priority and task.get("status") not in {"completed", "skipped"}:
+            if f"`{task_id}`" not in content:
+                findings.append(
+                    ValidationFinding(
+                        code="discord_digest.missing_priority_task",
+                        message=f"Discord digest is missing priority task {task_id}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_milestone_summary(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -4821,6 +4909,16 @@ def _blocked_reason(task: dict[str, Any]) -> str | None:
     return task.get("blocked_reason") or metadata.get("blocked_reason")
 
 
+def _content_includes_compacted_text(content: str, value: str, *, max_length: int) -> bool:
+    """Return whether content includes either full or deterministically compacted text."""
+    text = " ".join(str(value).split())
+    if text in content:
+        return True
+    if len(text) <= max_length:
+        return False
+    return text[: max_length - 3].rstrip() + "..." in content
+
+
 def _expected_trello_list_names(execution_plan: dict[str, Any]) -> list[str]:
     """Return the list names expected from the Trello JSON exporter."""
     tasks = execution_plan.get("tasks", [])
@@ -4923,6 +5021,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "release-notes": _validate_release_notes,
     "risk-register": _validate_risk_register,
     "sarif-audit": _validate_sarif_audit,
+    "discord-digest": _validate_discord_digest,
     "slack-digest": _validate_slack_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,

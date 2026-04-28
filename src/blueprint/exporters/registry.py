@@ -18,6 +18,7 @@ from blueprint.exporters.codex import CodexExporter
 from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
+from blueprint.exporters.discord_digest import DiscordDigestExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.gantt import GanttExporter
 from blueprint.exporters.github_actions import GitHubActionsExporter
@@ -84,6 +85,7 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("clickup-csv", ClickUpCsvExporter, "csv", ".csv"),
     ExporterRegistration("coverage-matrix", CoverageMatrixExporter, "markdown", ".md"),
     ExporterRegistration("critical-path-report", CriticalPathReportExporter, "markdown", ".md"),
+    ExporterRegistration("discord-digest", DiscordDigestExporter, "markdown", ".md"),
     ExporterRegistration("mermaid", MermaidExporter, "mermaid", ".mmd"),
     ExporterRegistration("milestone-burndown-csv", MilestoneBurndownCsvExporter, "csv", ".csv"),
     ExporterRegistration("milestone-summary", MilestoneSummaryExporter, "markdown", ".md"),
