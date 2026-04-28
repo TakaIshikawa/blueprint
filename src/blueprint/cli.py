@@ -123,6 +123,7 @@ from blueprint.generators.brief_generator import (
     generate_implementation_brief_id,
 )
 from blueprint.generators.brief_scaffold import scaffold_implementation_brief
+from blueprint.generators.heuristic_plan_generator import HeuristicPlanGenerator
 from blueprint.generators.plan_generator import PlanGenerator
 from blueprint.generators.plan_generator_staged import StagedPlanGenerator
 from blueprint.generators.plan_reviser import PlanReviser
@@ -2089,7 +2090,12 @@ def plan_estimate(brief_id: str, model: str, json_output: bool):
     is_flag=True,
     help="Print the LLM prompt without calling the model or creating a plan",
 )
-def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool):
+@click.option(
+    "--no-llm",
+    is_flag=True,
+    help="Use deterministic heuristic planning without API credentials",
+)
+def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm: bool):
     """Generate execution plan from implementation brief."""
     config = get_config()
     store = Store(config.db_path)
@@ -2102,12 +2108,39 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool):
             return
 
         if dry_run_prompt:
+            if no_llm:
+                execution_plan, tasks = HeuristicPlanGenerator().generate(implementation_brief)
+                click.echo(
+                    json.dumps(
+                        {**execution_plan, "tasks": tasks},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return
             prompt = (
                 StagedPlanGenerator.build_prompt(implementation_brief)
                 if staged
                 else PlanGenerator.build_prompt(implementation_brief)
             )
             click.echo(prompt, nl=False)
+            return
+
+        if no_llm:
+            generator = HeuristicPlanGenerator()
+            click.echo(f"Generating heuristic execution plan for {brief_id}...")
+            click.echo(f"Brief: {implementation_brief['title']}")
+            execution_plan, tasks = generator.generate(implementation_brief=implementation_brief)
+
+            plan_id = store.insert_execution_plan(execution_plan, tasks)
+
+            click.echo(f"✓ Generated execution plan {plan_id}")
+            click.echo(f"  Milestones: {len(execution_plan['milestones'])}")
+            click.echo(f"  Tasks: {len(tasks)}")
+            click.echo(f"  Target: {execution_plan['target_engine'] or 'mixed'}")
+            click.echo(f"  Project Type: {execution_plan['project_type']}")
+            click.echo(f"  Generation model: {execution_plan['generation_model']}")
+            click.echo(f"\nView full plan: blueprint plan inspect {plan_id}")
             return
 
         # Initialize LLM client and generator
