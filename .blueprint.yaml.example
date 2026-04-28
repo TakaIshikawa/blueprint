@@ -22,6 +22,8 @@ sources:
     db_path: ~/Project/experiments/max/max.db
   graph:
     path: ~/Project/experiments/graph
+  obsidian:
+    path: ~/Documents/Obsidian
   github:
     token_env: GITHUB_TOKEN
     default_owner:

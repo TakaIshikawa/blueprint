@@ -22,7 +22,13 @@ def generate_source_brief_id() -> str:
     return f"sb-{uuid.uuid4().hex[:12]}"
 
 
-def parse_obsidian_note(markdown_text: str, *, file_path: str) -> dict[str, Any]:
+def parse_obsidian_note(
+    markdown_text: str,
+    *,
+    file_path: str,
+    source_id: str | None = None,
+    vault_path: str | None = None,
+) -> dict[str, Any]:
     """Normalize an Obsidian markdown note into a SourceBrief dictionary."""
     resolved_path = str(Path(file_path).expanduser().resolve())
     frontmatter_data, body = _parse_frontmatter(markdown_text)
@@ -38,9 +44,13 @@ def parse_obsidian_note(markdown_text: str, *, file_path: str) -> dict[str, Any]
         or title
     )
     domain = _pick_string(frontmatter_data, ("domain", "product_domain", "area"))
-    tags = _pick_list(frontmatter_data, ("tags", "tag"))
+    frontmatter_tags = _pick_list(frontmatter_data, ("tags", "tag"))
+    body_tags = _extract_tags(body)
+    tags = _dedupe_strings([*frontmatter_tags, *body_tags])
     aliases = _pick_list(frontmatter_data, ("aliases", "alias"))
     source_links = _source_links(frontmatter_data, resolved_path)
+    wikilinks = _extract_wikilinks(body)
+    relative_path = source_id or resolved_path
 
     now = datetime.utcnow()
     return {
@@ -50,13 +60,18 @@ def parse_obsidian_note(markdown_text: str, *, file_path: str) -> dict[str, Any]
         "summary": summary,
         "source_project": "obsidian",
         "source_entity_type": "markdown_note",
-        "source_id": resolved_path,
+        "source_id": relative_path,
         "source_payload": _json_safe(
             {
                 "file_path": resolved_path,
+                "relative_path": relative_path,
+                "vault_path": vault_path,
                 "frontmatter": frontmatter_data,
                 "tags": tags,
+                "frontmatter_tags": frontmatter_tags,
+                "body_tags": body_tags,
                 "aliases": aliases,
+                "wikilinks": wikilinks,
                 "body": body,
                 "raw_markdown": markdown_text,
                 "normalized": {
@@ -76,9 +91,13 @@ def parse_obsidian_note(markdown_text: str, *, file_path: str) -> dict[str, Any]
 class ObsidianImporter(SourceImporter):
     """Import Obsidian markdown notes from a vault."""
 
+    def __init__(self, vault_path: str | None = None):
+        """Initialize an importer scoped to an optional Obsidian vault path."""
+        self.vault_path = Path(vault_path).expanduser().resolve() if vault_path else None
+
     def import_from_source(self, source_id: str) -> dict[str, Any]:
         """Read and normalize an Obsidian markdown note."""
-        path = Path(source_id).expanduser()
+        path, relative_path = self._resolve_note_path(source_id)
         try:
             markdown_text = path.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
@@ -86,7 +105,12 @@ class ObsidianImporter(SourceImporter):
         except OSError as exc:
             raise ImportError(f"Could not read Obsidian note: {path}") from exc
 
-        return parse_obsidian_note(markdown_text, file_path=str(path))
+        return parse_obsidian_note(
+            markdown_text,
+            file_path=str(path),
+            source_id=relative_path,
+            vault_path=str(self.vault_path) if self.vault_path else None,
+        )
 
     def validate_source(self, source_id: str) -> bool:
         """Check whether an Obsidian note exists and can be parsed."""
@@ -96,9 +120,126 @@ class ObsidianImporter(SourceImporter):
             return False
         return True
 
-    def list_available(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Obsidian vault notes are file-based and do not support discovery."""
-        return []
+    def list_available(self, limit: int = 50, query: str | None = None) -> list[dict[str, Any]]:
+        """List notes in the configured vault, optionally matching filename or content."""
+        if self.vault_path is None:
+            raise ImportError("Obsidian vault path is not configured")
+        if not self.vault_path.exists() or not self.vault_path.is_dir():
+            raise ImportError(f"Obsidian vault path not found: {self.vault_path}")
+
+        normalized_query = query.casefold() if query else None
+        matches: list[dict[str, Any]] = []
+        for path in sorted(
+            self.vault_path.rglob("*.md"),
+            key=lambda item: item.relative_to(self.vault_path).as_posix(),
+        ):
+            if not path.is_file():
+                continue
+
+            relative_path = path.relative_to(self.vault_path).as_posix()
+            title = _title_from_path(relative_path)
+            matched_in: list[str] = []
+            text: str | None = None
+
+            if normalized_query:
+                if normalized_query in relative_path.casefold():
+                    matched_in.append("path")
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                if normalized_query in text.casefold():
+                    matched_in.append("content")
+                if not matched_in:
+                    continue
+
+            if text is None:
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    text = ""
+            frontmatter_data, body = _parse_frontmatter(text)
+            title = _pick_string(frontmatter_data, ("title", "name")) or _first_h1(body) or title
+            summary = (
+                _pick_string(frontmatter_data, ("summary", "description", "overview"))
+                or _first_non_heading_paragraph(body)
+                or title
+            )
+
+            matches.append(
+                {
+                    "id": relative_path,
+                    "title": title,
+                    "summary": summary,
+                    "path": str(path),
+                    "relative_path": relative_path,
+                    "matched_in": matched_in,
+                }
+            )
+            if len(matches) >= limit:
+                break
+        return matches
+
+    def _resolve_note_path(self, source_id: str) -> tuple[Path, str]:
+        """Resolve a note path and reject configured-vault traversal."""
+        raw_path = Path(source_id).expanduser()
+        if self.vault_path is None:
+            path = raw_path.resolve()
+            return path, str(path)
+
+        candidate = raw_path if raw_path.is_absolute() else self.vault_path / raw_path
+        resolved = candidate.resolve()
+        try:
+            relative_path = resolved.relative_to(self.vault_path).as_posix()
+        except ValueError as exc:
+            raise ImportError(
+                f"Obsidian note path is outside configured vault: {source_id}"
+            ) from exc
+        return resolved, relative_path
+
+
+def _extract_wikilinks(body: str) -> list[dict[str, Any]]:
+    """Extract Obsidian wikilinks from markdown body text."""
+    wikilinks: list[dict[str, Any]] = []
+    for match in re.finditer(r"(!?)\[\[([^\]]+)\]\]", body):
+        raw_target = match.group(2).strip()
+        target_part, alias = raw_target.split("|", 1) if "|" in raw_target else (raw_target, None)
+        target, heading = target_part.split("#", 1) if "#" in target_part else (target_part, None)
+        wikilinks.append(
+            {
+                "raw": match.group(0),
+                "target": target.strip(),
+                "heading": heading.strip() if heading else None,
+                "alias": alias.strip() if alias else None,
+                "embed": bool(match.group(1)),
+            }
+        )
+    return wikilinks
+
+
+def _extract_tags(body: str) -> list[str]:
+    """Extract inline Obsidian tags from markdown body text."""
+    tags: list[str] = []
+    for line in body.splitlines():
+        if re.match(r"^\s{0,3}#{1,6}\s+", line):
+            continue
+        for match in re.finditer(r"(?<![\w/])#([A-Za-z0-9][A-Za-z0-9_/-]*)", line):
+            tag = match.group(1).rstrip("/").strip()
+            if tag:
+                tags.append(tag)
+    return _dedupe_strings(tags)
+
+
+def _dedupe_strings(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _parse_frontmatter(markdown_text: str) -> tuple[dict[str, Any], str]:
@@ -177,9 +318,7 @@ def _first_non_heading_paragraph(body: str) -> str | None:
             continue
         if all(re.match(r"^\s{0,3}#{1,6}\s+", line) for line in lines):
             continue
-        non_heading_lines = [
-            line for line in lines if not re.match(r"^\s{0,3}#{1,6}\s+", line)
-        ]
+        non_heading_lines = [line for line in lines if not re.match(r"^\s{0,3}#{1,6}\s+", line)]
         if non_heading_lines:
             return " ".join(non_heading_lines).strip()
     return None

@@ -671,9 +671,7 @@ def max(brief_id: str, replace: bool, skip_existing: bool):
                 f"from Max design brief {brief_id}"
             )
         else:
-            click.echo(
-                f"✓ Updated source brief {source_brief_id} from Max design brief {brief_id}"
-            )
+            click.echo(f"✓ Updated source brief {source_brief_id} from Max design brief {brief_id}")
         click.echo(f"  Title: {source_brief['title']}")
         click.echo(f"  Domain: {source_brief['domain']}")
 
@@ -959,6 +957,102 @@ def source_jsonl(
 
     if result.errors and not continue_on_error:
         raise click.ClickException("Source JSONL import failed validation")
+
+
+@import_cmd.command(name="list-obsidian")
+@click.option("--query", default=None, help="Search note filenames and content")
+@click.option("--limit", default=20, show_default=True, help="Maximum number of notes to show")
+@click.option("--json", "as_json", is_flag=True, help="Output note summaries as JSON")
+def list_obsidian(query: str | None, limit: int, as_json: bool):
+    """List Obsidian notes from the configured vault."""
+    config = get_config()
+    if not config.obsidian_vault_path:
+        raise click.ClickException(
+            "Obsidian vault path is not configured. Set sources.obsidian.path "
+            "or BLUEPRINT_OBSIDIAN_PATH."
+        )
+    importer = ObsidianImporter(config.obsidian_vault_path)
+
+    try:
+        notes = importer.list_available(limit=limit, query=query)
+    except Exception as e:
+        raise click.ClickException(f"Failed to list Obsidian notes: {e}") from e
+
+    if as_json:
+        click.echo(json.dumps(notes, indent=2, sort_keys=True))
+        return
+
+    if not notes:
+        click.echo("No Obsidian notes found")
+        return
+
+    click.echo(f"\n{'Path':<42} {'Title':<40} {'Matched':<16}")
+    click.echo("-" * 100)
+    for note in notes:
+        matched = ", ".join(note.get("matched_in") or []) or "N/A"
+        click.echo(
+            f"{note['relative_path'][:40]:<42} " f"{note['title'][:38]:<40} " f"{matched[:14]:<16}"
+        )
+
+    click.echo(f"\nTotal: {len(notes)} notes")
+    click.echo("\nTo import: blueprint import obsidian <relative-note-path>")
+
+
+@import_cmd.command(name="obsidian")
+@click.argument("relative_note_path")
+@click.option(
+    "--replace", is_flag=True, help="Replace an existing imported brief from the same source"
+)
+@click.option(
+    "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
+)
+def obsidian(relative_note_path: str, replace: bool, skip_existing: bool):
+    """Import an Obsidian markdown note by vault-relative path."""
+    if replace and skip_existing:
+        raise click.UsageError("--replace and --skip-existing cannot be used together")
+
+    config = get_config()
+    if not config.obsidian_vault_path:
+        raise click.ClickException(
+            "Obsidian vault path is not configured. Set sources.obsidian.path "
+            "or BLUEPRINT_OBSIDIAN_PATH."
+        )
+    store = Store(config.db_path)
+    importer = ObsidianImporter(config.obsidian_vault_path)
+
+    click.echo(f"Importing Obsidian note: {relative_note_path}")
+    try:
+        source_brief = importer.import_from_source(relative_note_path)
+        source_brief_id, created = store.upsert_source_brief(
+            source_brief,
+            replace=replace,
+            skip_existing=skip_existing,
+        )
+
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        elif replace:
+            click.echo(
+                f"✓ Replaced source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        elif skip_existing:
+            click.echo(
+                f"✓ Skipped existing source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        else:
+            click.echo(
+                f"✓ Updated source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        click.echo(f"  Title: {source_brief['title']}")
+        click.echo(f"  Domain: {source_brief['domain'] or 'N/A'}")
+    except Exception as e:
+        raise click.ClickException(f"Import failed: {e}") from e
 
 
 @import_cmd.command()

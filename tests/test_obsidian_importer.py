@@ -23,8 +23,18 @@ def test_parse_obsidian_note_preserves_frontmatter_body_path_tags_aliases_and_li
     payload = source_brief["source_payload"]
     assert payload["file_path"].endswith("vault/product/import.md")
     assert payload["frontmatter"]["title"] == "Obsidian Import Brief"
-    assert payload["tags"] == ["blueprint", "import"]
+    assert payload["tags"] == ["blueprint", "import", "product/discovery"]
+    assert payload["body_tags"] == ["product/discovery"]
     assert payload["aliases"] == ["Vault import", "Note import"]
+    assert payload["wikilinks"] == [
+        {
+            "raw": "[[Research/Customer interviews|customer interviews]]",
+            "target": "Research/Customer interviews",
+            "heading": None,
+            "alias": "customer interviews",
+            "embed": False,
+        }
+    ]
     assert payload["body"].startswith("# Heading That Should Not Override")
 
 
@@ -79,6 +89,78 @@ def test_cli_import_obsidian_note_reports_import_skip_and_replace(tmp_path, monk
     briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="obsidian")
     assert len(briefs) == 1
     assert briefs[0]["title"] == "Updated Obsidian Import Brief"
+
+
+def test_cli_import_obsidian_relative_note_uses_configured_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    note_path = vault / "product" / "import.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text(_obsidian_note())
+    _write_config(tmp_path, monkeypatch, vault_path=vault)
+    init_db(str(tmp_path / "blueprint.db"))
+
+    result = CliRunner().invoke(cli, ["import", "obsidian", "product/import.md"])
+
+    assert result.exit_code == 0, result.output
+    assert "Imported source brief" in result.output
+    assert "from Obsidian note product/import.md" in result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="obsidian")
+    assert len(briefs) == 1
+    assert briefs[0]["source_id"] == "product/import.md"
+    assert briefs[0]["source_payload"]["relative_path"] == "product/import.md"
+    assert briefs[0]["source_payload"]["vault_path"] == str(vault.resolve())
+
+
+def test_cli_import_obsidian_rejects_path_traversal_outside_configured_vault(
+    tmp_path,
+    monkeypatch,
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text(_obsidian_note())
+    _write_config(tmp_path, monkeypatch, vault_path=vault)
+    init_db(str(tmp_path / "blueprint.db"))
+
+    result = CliRunner().invoke(cli, ["import", "obsidian", "../outside.md"])
+
+    assert result.exit_code != 0
+    assert "outside configured vault" in result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="obsidian")
+    assert briefs == []
+
+
+def test_cli_list_obsidian_searches_filenames_and_content_without_indexing(
+    tmp_path,
+    monkeypatch,
+):
+    vault = tmp_path / "vault"
+    nested = vault / "nested"
+    nested.mkdir(parents=True)
+    (vault / "alpha.md").write_text(_obsidian_note(title="Alpha Note"))
+    (nested / "beta.md").write_text(_obsidian_note(title="Beta Note") + "\nUnique search text.")
+    (vault / "gamma.md").write_text(_obsidian_note(title="Gamma Note"))
+    _write_config(tmp_path, monkeypatch, vault_path=vault)
+    init_db(str(tmp_path / "blueprint.db"))
+
+    content_result = CliRunner().invoke(
+        cli,
+        ["import", "list-obsidian", "--query", "unique search", "--json"],
+    )
+    filename_result = CliRunner().invoke(
+        cli,
+        ["import", "list-obsidian", "--query", "alpha", "--json"],
+    )
+
+    assert content_result.exit_code == 0, content_result.output
+    content_payload = json.loads(content_result.output)
+    assert [note["relative_path"] for note in content_payload] == ["nested/beta.md"]
+    assert content_payload[0]["matched_in"] == ["content"]
+
+    assert filename_result.exit_code == 0, filename_result.output
+    filename_payload = json.loads(filename_result.output)
+    assert [note["relative_path"] for note in filename_payload] == ["alpha.md"]
+    assert "path" in filename_payload[0]["matched_in"]
 
 
 def test_import_obsidian_dir_imports_matching_notes_and_reports_counts(tmp_path, monkeypatch):
@@ -181,12 +263,15 @@ def test_obsidian_importer_duplicate_handling_reuses_or_replaces_existing_brief(
     assert briefs[0]["title"] == "Updated Note"
 
 
-def _write_config(tmp_path, monkeypatch):
+def _write_config(tmp_path, monkeypatch, vault_path=None):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".blueprint.yaml").write_text(
         f"""
 database:
   path: {tmp_path / "blueprint.db"}
+sources:
+  obsidian:
+    path: {vault_path or tmp_path / "vault"}
 exports:
   output_dir: {tmp_path}
 """
@@ -212,4 +297,6 @@ source_links:
 # Heading That Should Not Override
 
 This body text is preserved for downstream brief generation.
+
+See [[Research/Customer interviews|customer interviews]] for #product/discovery notes.
 """

@@ -103,6 +103,12 @@ class Config:
         """Apply supported environment variable overrides to config values."""
         self._set_env_override(config, "BLUEPRINT_DB_PATH", ("database", "path"))
         self._set_env_override(config, "BLUEPRINT_EXPORT_DIR", ("exports", "output_dir"))
+        if os.getenv("BLUEPRINT_OBSIDIAN_PATH") is not None:
+            self._set_env_override(
+                config,
+                "BLUEPRINT_OBSIDIAN_PATH",
+                ("sources", "obsidian", "path"),
+            )
 
         sources = config.get("sources")
         if not isinstance(sources, dict):
@@ -532,6 +538,11 @@ class Config:
     def max_db_path(self) -> str:
         """Get Max database path."""
         return self.get("sources.max.db_path")
+
+    @property
+    def obsidian_vault_path(self) -> str | None:
+        """Get Obsidian vault path."""
+        return self.get("sources.obsidian.path")
 
     @property
     def github_token_env(self) -> str:
