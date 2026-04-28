@@ -45,14 +45,11 @@ def parse_manual_brief_markdown(markdown_text: str, *, file_path: str) -> dict[s
     metadata, content = _parse_frontmatter(markdown_text)
     sections = _parse_sections(content)
 
-    title = (
-        _pick_string(
-            metadata,
-            ("title", "name"),
+    title = _pick_string(metadata, ("title", "name")) or _section_title(content)
+    if not title:
+        raise ValueError(
+            "Manual brief must include a non-empty frontmatter title or first-level heading"
         )
-        or _section_title(content)
-        or _title_from_path(resolved_path)
-    )
 
     summary = (
         _pick_string(
@@ -123,6 +120,8 @@ def parse_manual_brief_markdown(markdown_text: str, *, file_path: str) -> dict[s
         _section_text(sections, "interface"),
         _section_text(sections, "interfaces"),
     )
+    source_id = _pick_string(metadata, ("source_id", "source id", "id")) or resolved_path
+    source_links = _source_links(metadata, resolved_path)
 
     source_metadata = _json_safe(
         {
@@ -140,7 +139,7 @@ def parse_manual_brief_markdown(markdown_text: str, *, file_path: str) -> dict[s
         "summary": summary,
         "source_project": "manual",
         "source_entity_type": "markdown_brief",
-        "source_id": resolved_path,
+        "source_id": source_id,
         "source_payload": _json_safe(
             {
                 "file_path": resolved_path,
@@ -159,13 +158,13 @@ def parse_manual_brief_markdown(markdown_text: str, *, file_path: str) -> dict[s
                     "validation_plan": validation_plan,
                     "definition_of_done": definition_of_done,
                     "product_surface": product_surface,
+                    "source_id": source_id,
+                    "source_links": source_links,
                     "source_metadata": source_metadata,
                 },
             }
         ),
-        "source_links": {
-            "file_path": resolved_path,
-        },
+        "source_links": source_links,
         "created_at": now,
         "updated_at": now,
     }
@@ -246,10 +245,19 @@ def _parse_frontmatter_fallback(markdown_text: str) -> tuple[dict[str, Any], str
         if line.startswith(" ") or line.startswith("\t"):
             if current_key is not None:
                 value = metadata.get(current_key)
-                if isinstance(value, list):
-                    value.append(_parse_scalar(line.strip()))
+                stripped_item = line.strip()
+                nested_key, nested_value = _parse_mapping_item(stripped_item)
+                if nested_key and not stripped_item.startswith("- "):
+                    if not isinstance(value, dict):
+                        value = {}
+                        metadata[current_key] = value
+                    value[nested_key] = _parse_scalar(nested_value)
+                elif isinstance(value, list):
+                    value.append(_parse_scalar(stripped_item))
                 elif value is None:
-                    metadata[current_key] = [_parse_scalar(line.strip())]
+                    metadata[current_key] = [_parse_scalar(stripped_item)]
+                elif isinstance(value, dict) and nested_key:
+                    value[nested_key] = _parse_scalar(nested_value)
             continue
 
         if ":" not in line:
@@ -287,19 +295,12 @@ def _parse_sections(content: str) -> dict[str, str]:
 
 
 def _section_title(content: str) -> str | None:
-    """Return the first markdown heading if one exists."""
+    """Return the first level-one markdown heading if one exists."""
     for line in content.splitlines():
-        heading = _heading_text(line)
-        if heading:
-            return heading.strip()
+        match = re.match(r"^\s{0,3}#\s+(.*?)\s*$", line)
+        if match:
+            return match.group(1).strip()
     return None
-
-
-def _title_from_path(file_path: str) -> str:
-    """Build a human-readable title from a file name."""
-    stem = Path(file_path).stem
-    cleaned = re.sub(r"[_-]+", " ", stem).strip()
-    return cleaned.title() if cleaned else "Manual Brief"
 
 
 def _heading_text(line: str) -> str | None:
@@ -398,10 +399,7 @@ def _first_non_empty(*values: str | None) -> str | None:
 
 def _coerce_list(value: Any) -> list[str]:
     """Convert metadata values into a list of strings."""
-    if isinstance(value, list):
-        items = [str(item).strip() for item in value if str(item).strip()]
-        return items
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple, set)):
         items = [str(item).strip() for item in value if str(item).strip()]
         return items
     if isinstance(value, str):
@@ -409,6 +407,28 @@ def _coerce_list(value: Any) -> list[str]:
         if value:
             return [value]
     return []
+
+
+def _source_links(metadata: dict[str, Any], file_path: str) -> dict[str, Any]:
+    """Build source links from the file path and optional front matter."""
+    links: dict[str, Any] = {"file_path": file_path}
+
+    raw_source_links = metadata.get("source_links") or metadata.get("source links")
+    if isinstance(raw_source_links, dict):
+        links.update(_json_safe(raw_source_links))
+
+    raw_links = metadata.get("links")
+    if raw_links is not None:
+        coerced_links = _coerce_list(raw_links)
+        if coerced_links:
+            links["links"] = coerced_links
+
+    for key in ("source", "url", "uri", "link"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            links[key] = value.strip()
+
+    return links
 
 
 def _json_safe(value: Any) -> Any:
@@ -419,6 +439,8 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(item) for item in value]
     if isinstance(value, tuple):
         return [_json_safe(item) for item in value]
+    if isinstance(value, set):
+        return [_json_safe(item) for item in sorted(value, key=str)]
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Path):
@@ -429,7 +451,7 @@ def _json_safe(value: Any) -> Any:
 def _parse_yaml_value(value: str) -> Any:
     """Parse a small subset of YAML scalar/list values for front matter fallback."""
     if value == "":
-        return None
+        return []
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
         if not inner:
@@ -438,8 +460,18 @@ def _parse_yaml_value(value: str) -> Any:
     return _parse_scalar(value)
 
 
+def _parse_mapping_item(value: str) -> tuple[str | None, str]:
+    """Parse a small nested YAML mapping item."""
+    if ":" not in value:
+        return None, ""
+    key, raw_value = value.split(":", 1)
+    return key.strip(), raw_value.strip()
+
+
 def _parse_scalar(value: str) -> Any:
     """Parse a scalar YAML value conservatively."""
+    if value.startswith("- "):
+        value = value[2:].strip()
     if value.startswith('"') and value.endswith('"'):
         return value[1:-1]
     if value.startswith("'") and value.endswith("'"):

@@ -64,6 +64,39 @@ Manual briefs can omit front matter and still become source briefs.
     )
 
 
+def test_parse_manual_brief_markdown_frontmatter_overrides_identity_and_links():
+    source_brief = parse_manual_brief_markdown(
+        """---
+title: Frontmatter Title
+domain: support
+summary: Frontmatter summary wins.
+source_id: manual/customer-support
+source_links:
+  file_path: canonical/brief.md
+  spec: https://example.test/spec
+links:
+  - https://example.test/discovery
+---
+# Ignored Heading
+
+Ignored paragraph.
+""",
+        file_path="briefs/local.md",
+    )
+
+    assert source_brief["title"] == "Frontmatter Title"
+    assert source_brief["domain"] == "support"
+    assert source_brief["summary"] == "Frontmatter summary wins."
+    assert source_brief["source_id"] == "manual/customer-support"
+    assert source_brief["source_links"]["file_path"] == "canonical/brief.md"
+    assert source_brief["source_links"]["spec"] == "https://example.test/spec"
+    assert source_brief["source_links"]["links"] == ["https://example.test/discovery"]
+    assert source_brief["source_payload"]["frontmatter"]["source_id"] == "manual/customer-support"
+    assert source_brief["source_payload"]["normalized"]["source_links"] == source_brief[
+        "source_links"
+    ]
+
+
 def test_manual_importer_duplicate_handling_reuses_or_replaces_existing_brief(tmp_path):
     store = init_db(str(tmp_path / "blueprint.db"))
     brief_path = tmp_path / "manual.md"
@@ -112,6 +145,20 @@ def test_cli_import_manual_rejects_non_markdown_file_without_creating_rows(tmp_p
 
     assert result.exit_code != 0
     assert "Manual brief must be a markdown .md file" in result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
+    assert briefs == []
+
+
+def test_cli_import_manual_rejects_file_without_usable_title(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    init_db(str(tmp_path / "blueprint.db"))
+    brief_path = tmp_path / "manual.md"
+    brief_path.write_text("Manual briefs need an explicit title.\n")
+
+    result = CliRunner().invoke(cli, ["import", "manual", str(brief_path)])
+
+    assert result.exit_code != 0
+    assert "frontmatter title or first-level heading" in result.output
     briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
     assert briefs == []
 
