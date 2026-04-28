@@ -1,9 +1,9 @@
 """LLM-based implementation brief generator."""
 
-import json
 import uuid
 from typing import Any
 
+from blueprint.llm.json_parser import parse_json_response
 from blueprint.llm.provider import LLMProvider
 
 
@@ -51,64 +51,7 @@ class BriefGenerator:
             system=self._get_system_prompt(),
         )
 
-        # Parse JSON response with multiple fallback strategies
-        content = response["content"]
-        brief_data = None
-        parse_error = None
-
-        # Strategy 1: Direct JSON parse
-        try:
-            brief_data = json.loads(content)
-        except json.JSONDecodeError as e:
-            parse_error = e
-
-        # Strategy 2: Extract from markdown code blocks
-        if brief_data is None and "```json" in content:
-            try:
-                start = content.find("```json") + 7
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                brief_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 3: Extract from code blocks without language tag
-        if brief_data is None and "```" in content:
-            try:
-                start = content.find("```") + 3
-                end = content.find("```", start)
-                json_str = content[start:end].strip()
-                # Remove potential language tag
-                if json_str.startswith("json\n"):
-                    json_str = json_str[5:]
-                brief_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        # Strategy 4: Find JSON object boundaries
-        if brief_data is None:
-            try:
-                # Find first { and last }
-                start_idx = content.find("{")
-                end_idx = content.rfind("}")
-                if start_idx != -1 and end_idx != -1:
-                    json_str = content[start_idx:end_idx+1]
-                    brief_data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                parse_error = e
-
-        if brief_data is None:
-            # Save response to file for debugging
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
-                f.write(content)
-                debug_file = f.name
-            raise ValueError(
-                f"Failed to parse LLM response as JSON after trying multiple strategies.\n"
-                f"Last error: {parse_error}\n"
-                f"Response saved to: {debug_file}\n"
-                f"Please check the response and try again with a different model or regenerate."
-            )
+        brief_data = parse_json_response(response["content"])
 
         # Build implementation brief dict
         implementation_brief = {

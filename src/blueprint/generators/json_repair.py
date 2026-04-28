@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from blueprint.domain.models import ExecutionPlan
+from blueprint.llm.json_parser import build_json_candidates, write_debug_response
 
 
 class JsonRepairError(ValueError):
@@ -107,14 +106,6 @@ class PlanMetadataResponse(BaseModel):
     handoff_prompt: str | None = None
 
 
-@dataclass(frozen=True)
-class ParsedJsonCandidate:
-    """One candidate substring extracted from an LLM response."""
-
-    stage: str
-    content: str
-
-
 def parse_and_validate_llm_json(
     content: str,
     schema: type[BaseModel],
@@ -128,7 +119,7 @@ def parse_and_validate_llm_json(
     generators need to tolerate in normal operation, and it raises an actionable
     error when the response is still unrecoverable.
     """
-    candidates = _build_candidates(content)
+    candidates = build_json_candidates(content)
     last_error: Exception | None = None
     last_stage = "direct JSON parse"
     last_snippet = _truncate(content)
@@ -209,30 +200,6 @@ def register_task_aliases(
         task_id_map[alias] = task_id
 
 
-def _build_candidates(content: str) -> list[ParsedJsonCandidate]:
-    """Build JSON candidates from the raw response."""
-    candidates: list[ParsedJsonCandidate] = []
-    seen: set[str] = set()
-
-    def add_candidate(stage: str, candidate: str | None) -> None:
-        if candidate is None:
-            return
-        normalized = candidate.strip()
-        if not normalized or normalized in seen:
-            return
-        seen.add(normalized)
-        candidates.append(ParsedJsonCandidate(stage=stage, content=normalized))
-
-    add_candidate("raw response", content)
-
-    for index, block in enumerate(_extract_fenced_blocks(content), start=1):
-        add_candidate(f"fenced block {index}", block)
-
-    add_candidate("balanced object extraction", _extract_balanced_object(content))
-
-    return candidates
-
-
 def _repair_variants(candidate: str) -> list[tuple[str, str]]:
     """Produce a small set of safe repair attempts for one candidate."""
     variants: list[tuple[str, str]] = []
@@ -257,46 +224,6 @@ def _repair_variants(candidate: str) -> list[tuple[str, str]]:
         add_variant("removed trailing commas", comma_repaired_original)
 
     return variants
-
-
-def _extract_fenced_blocks(content: str) -> list[str]:
-    """Extract markdown fenced code blocks from a response."""
-    pattern = re.compile(r"```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```", re.MULTILINE)
-    return [match.group(1).strip() for match in pattern.finditer(content)]
-
-
-def _extract_balanced_object(content: str) -> str | None:
-    """Extract the first balanced JSON object from a larger response."""
-    start = content.find("{")
-    if start == -1:
-        return None
-
-    depth = 0
-    in_string = False
-    escape = False
-
-    for index in range(start, len(content)):
-        char = content[index]
-
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-            continue
-
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return content[start : index + 1].strip()
-
-    return None
 
 
 def _strip_language_hint(candidate: str) -> str:
@@ -324,6 +251,4 @@ def _truncate(text: str, limit: int = 500) -> str:
 
 def _write_debug_response(content: str) -> str:
     """Persist an unrecoverable response for later inspection."""
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as handle:
-        handle.write(content)
-        return handle.name
+    return write_debug_response(content)
