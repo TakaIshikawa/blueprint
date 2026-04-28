@@ -1603,7 +1603,12 @@ def brief_estimate(source_id: str, model: str, json_output: bool):
     default="opus",
     help="LLM model to use (opus=claude-opus-4-6, sonnet=claude-sonnet-4-5)",
 )
-def create(source_id: str, model: str):
+@click.option(
+    "--dry-run-prompt",
+    is_flag=True,
+    help="Print the LLM prompt without calling the model or creating a brief",
+)
+def create(source_id: str, model: str, dry_run_prompt: bool):
     """Generate implementation brief from source brief."""
     config = get_config()
     store = Store(config.db_path)
@@ -1613,6 +1618,10 @@ def create(source_id: str, model: str):
         source_brief = store.get_source_brief(source_id)
         if not source_brief:
             click.echo(f"✗ Source brief not found: {source_id}", err=True)
+            return
+
+        if dry_run_prompt:
+            click.echo(BriefGenerator.build_prompt(source_brief), nl=False)
             return
 
         # Initialize LLM client and generator
@@ -2075,7 +2084,12 @@ def plan_estimate(brief_id: str, model: str, json_output: bool):
     default=False,
     help="Use staged generation (fixes JSON parsing issues)",
 )
-def create(brief_id: str, model: str, staged: bool):
+@click.option(
+    "--dry-run-prompt",
+    is_flag=True,
+    help="Print the LLM prompt without calling the model or creating a plan",
+)
+def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool):
     """Generate execution plan from implementation brief."""
     config = get_config()
     store = Store(config.db_path)
@@ -2085,6 +2099,15 @@ def create(brief_id: str, model: str, staged: bool):
         implementation_brief = store.get_implementation_brief(brief_id)
         if not implementation_brief:
             click.echo(f"✗ Implementation brief not found: {brief_id}", err=True)
+            return
+
+        if dry_run_prompt:
+            prompt = (
+                StagedPlanGenerator.build_prompt(implementation_brief)
+                if staged
+                else PlanGenerator.build_prompt(implementation_brief)
+            )
+            click.echo(prompt, nl=False)
             return
 
         # Initialize LLM client and generator

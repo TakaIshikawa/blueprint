@@ -104,7 +104,30 @@ class StagedPlanGenerator:
         model: str | None,
     ) -> dict[str, Any]:
         """Generate milestones (Stage 1)."""
-        prompt = f"""# Implementation Brief: {brief['title']}
+        prompt = self.build_milestones_prompt(brief)
+
+        response = self.llm.generate(
+            prompt=prompt,
+            model=model,
+            temperature=1.0,
+            max_tokens=2000,
+        )
+
+        milestones_json = parse_and_validate_llm_json(
+            response["content"],
+            MilestoneOutlineResponse,
+            context="staged milestone generation",
+        )
+
+        return {
+            "milestones": milestones_json["milestones"],
+            "tokens_used": response["usage"]["total_tokens"],
+        }
+
+    @staticmethod
+    def build_milestones_prompt(brief: dict[str, Any]) -> str:
+        """Build the staged generation prompt for milestone outlining."""
+        return f"""# Implementation Brief: {brief['title']}
 
 ## Problem
 {brief['problem_statement']}
@@ -146,23 +169,14 @@ Requirements:
 
 Output ONLY the JSON, no additional text."""
 
-        response = self.llm.generate(
-            prompt=prompt,
-            model=model,
-            temperature=1.0,
-            max_tokens=2000,
-        )
+    @staticmethod
+    def build_prompt(brief: dict[str, Any]) -> str:
+        """Build the first LLM prompt used by staged plan generation."""
+        return StagedPlanGenerator.build_milestones_prompt(brief)
 
-        milestones_json = parse_and_validate_llm_json(
-            response["content"],
-            MilestoneOutlineResponse,
-            context="staged milestone generation",
-        )
-
-        return {
-            "milestones": milestones_json["milestones"],
-            "tokens_used": response["usage"]["total_tokens"],
-        }
+    def _build_prompt(self, brief: dict[str, Any]) -> str:
+        """Build the first LLM prompt used by staged plan generation."""
+        return self.build_prompt(brief)
 
     def _generate_milestone_tasks(
         self,
@@ -171,8 +185,52 @@ Output ONLY the JSON, no additional text."""
         model: str | None,
     ) -> dict[str, Any]:
         """Generate tasks for a specific milestone (Stage 2)."""
+        prompt = self.build_milestone_tasks_prompt(brief, milestone)
+
+        response = self.llm.generate(
+            prompt=prompt,
+            model=model,
+            temperature=1.0,
+            max_tokens=3000,
+        )
+
+        tasks_json = parse_and_validate_llm_json(
+            response["content"],
+            MilestoneTasksResponse,
+            context=f"staged task generation for {milestone['name']}",
+        )
+
+        # Add task metadata
+        tasks_with_metadata = []
+        for task_data in tasks_json["tasks"]:
+            task = {
+                "id": generate_task_id(),
+                "title": task_data["title"],
+                "description": task_data["description"],
+                "milestone": milestone["name"],
+                "owner_type": "agent",
+                "suggested_engine": task_data.get("suggested_engine", "claude_code"),
+                "depends_on": [],  # Dependencies added in Stage 3 if needed
+                "files_or_modules": task_data.get("files_or_modules", []),
+                "acceptance_criteria": task_data.get("acceptance_criteria", []),
+                "estimated_complexity": task_data.get("estimated_complexity", "medium"),
+                "status": "pending",
+            }
+            tasks_with_metadata.append(task)
+
+        return {
+            "tasks": tasks_with_metadata,
+            "tokens_used": response["usage"]["total_tokens"],
+        }
+
+    @staticmethod
+    def build_milestone_tasks_prompt(
+        brief: dict[str, Any],
+        milestone: dict[str, Any],
+    ) -> str:
+        """Build the staged generation prompt for one milestone's tasks."""
         architecture_notes = brief.get("architecture_notes") or "See brief"
-        prompt = f"""# Implementation Brief: {brief['title']}
+        return f"""# Implementation Brief: {brief['title']}
 
 ## This Milestone: {milestone['name']}
 {milestone['description']}
@@ -212,49 +270,36 @@ Requirements:
 
 Output ONLY the JSON, no additional text."""
 
-        response = self.llm.generate(
-            prompt=prompt,
-            model=model,
-            temperature=1.0,
-            max_tokens=3000,
-        )
-
-        tasks_json = parse_and_validate_llm_json(
-            response["content"],
-            MilestoneTasksResponse,
-            context=f"staged task generation for {milestone['name']}",
-        )
-
-        # Add task metadata
-        tasks_with_metadata = []
-        for task_data in tasks_json["tasks"]:
-            task = {
-                "id": generate_task_id(),
-                "title": task_data["title"],
-                "description": task_data["description"],
-                "milestone": milestone["name"],
-                "owner_type": "agent",
-                "suggested_engine": task_data.get("suggested_engine", "claude_code"),
-                "depends_on": [],  # Dependencies added in Stage 3 if needed
-                "files_or_modules": task_data.get("files_or_modules", []),
-                "acceptance_criteria": task_data.get("acceptance_criteria", []),
-                "estimated_complexity": task_data.get("estimated_complexity", "medium"),
-                "status": "pending",
-            }
-            tasks_with_metadata.append(task)
-
-        return {
-            "tasks": tasks_with_metadata,
-            "tokens_used": response["usage"]["total_tokens"],
-        }
-
     def _generate_plan_metadata(
         self,
         brief: dict[str, Any],
         model: str | None,
     ) -> dict[str, Any]:
         """Generate plan metadata (Stage 3)."""
-        prompt = f"""# Implementation Brief: {brief['title']}
+        prompt = self.build_plan_metadata_prompt(brief)
+
+        response = self.llm.generate(
+            prompt=prompt,
+            model=model,
+            temperature=1.0,
+            max_tokens=1000,
+        )
+
+        metadata = parse_and_validate_llm_json(
+            response["content"],
+            PlanMetadataResponse,
+            context="staged plan metadata generation",
+        )
+
+        return {
+            **metadata,
+            "tokens_used": response["usage"]["total_tokens"],
+        }
+
+    @staticmethod
+    def build_plan_metadata_prompt(brief: dict[str, Any]) -> str:
+        """Build the staged generation prompt for execution plan metadata."""
+        return f"""# Implementation Brief: {brief['title']}
 
 ## Product Surface
 {brief.get('product_surface', 'TBD')}
@@ -277,21 +322,3 @@ Output ONLY valid JSON matching this schema:
 }}
 
 Output ONLY the JSON, no additional text."""
-
-        response = self.llm.generate(
-            prompt=prompt,
-            model=model,
-            temperature=1.0,
-            max_tokens=1000,
-        )
-
-        metadata = parse_and_validate_llm_json(
-            response["content"],
-            PlanMetadataResponse,
-            context="staged plan metadata generation",
-        )
-
-        return {
-            **metadata,
-            "tokens_used": response["usage"]["total_tokens"],
-        }
