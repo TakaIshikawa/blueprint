@@ -937,7 +937,7 @@ def source_jsonl(
     "--skip-existing", is_flag=True, help="Skip import if the source brief already exists"
 )
 def manual(file_path: str, replace: bool, skip_existing: bool):
-    """Import a manual design brief from markdown file."""
+    """Import a manual design brief from markdown, JSON, or YAML."""
     if replace and skip_existing:
         raise click.UsageError("--replace and --skip-existing cannot be used together")
 

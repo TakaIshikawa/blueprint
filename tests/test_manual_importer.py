@@ -146,7 +146,7 @@ def test_cli_import_manual_rejects_non_markdown_file_without_creating_rows(tmp_p
     result = CliRunner().invoke(cli, ["import", "manual", str(brief_path)])
 
     assert result.exit_code != 0
-    assert "Manual brief must be a markdown .md file" in result.output
+    assert "Manual brief must be a .md, .json, .yaml, or .yml file" in result.output
     briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
     assert briefs == []
 

@@ -6,8 +6,11 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+import json
 import re
 import uuid
+
+import yaml
 
 try:
     import frontmatter
@@ -170,26 +173,140 @@ def parse_manual_brief_markdown(markdown_text: str, *, file_path: str) -> dict[s
     }
 
 
+def parse_manual_brief_structured(document: Any, *, file_path: str) -> dict[str, Any]:
+    """Normalize a structured JSON/YAML brief into a SourceBrief dictionary."""
+    if not isinstance(document, dict):
+        raise ValueError("Structured manual brief must be an object")
+
+    resolved_path = str(Path(file_path).expanduser().resolve())
+    parsed_document = _json_safe(document)
+    if not isinstance(parsed_document, dict):
+        raise ValueError("Structured manual brief must be a JSON-serializable object")
+
+    title = _pick_string(parsed_document, ("title", "name"))
+    summary = _pick_string(
+        parsed_document,
+        ("summary", "problem_statement", "problem statement", "problem", "overview"),
+    )
+    if not title:
+        raise ValueError("Structured manual brief must include a non-empty title")
+    if not summary:
+        raise ValueError("Structured manual brief must include a non-empty summary")
+
+    domain = _pick_string(parsed_document, ("domain", "product_domain", "area"))
+    mvp_goal = (
+        _pick_string(parsed_document, ("mvp_goal", "mvp goal", "goal", "objective"))
+        or summary
+    )
+    scope = _structured_list(parsed_document, ("scope",), "scope")
+    non_goals = _structured_list(
+        parsed_document,
+        ("non_goals", "non goals", "non-goals"),
+        "non_goals",
+    )
+    assumptions = _structured_list(parsed_document, ("assumptions",), "assumptions")
+    validation_plan = (
+        _pick_string(
+            parsed_document,
+            ("validation_plan", "validation plan", "test_plan", "test plan"),
+        )
+        or "Validate the structured manual brief with implementation review."
+    )
+    definition_of_done = _structured_list(
+        parsed_document,
+        (
+            "definition_of_done",
+            "definition of done",
+            "done",
+            "acceptance_criteria",
+            "acceptance criteria",
+        ),
+        "definition_of_done",
+    )
+    product_surface = _pick_string(
+        parsed_document,
+        ("product_surface", "product surface", "surface", "surfaces", "interface", "interfaces"),
+    )
+    source_id = _pick_string(parsed_document, ("source_id", "source id", "id")) or resolved_path
+    _validate_structured_links(parsed_document)
+    source_links = _source_links(parsed_document, resolved_path)
+
+    source_metadata = _json_safe(
+        {
+            "file_path": resolved_path,
+            "document_keys": list(parsed_document.keys()),
+        }
+    )
+    normalized = {
+        "title": title,
+        "domain": domain,
+        "summary": summary,
+        "mvp_goal": mvp_goal,
+        "scope": scope,
+        "non_goals": non_goals,
+        "assumptions": assumptions,
+        "validation_plan": validation_plan,
+        "definition_of_done": definition_of_done,
+        "product_surface": product_surface,
+        "source_id": source_id,
+        "source_links": source_links,
+        "source_metadata": source_metadata,
+    }
+
+    now = datetime.utcnow()
+    return {
+        "id": generate_source_brief_id(),
+        "title": title,
+        "domain": domain,
+        "summary": summary,
+        "source_project": "manual",
+        "source_entity_type": "structured_brief",
+        "source_id": source_id,
+        "source_payload": _json_safe(
+            {
+                "file_path": resolved_path,
+                "document": parsed_document,
+                "normalized": normalized,
+            }
+        ),
+        "source_links": source_links,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 class ManualBriefImporter(SourceImporter):
-    """Import manual design briefs from markdown files."""
+    """Import manual design briefs from markdown or structured files."""
 
     def import_from_source(self, source_id: str) -> dict[str, Any]:
-        """Read and normalize a markdown brief."""
+        """Read and normalize a manual brief."""
         path = Path(source_id).expanduser()
-        if path.suffix.lower() != ".md":
-            raise ImportError(f"Manual brief must be a markdown .md file: {path}")
+        suffix = path.suffix.lower()
+        if suffix not in {".md", ".json", ".yaml", ".yml"}:
+            raise ImportError(
+                f"Manual brief must be a .md, .json, .yaml, or .yml file: {path}"
+            )
         if not path.is_file():
-            raise ImportError(f"Markdown brief file not found: {path}")
+            if suffix == ".md":
+                raise ImportError(f"Markdown brief file not found: {path}")
+            raise ImportError(f"Manual brief file not found: {path}")
 
         try:
-            markdown_text = path.read_text(encoding="utf-8")
+            raw_text = path.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
-            raise ImportError(f"Markdown brief file not found: {path}") from exc
+            if suffix == ".md":
+                raise ImportError(f"Markdown brief file not found: {path}") from exc
+            raise ImportError(f"Manual brief file not found: {path}") from exc
         except OSError as exc:
-            raise ImportError(f"Could not read markdown brief file: {path}") from exc
+            if suffix == ".md":
+                raise ImportError(f"Could not read markdown brief file: {path}") from exc
+            raise ImportError(f"Could not read manual brief file: {path}") from exc
 
         try:
-            return parse_manual_brief_markdown(markdown_text, file_path=str(path))
+            if suffix == ".md":
+                return parse_manual_brief_markdown(raw_text, file_path=str(path))
+            document = _parse_structured_text(raw_text, suffix=suffix, file_path=str(path))
+            return parse_manual_brief_structured(document, file_path=str(path))
         except Exception as exc:
             raise ImportError(str(exc)) from exc
 
@@ -220,6 +337,20 @@ def _parse_frontmatter(markdown_text: str) -> tuple[dict[str, Any], str]:
     if not isinstance(metadata, dict):
         metadata = {}
     return _json_safe(metadata), post.content.strip()
+
+
+def _parse_structured_text(raw_text: str, *, suffix: str, file_path: str) -> Any:
+    """Parse a JSON or YAML manual brief document."""
+    if suffix == ".json":
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {file_path}: {exc}") from exc
+
+    try:
+        return yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in {file_path}: {exc}") from exc
 
 
 def _parse_frontmatter_fallback(markdown_text: str) -> tuple[dict[str, Any], str]:
@@ -319,7 +450,7 @@ def _normalize_key(value: str) -> str:
 def _pick_string(metadata: dict[str, Any], keys: Iterable[str]) -> str | None:
     """Read the first non-empty string value from metadata."""
     for key in keys:
-        value = metadata.get(key)
+        value = _metadata_value(metadata, key)
         if isinstance(value, str):
             value = value.strip()
             if value:
@@ -330,11 +461,46 @@ def _pick_string(metadata: dict[str, Any], keys: Iterable[str]) -> str | None:
 def _pick_list(metadata: dict[str, Any], keys: Iterable[str]) -> list[str]:
     """Read a list-like value from metadata."""
     for key in keys:
-        value = metadata.get(key)
+        value = _metadata_value(metadata, key)
         items = _coerce_list(value)
         if items:
             return items
     return []
+
+
+def _metadata_value(metadata: dict[str, Any], key: str) -> Any:
+    """Read a metadata value by exact key or normalized key."""
+    if key in metadata:
+        return metadata[key]
+    normalized = _normalize_key(key)
+    for candidate_key, value in metadata.items():
+        if _normalize_key(str(candidate_key)) == normalized:
+            return value
+    return None
+
+
+def _structured_list(document: dict[str, Any], keys: Iterable[str], field_name: str) -> list[str]:
+    """Read and validate an optional structured list field."""
+    for key in keys:
+        value = _metadata_value(document, key)
+        if value is None:
+            continue
+        if isinstance(value, (str, list, tuple, set)):
+            return _coerce_list(value)
+        raise ValueError(f"Structured manual brief field '{field_name}' must be a string or list")
+    return []
+
+
+def _validate_structured_links(document: dict[str, Any]) -> None:
+    """Validate optional structured link fields before coercing them."""
+    for key in ("source_links", "source links"):
+        source_links = _metadata_value(document, key)
+        if source_links is not None and not isinstance(source_links, dict):
+            raise ValueError("Structured manual brief field 'source_links' must be an object")
+
+    links = _metadata_value(document, "links")
+    if links is not None and not isinstance(links, (str, list, tuple, set)):
+        raise ValueError("Structured manual brief field 'links' must be a string or list")
 
 
 def _section_text(sections: dict[str, str], key: str) -> str | None:
@@ -413,18 +579,21 @@ def _source_links(metadata: dict[str, Any], file_path: str) -> dict[str, Any]:
     """Build source links from the file path and optional front matter."""
     links: dict[str, Any] = {"file_path": file_path}
 
-    raw_source_links = metadata.get("source_links") or metadata.get("source links")
+    raw_source_links = _metadata_value(metadata, "source_links") or _metadata_value(
+        metadata,
+        "source links",
+    )
     if isinstance(raw_source_links, dict):
         links.update(_json_safe(raw_source_links))
 
-    raw_links = metadata.get("links")
+    raw_links = _metadata_value(metadata, "links")
     if raw_links is not None:
         coerced_links = _coerce_list(raw_links)
         if coerced_links:
             links["links"] = coerced_links
 
     for key in ("source", "url", "uri", "link"):
-        value = metadata.get(key)
+        value = _metadata_value(metadata, key)
         if isinstance(value, str) and value.strip():
             links[key] = value.strip()
 
