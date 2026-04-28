@@ -1,6 +1,7 @@
 """Configuration management for Blueprint."""
 
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -71,26 +72,121 @@ class Config:
         }
 
         if not self.config_path:
-            return defaults
+            return self._prepare_config(defaults)
 
         try:
             with open(self.config_path) as f:
                 config = yaml.safe_load(f) or {}
                 # Merge with defaults
-                return self._merge_dicts(defaults, config)
+                return self._prepare_config(self._merge_dicts(defaults, config))
         except Exception as e:
             print(f"Warning: Could not load config from {self.config_path}: {e}")
-            return defaults
+            return self._prepare_config(defaults)
 
     def _merge_dicts(self, base: dict, override: dict) -> dict:
         """Deep merge two dicts, with override taking precedence."""
-        result = base.copy()
+        result = deepcopy(base)
         for key, value in override.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = self._merge_dicts(result[key], value)
             else:
                 result[key] = value
         return result
+
+    def _prepare_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Apply environment overrides and expand configured path values."""
+        self._apply_environment_overrides(config)
+        self._expand_config_paths(config)
+        return config
+
+    def _apply_environment_overrides(self, config: dict[str, Any]) -> None:
+        """Apply supported environment variable overrides to config values."""
+        self._set_env_override(config, "BLUEPRINT_DB_PATH", ("database", "path"))
+        self._set_env_override(config, "BLUEPRINT_EXPORT_DIR", ("exports", "output_dir"))
+
+        sources = config.get("sources")
+        if not isinstance(sources, dict):
+            return
+
+        for source_name, source_config in sources.items():
+            if not isinstance(source_config, dict):
+                continue
+
+            env_prefix = f"BLUEPRINT_{source_name.upper().replace('-', '_')}"
+            if "db_path" in source_config:
+                self._set_env_override(
+                    config, f"{env_prefix}_DB_PATH", ("sources", source_name, "db_path")
+                )
+            if "path" in source_config:
+                self._set_env_override(
+                    config, f"{env_prefix}_PATH", ("sources", source_name, "path")
+                )
+
+    def _set_env_override(
+        self, config: dict[str, Any], env_name: str, path: tuple[str, ...]
+    ) -> None:
+        """Set a config value from an environment variable when present."""
+        value = os.getenv(env_name)
+        if value is None:
+            return
+
+        target = config
+        for key in path[:-1]:
+            next_target = target.setdefault(key, {})
+            if not isinstance(next_target, dict):
+                next_target = {}
+                target[key] = next_target
+            target = next_target
+        target[path[-1]] = value
+
+    def _expand_config_paths(self, config: dict[str, Any]) -> None:
+        """Expand user and environment variable references in configured paths."""
+        self._expand_path_value(config, ("database", "path"))
+        self._expand_path_value(config, ("exports", "output_dir"))
+
+        sources = config.get("sources")
+        if isinstance(sources, dict):
+            for source_name, source_config in sources.items():
+                if not isinstance(source_config, dict):
+                    continue
+                self._expand_path_value(config, ("sources", source_name, "db_path"))
+                self._expand_path_value(config, ("sources", source_name, "path"))
+
+        templates = self.get_from(config, ("exports", "templates"))
+        if isinstance(templates, dict):
+            for target_name, template_config in templates.items():
+                if isinstance(template_config, str):
+                    templates[target_name] = self._expand_path(template_config)
+                elif isinstance(template_config, dict):
+                    self._expand_path_value(config, ("exports", "templates", target_name, "path"))
+                    self._expand_path_value(
+                        config, ("exports", "templates", target_name, "task_path")
+                    )
+
+    def _expand_path_value(self, config: dict[str, Any], path: tuple[str, ...]) -> None:
+        """Expand a string path value at a nested config path when it exists."""
+        target = self.get_from(config, path[:-1])
+        if not isinstance(target, dict):
+            return
+
+        value = target.get(path[-1])
+        if isinstance(value, str):
+            target[path[-1]] = self._expand_path(value)
+
+    def _expand_path(self, path: str) -> str:
+        """Expand ${VAR} and ~ references in a path string."""
+        return os.path.expanduser(os.path.expandvars(path))
+
+    def get_from(self, data: dict[str, Any], path: tuple[str, ...]) -> Any:
+        """Get a nested value from the provided mapping."""
+        value: Any = data
+        for key in path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+            if value is None:
+                return None
+        return value
 
     def get(self, path: str, default: Any = None) -> Any:
         """Get config value by dot-separated path."""
