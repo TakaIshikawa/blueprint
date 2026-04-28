@@ -203,7 +203,8 @@ class Config:
 
     def diagnostics(self) -> dict[str, Any]:
         """Return merged config values and validation warnings."""
-        warnings = self.validate()
+        checks = self.validation_checks()
+        warnings = [check["message"] for check in checks if check["status"] == "fail"]
 
         github_token_env = self.github_token_env
         if not isinstance(github_token_env, str) or not github_token_env:
@@ -211,7 +212,7 @@ class Config:
 
         return {
             "config_path": self.config_path,
-            "values": self.data,
+            "values": self.redacted_data(),
             "environment": {
                 "ANTHROPIC_API_KEY": {
                     "present": self.has_anthropic_api_key(),
@@ -221,106 +222,297 @@ class Config:
                 },
             },
             "warnings": warnings,
+            "checks": checks,
             "valid": not warnings,
         }
 
+    def redacted_data(self) -> dict[str, Any]:
+        """Return config values with secret-like fields redacted."""
+        return self._redact_secrets(self.data)
+
+    def _redact_secrets(self, value: Any, key: str = "") -> Any:
+        """Recursively redact secret-like config values."""
+        if isinstance(value, dict):
+            return {
+                item_key: self._redact_secrets(item_value, item_key)
+                for item_key, item_value in value.items()
+            }
+        if isinstance(value, list):
+            return [self._redact_secrets(item) for item in value]
+        if isinstance(value, str) and self._is_secret_key(key):
+            return "[redacted]" if value else value
+        return value
+
+    def _is_secret_key(self, key: str) -> bool:
+        """Return whether a config key should be treated as sensitive."""
+        normalized = key.lower().replace("-", "_")
+        if normalized in {"token_env", "token_environment"}:
+            return False
+        return any(
+            marker in normalized for marker in ("api_key", "apikey", "token", "secret", "password")
+        )
+
     def validate(self) -> list[str]:
         """Validate config values without raising for missing optional paths."""
-        warnings: list[str] = []
+        return [check["message"] for check in self.validation_checks() if check["status"] == "fail"]
+
+    def validation_checks(self) -> list[dict[str, Any]]:
+        """Return structured configuration validation checks."""
+        checks: list[dict[str, Any]] = []
 
         db_path = self.get("database.path")
         if not isinstance(db_path, str) or not db_path:
-            warnings.append("database.path must be a non-empty string")
+            self._add_check(
+                checks, "database.path", False, "database.path must be a non-empty string"
+            )
         else:
             db_parent = Path(db_path).expanduser().parent
             if not db_parent.exists():
-                warnings.append(f"Database path parent directory does not exist: {db_parent}")
+                self._add_check(
+                    checks,
+                    "database.path",
+                    False,
+                    f"Database path parent directory does not exist: {db_parent}",
+                    str(db_parent),
+                )
+            elif not db_parent.is_dir():
+                self._add_check(
+                    checks,
+                    "database.path",
+                    False,
+                    f"Database path parent is not a directory: {db_parent}",
+                    str(db_parent),
+                )
+            else:
+                self._add_check(
+                    checks,
+                    "database.path",
+                    True,
+                    f"Database path parent directory exists: {db_parent}",
+                    str(db_parent),
+                )
 
         sources = self.get("sources", {})
         if not isinstance(sources, dict):
-            warnings.append("sources must be a mapping")
+            self._add_check(checks, "sources", False, "sources must be a mapping")
         else:
             for source_name, source_config in sources.items():
                 if source_name == "github":
-                    self._validate_github_source(source_config, warnings)
+                    self._validate_github_source(source_config, checks)
                 else:
-                    self._validate_source(source_name, source_config, warnings)
+                    self._validate_source(source_name, source_config, checks)
 
         export_dir = self.get("exports.output_dir")
         if not isinstance(export_dir, str) or not export_dir:
-            warnings.append("exports.output_dir must be a non-empty string")
+            self._add_check(
+                checks,
+                "exports.output_dir",
+                False,
+                "exports.output_dir must be a non-empty string",
+            )
         else:
             export_path = Path(export_dir).expanduser()
             if export_path.exists() and not export_path.is_dir():
-                warnings.append(f"Export path is not a directory: {export_path}")
+                self._add_check(
+                    checks,
+                    "exports.output_dir",
+                    False,
+                    f"Export path is not a directory: {export_path}",
+                    str(export_path),
+                )
             elif not export_path.exists():
-                warnings.append(f"Export directory does not exist: {export_path}")
+                self._add_check(
+                    checks,
+                    "exports.output_dir",
+                    False,
+                    f"Export directory does not exist: {export_path}",
+                    str(export_path),
+                )
+            elif not os.access(export_path, os.W_OK):
+                self._add_check(
+                    checks,
+                    "exports.output_dir",
+                    False,
+                    f"Export directory is not writable: {export_path}",
+                    str(export_path),
+                )
+            else:
+                self._add_check(
+                    checks,
+                    "exports.output_dir",
+                    True,
+                    f"Export directory is writable: {export_path}",
+                    str(export_path),
+                )
 
         provider = self.get("llm.provider")
         if not isinstance(provider, str) or not provider:
-            warnings.append("llm.provider must be a non-empty string")
+            self._add_check(
+                checks, "llm.provider", False, "llm.provider must be a non-empty string"
+            )
         elif provider != "anthropic":
-            warnings.append(f"Unsupported LLM provider configured: {provider}")
+            self._add_check(
+                checks,
+                "llm.provider",
+                False,
+                f"Unsupported LLM provider configured: {provider}",
+            )
+        else:
+            self._add_check(checks, "llm.provider", True, f"LLM provider is supported: {provider}")
 
         default_model = self.get("llm.default_model")
         if not isinstance(default_model, str) or not default_model:
-            warnings.append("llm.default_model must be a non-empty string")
+            self._add_check(
+                checks,
+                "llm.default_model",
+                False,
+                "llm.default_model must be a non-empty string",
+            )
+        else:
+            self._add_check(
+                checks,
+                "llm.default_model",
+                True,
+                f"LLM default model is configured: {default_model}",
+            )
 
         if provider == "anthropic" and not self.has_anthropic_api_key():
-            warnings.append("ANTHROPIC_API_KEY environment variable is not set")
+            self._add_check(
+                checks,
+                "environment.ANTHROPIC_API_KEY",
+                False,
+                "ANTHROPIC_API_KEY environment variable is not set",
+            )
+        elif provider == "anthropic":
+            self._add_check(
+                checks,
+                "environment.ANTHROPIC_API_KEY",
+                True,
+                "ANTHROPIC_API_KEY environment variable is set",
+            )
 
-        return warnings
+        return checks
+
+    def _add_check(
+        self,
+        checks: list[dict[str, Any]],
+        name: str,
+        passed: bool,
+        message: str,
+        path: str | None = None,
+    ) -> None:
+        """Append a structured validation check."""
+        check: dict[str, Any] = {
+            "name": name,
+            "status": "pass" if passed else "fail",
+            "message": message,
+        }
+        if path is not None:
+            check["path"] = path
+        checks.append(check)
 
     def _validate_source(
         self,
         source_name: str,
         source_config: Any,
-        warnings: list[str],
+        checks: list[dict[str, Any]],
     ) -> None:
         """Validate a configured source path."""
+        check_name = f"sources.{source_name}"
         if not isinstance(source_config, dict):
-            warnings.append(f"sources.{source_name} must be a mapping")
+            self._add_check(checks, check_name, False, f"sources.{source_name} must be a mapping")
             return
 
         path_value = source_config.get("db_path") or source_config.get("path")
         if path_value is None:
-            warnings.append(f"sources.{source_name} must define db_path or path")
+            self._add_check(
+                checks,
+                check_name,
+                False,
+                f"sources.{source_name} must define db_path or path",
+            )
             return
 
         if not isinstance(path_value, str) or not path_value:
-            warnings.append(f"sources.{source_name} path must be a non-empty string")
+            self._add_check(
+                checks,
+                check_name,
+                False,
+                f"sources.{source_name} path must be a non-empty string",
+            )
             return
 
         source_path = Path(path_value).expanduser()
         if not source_path.exists():
-            warnings.append(f"Configured source '{source_name}' path does not exist: {source_path}")
+            self._add_check(
+                checks,
+                check_name,
+                False,
+                f"Configured source '{source_name}' path does not exist: {source_path}",
+                str(source_path),
+            )
+        else:
+            self._add_check(
+                checks,
+                check_name,
+                True,
+                f"Configured source '{source_name}' path exists: {source_path}",
+                str(source_path),
+            )
 
     def _validate_github_source(
         self,
         source_config: Any,
-        warnings: list[str],
+        checks: list[dict[str, Any]],
     ) -> None:
         """Validate GitHub importer configuration."""
         if not isinstance(source_config, dict):
-            warnings.append("sources.github must be a mapping")
+            self._add_check(checks, "sources.github", False, "sources.github must be a mapping")
             return
 
         token_env = source_config.get("token_env")
         if not isinstance(token_env, str) or not token_env:
-            warnings.append("sources.github.token_env must be a non-empty string")
+            self._add_check(
+                checks,
+                "sources.github.token_env",
+                False,
+                "sources.github.token_env must be a non-empty string",
+            )
+        else:
+            self._add_check(
+                checks,
+                "sources.github.token_env",
+                True,
+                f"GitHub token environment variable name is configured: {token_env}",
+            )
 
         default_owner = source_config.get("default_owner")
         default_repo = source_config.get("default_repo")
         if (default_owner and not default_repo) or (default_repo and not default_owner):
-            warnings.append(
-                "sources.github.default_owner and default_repo must be configured together"
+            self._add_check(
+                checks,
+                "sources.github.default_repository",
+                False,
+                "sources.github.default_owner and default_repo must be configured together",
+            )
+        else:
+            self._add_check(
+                checks,
+                "sources.github.default_repository",
+                True,
+                "GitHub default repository settings are consistent",
             )
         for key, value in (
             ("default_owner", default_owner),
             ("default_repo", default_repo),
         ):
             if value is not None and not isinstance(value, str):
-                warnings.append(f"sources.github.{key} must be a string when set")
+                self._add_check(
+                    checks,
+                    f"sources.github.{key}",
+                    False,
+                    f"sources.github.{key} must be a string when set",
+                )
 
     def has_anthropic_api_key(self) -> bool:
         """Return whether the Anthropic API key is present without exposing it."""

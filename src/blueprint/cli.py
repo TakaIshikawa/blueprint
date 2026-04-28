@@ -264,10 +264,10 @@ def config():
     pass
 
 
-@config.command()
+@config.command(name="inspect")
 @click.option("--json", "json_output", is_flag=True, help="Output diagnostics as JSON")
-def inspect(json_output: bool):
-    """Inspect merged configuration and validation warnings."""
+def config_inspect(json_output: bool):
+    """Inspect effective resolved configuration and validation warnings."""
     diagnostics = get_config().diagnostics()
 
     if json_output:
@@ -280,9 +280,10 @@ def inspect(json_output: bool):
     for path, value in _flatten_dict(diagnostics["values"]):
         click.echo(f"  {path}: {value}")
 
-    key_status = "set" if diagnostics["environment"]["ANTHROPIC_API_KEY"]["present"] else "missing"
     click.echo("\nEnvironment:")
-    click.echo(f"  ANTHROPIC_API_KEY: {key_status}")
+    for env_name, env_status in sorted(diagnostics["environment"].items()):
+        key_status = "set" if env_status["present"] else "missing"
+        click.echo(f"  {env_name}: {key_status}")
 
     warnings = diagnostics["warnings"]
     click.echo("\nValidation warnings:")
@@ -291,6 +292,38 @@ def inspect(json_output: bool):
             click.echo(f"  - {warning}")
     else:
         click.echo("  none")
+
+
+@config.command(name="validate")
+@click.option("--json", "json_output", is_flag=True, help="Output validation results as JSON")
+@click.pass_context
+def config_validate(ctx: click.Context, json_output: bool):
+    """Validate configuration and exit nonzero on failed checks."""
+    diagnostics = get_config().diagnostics()
+    checks = diagnostics["checks"]
+    valid = diagnostics["valid"]
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                {
+                    "config_path": diagnostics["config_path"],
+                    "checks": checks,
+                    "valid": valid,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        click.echo("Blueprint configuration validation")
+        click.echo(f"Config path: {diagnostics['config_path'] or 'defaults only'}")
+        for check in checks:
+            status = "PASS" if check["status"] == "pass" else "FAIL"
+            click.echo(f"[{status}] {check['name']}: {check['message']}")
+
+    if not valid:
+        ctx.exit(1)
 
 
 def _flatten_dict(data: dict, prefix: str = ""):
