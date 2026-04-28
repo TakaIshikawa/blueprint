@@ -177,6 +177,11 @@ class ManualBriefImporter(SourceImporter):
     def import_from_source(self, source_id: str) -> dict[str, Any]:
         """Read and normalize a markdown brief."""
         path = Path(source_id).expanduser()
+        if path.suffix.lower() != ".md":
+            raise ImportError(f"Manual brief must be a markdown .md file: {path}")
+        if not path.is_file():
+            raise ImportError(f"Markdown brief file not found: {path}")
+
         try:
             markdown_text = path.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
@@ -333,7 +338,11 @@ def _pick_list(metadata: dict[str, Any], keys: Iterable[str]) -> list[str]:
 
 def _section_text(sections: dict[str, str], key: str) -> str | None:
     """Find a section body by normalized heading."""
-    return sections.get(_normalize_key(key))
+    for section_key in _section_lookup_keys(key):
+        text = sections.get(section_key)
+        if text:
+            return text
+    return None
 
 
 def _section_list(sections: dict[str, str], key: str) -> list[str]:
@@ -345,6 +354,17 @@ def _section_list(sections: dict[str, str], key: str) -> list[str]:
     if items:
         return items
     return [line for line in (text.strip(),) if line]
+
+
+def _section_lookup_keys(key: str) -> list[str]:
+    """Return normalized heading keys, including known aliases."""
+    normalized = _normalize_key(key)
+    candidates = [normalized]
+    for canonical, aliases in SECTION_ALIASES.items():
+        normalized_aliases = [_normalize_key(alias) for alias in aliases]
+        if normalized == _normalize_key(canonical) or normalized in normalized_aliases:
+            candidates.extend(normalized_aliases)
+    return list(dict.fromkeys(candidates))
 
 
 def _extract_bullets(text: str) -> list[str]:

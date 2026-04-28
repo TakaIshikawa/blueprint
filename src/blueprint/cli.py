@@ -997,7 +997,7 @@ def manual(file_path: str, replace: bool, skip_existing: bool):
         click.echo(f"  Title: {source_brief['title']}")
         click.echo(f"  Domain: {source_brief['domain'] or 'N/A'}")
     except Exception as e:
-        click.echo(f"✗ Import failed: {e}", err=True)
+        raise click.ClickException(f"Import failed: {e}") from e
 
 
 @import_cmd.command(name="obsidian-note")

@@ -48,6 +48,22 @@ def test_parse_manual_brief_markdown_extracts_sections_and_metadata():
     )
 
 
+def test_parse_manual_brief_markdown_infers_title_and_summary_from_content():
+    source_brief = parse_manual_brief_markdown(
+        """# Inferred Manual Brief
+
+Manual briefs can omit front matter and still become source briefs.
+""",
+        file_path="briefs/inferred_manual_brief.md",
+    )
+
+    assert source_brief["title"] == "Inferred Manual Brief"
+    assert source_brief["domain"] is None
+    assert source_brief["summary"] == (
+        "Manual briefs can omit front matter and still become source briefs."
+    )
+
+
 def test_manual_importer_duplicate_handling_reuses_or_replaces_existing_brief(tmp_path):
     store = init_db(str(tmp_path / "blueprint.db"))
     brief_path = tmp_path / "manual.md"
@@ -71,6 +87,33 @@ def test_manual_importer_duplicate_handling_reuses_or_replaces_existing_brief(tm
     briefs = store.list_source_briefs(source_project="manual")
     assert len(briefs) == 1
     assert briefs[0]["title"] == "Updated Manual Import Brief"
+
+
+def test_cli_import_manual_rejects_missing_file_without_creating_rows(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    init_db(str(tmp_path / "blueprint.db"))
+    missing_path = tmp_path / "missing.md"
+
+    result = CliRunner().invoke(cli, ["import", "manual", str(missing_path)])
+
+    assert result.exit_code != 0
+    assert "Markdown brief file not found" in result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
+    assert briefs == []
+
+
+def test_cli_import_manual_rejects_non_markdown_file_without_creating_rows(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    init_db(str(tmp_path / "blueprint.db"))
+    brief_path = tmp_path / "manual.txt"
+    brief_path.write_text(_manual_markdown())
+
+    result = CliRunner().invoke(cli, ["import", "manual", str(brief_path)])
+
+    assert result.exit_code != 0
+    assert "Manual brief must be a markdown .md file" in result.output
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
+    assert briefs == []
 
 
 def test_cli_import_manual_reports_import_skip_and_replace(tmp_path, monkeypatch):
