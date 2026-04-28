@@ -163,13 +163,13 @@ def test_obsidian_importer_duplicate_handling_reuses_or_replaces_existing_brief(
     note_path.write_text(_obsidian_note(title="Original Note"))
     importer = ObsidianImporter()
 
-    first_id = store.upsert_source_brief(importer.import_from_source(str(note_path)))
+    first_id, _created = store.upsert_source_brief(importer.import_from_source(str(note_path)))
     note_path.write_text(_obsidian_note(title="Updated Note"))
-    skipped_id = store.upsert_source_brief(
+    skipped_id, _skipped_created = store.upsert_source_brief(
         importer.import_from_source(str(note_path)),
         skip_existing=True,
     )
-    replaced_id = store.upsert_source_brief(
+    replaced_id, _replaced_created = store.upsert_source_brief(
         importer.import_from_source(str(note_path)),
         replace=True,
     )

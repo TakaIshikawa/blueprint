@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 
 from click.testing import CliRunner
 
@@ -17,34 +18,73 @@ def test_store_gets_source_brief_by_upstream_identity(tmp_path):
     assert brief["title"] == "Original"
 
 
-def test_upsert_source_brief_skips_existing_by_default(tmp_path):
+def test_upsert_source_brief_creates_new_source_brief(tmp_path):
     store = init_db(str(tmp_path / "blueprint.db"))
-    store.insert_source_brief(_source_brief("sb-original", title="Original"))
 
-    source_brief_id = store.upsert_source_brief(
+    source_brief_id, created = store.upsert_source_brief(
+        _source_brief("sb-new", title="New"),
+    )
+
+    assert source_brief_id == "sb-new"
+    assert created is True
+    briefs = store.list_source_briefs(source_project="max")
+    assert len(briefs) == 1
+    assert briefs[0]["title"] == "New"
+
+
+def test_upsert_source_brief_updates_existing_by_default(tmp_path):
+    store = init_db(str(tmp_path / "blueprint.db"))
+    original = _source_brief("sb-original", title="Original")
+    original["updated_at"] = datetime(2026, 1, 1, 0, 0, 0)
+    store.insert_source_brief(original)
+
+    source_brief_id, created = store.upsert_source_brief(
         _source_brief("sb-new", title="Updated"),
     )
 
     assert source_brief_id == "sb-original"
+    assert created is False
     briefs = store.list_source_briefs(source_project="max")
     assert len(briefs) == 1
-    assert briefs[0]["title"] == "Original"
+    assert briefs[0]["title"] == "Updated"
+    assert briefs[0]["updated_at"] != "2026-01-01T00:00:00"
 
 
-def test_upsert_source_brief_replaces_existing_without_changing_local_id(tmp_path):
+def test_upsert_source_brief_can_skip_existing_without_changing_local_id(tmp_path):
     store = init_db(str(tmp_path / "blueprint.db"))
     store.insert_source_brief(_source_brief("sb-original", title="Original"))
 
-    source_brief_id = store.upsert_source_brief(
+    source_brief_id, created = store.upsert_source_brief(
         _source_brief("sb-new", title="Updated", summary="New summary"),
-        replace=True,
+        skip_existing=True,
     )
 
     assert source_brief_id == "sb-original"
+    assert created is False
     brief = store.get_source_brief("sb-original")
-    assert brief["title"] == "Updated"
-    assert brief["summary"] == "New summary"
+    assert brief["title"] == "Original"
+    assert brief["summary"] == "Original summary"
     assert store.get_source_brief("sb-new") is None
+
+
+def test_import_max_repeated_import_updates_existing_source_brief(tmp_path, monkeypatch):
+    _write_config(tmp_path, monkeypatch)
+    init_db(str(tmp_path / "blueprint.db"))
+    max_db_path = tmp_path / "max.db"
+    _write_max_db(max_db_path, title="Original")
+
+    runner = CliRunner()
+    first = runner.invoke(cli, ["import", "max", "dbf-123"])
+    _update_max_title(max_db_path, "Updated")
+    second = runner.invoke(cli, ["import", "max", "dbf-123"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert "Updated source brief" in second.output
+
+    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="max")
+    assert len(briefs) == 1
+    assert briefs[0]["title"] == "Updated"
 
 
 def test_import_max_skip_existing_reuses_existing_source_brief(tmp_path, monkeypatch):
@@ -63,27 +103,6 @@ def test_import_max_skip_existing_reuses_existing_source_brief(tmp_path, monkeyp
     briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="max")
     assert len(briefs) == 1
     assert briefs[0]["title"] == "Original"
-
-
-def test_import_max_replace_refreshes_existing_source_brief(tmp_path, monkeypatch):
-    _write_config(tmp_path, monkeypatch)
-    init_db(str(tmp_path / "blueprint.db"))
-    max_db_path = tmp_path / "max.db"
-    _write_max_db(max_db_path, title="Original")
-
-    runner = CliRunner()
-    first = runner.invoke(cli, ["import", "max", "dbf-123"])
-    assert first.exit_code == 0, first.output
-
-    _update_max_title(max_db_path, "Updated")
-    second = runner.invoke(cli, ["import", "max", "dbf-123", "--replace"])
-
-    assert second.exit_code == 0, second.output
-    assert "Replaced source brief" in second.output
-
-    briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="max")
-    assert len(briefs) == 1
-    assert briefs[0]["title"] == "Updated"
 
 
 def test_import_max_rejects_conflicting_duplicate_options(tmp_path, monkeypatch):

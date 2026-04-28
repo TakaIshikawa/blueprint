@@ -142,13 +142,12 @@ class Store:
         *,
         replace: bool = False,
         skip_existing: bool = False,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """
-        Insert or reuse a source brief keyed by its upstream source identity.
+        Insert or update a source brief keyed by its upstream source identity.
 
-        When replace is true, the existing local SourceBrief ID is preserved and
-        all import-owned fields are refreshed from brief_dict. Otherwise the
-        existing row is returned unchanged.
+        Returns (source_brief_id, created). The local SourceBrief ID is preserved
+        when refreshing an existing upstream entity.
         """
         if replace and skip_existing:
             raise ValueError("replace and skip_existing cannot both be true")
@@ -174,9 +173,9 @@ class Store:
                 brief = SourceBriefModel(**brief_payload)
                 session.add(brief)
                 session.commit()
-                return brief.id
+                return brief.id, True
 
-            if replace:
+            if not skip_existing:
                 for field in (
                     "title",
                     "domain",
@@ -185,10 +184,10 @@ class Store:
                     "source_links",
                 ):
                     setattr(existing, field, brief_payload.get(field))
-                existing.updated_at = brief_payload.get("updated_at") or datetime.utcnow()
+                existing.updated_at = datetime.utcnow()
                 session.commit()
 
-            return existing.id
+            return existing.id, False
 
     def list_source_briefs(
         self,

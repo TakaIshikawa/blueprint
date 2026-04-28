@@ -103,20 +103,22 @@ def test_manual_importer_duplicate_handling_reuses_or_replaces_existing_brief(tm
     brief_path.write_text(_manual_markdown())
     importer = ManualBriefImporter()
 
-    first_id = store.upsert_source_brief(importer.import_from_source(str(brief_path)))
+    first_id, created = store.upsert_source_brief(importer.import_from_source(str(brief_path)))
+    assert created is True
 
     brief_path.write_text(_manual_markdown(title="Updated Manual Import Brief"))
-    skipped_id = store.upsert_source_brief(
+    updated_id, updated_created = store.upsert_source_brief(
+        importer.import_from_source(str(brief_path)),
+    )
+    skipped_id, skipped_created = store.upsert_source_brief(
         importer.import_from_source(str(brief_path)),
         skip_existing=True,
     )
-    replaced_id = store.upsert_source_brief(
-        importer.import_from_source(str(brief_path)),
-        replace=True,
-    )
 
+    assert updated_id == first_id
+    assert updated_created is False
     assert skipped_id == first_id
-    assert replaced_id == first_id
+    assert skipped_created is False
     briefs = store.list_source_briefs(source_project="manual")
     assert len(briefs) == 1
     assert briefs[0]["title"] == "Updated Manual Import Brief"
@@ -163,7 +165,7 @@ def test_cli_import_manual_rejects_file_without_usable_title(tmp_path, monkeypat
     assert briefs == []
 
 
-def test_cli_import_manual_reports_import_skip_and_replace(tmp_path, monkeypatch):
+def test_cli_import_manual_reports_import_update_and_skip(tmp_path, monkeypatch):
     _write_config(tmp_path, monkeypatch)
     init_db(str(tmp_path / "blueprint.db"))
     brief_path = tmp_path / "manual.md"
@@ -176,20 +178,20 @@ def test_cli_import_manual_reports_import_skip_and_replace(tmp_path, monkeypatch
     assert "Imported source brief" in first.output
     assert "from manual brief" in first.output
 
+    brief_path.write_text(_manual_markdown(title="Updated Manual Import Brief"))
+    updated = runner.invoke(
+        cli,
+        ["import", "manual", str(brief_path)],
+    )
+    assert updated.exit_code == 0, updated.output
+    assert "Updated source brief" in updated.output
+
     skipped = runner.invoke(
         cli,
         ["import", "manual", str(brief_path), "--skip-existing"],
     )
     assert skipped.exit_code == 0, skipped.output
     assert "Skipped existing source brief" in skipped.output
-
-    brief_path.write_text(_manual_markdown(title="Updated Manual Import Brief"))
-    replaced = runner.invoke(
-        cli,
-        ["import", "manual", str(brief_path), "--replace"],
-    )
-    assert replaced.exit_code == 0, replaced.output
-    assert "Replaced source brief" in replaced.output
 
     briefs = Store(str(tmp_path / "blueprint.db")).list_source_briefs(source_project="manual")
     assert len(briefs) == 1

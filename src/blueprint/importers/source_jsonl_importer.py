@@ -122,7 +122,7 @@ class SourceJsonlImporter:
                 source_brief_id = source_brief["id"]
                 result.inserted += 1
                 if not dry_run:
-                    source_brief_id = store.upsert_source_brief(source_brief)
+                    source_brief_id, _created = store.upsert_source_brief(source_brief)
             elif self._matches_existing(source_brief, existing_source_brief):
                 status = "skipped"
                 source_brief_id = existing_source_brief["id"]
@@ -132,7 +132,7 @@ class SourceJsonlImporter:
                 source_brief_id = existing_source_brief["id"]
                 result.updated += 1
                 if not dry_run:
-                    source_brief_id = store.upsert_source_brief(source_brief, replace=True)
+                    source_brief_id, _created = store.upsert_source_brief(source_brief)
 
             result.records.append(
                 SourceJsonlImportRecord(

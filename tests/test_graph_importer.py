@@ -62,12 +62,12 @@ def test_graph_importer_duplicate_handling_reuses_or_replaces_existing_brief(tmp
     )
     importer = GraphImporter()
 
-    first_id = store.upsert_source_brief(importer.import_from_source(str(first_path)))
-    skipped_id = store.upsert_source_brief(
+    first_id, _created = store.upsert_source_brief(importer.import_from_source(str(first_path)))
+    skipped_id, _skipped_created = store.upsert_source_brief(
         importer.import_from_source(str(second_path)),
         skip_existing=True,
     )
-    replaced_id = store.upsert_source_brief(
+    replaced_id, _replaced_created = store.upsert_source_brief(
         importer.import_from_source(str(second_path)),
         replace=True,
     )

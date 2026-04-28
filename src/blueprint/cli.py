@@ -617,24 +617,29 @@ def max(brief_id: str, replace: bool, skip_existing: bool):
         )
 
         # Store in Blueprint database
-        source_brief_id = store.upsert_source_brief(
+        source_brief_id, created = store.upsert_source_brief(
             source_brief,
             replace=replace,
             skip_existing=skip_existing,
         )
 
         # Success message
-        if existing_source_brief and replace:
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Max design brief {brief_id}"
+            )
+        elif replace:
             click.echo(
                 f"✓ Replaced source brief {source_brief_id} from Max design brief {brief_id}"
             )
-        elif existing_source_brief:
+        elif skip_existing:
             click.echo(
-                f"✓ Skipped existing source brief {source_brief_id} from Max design brief {brief_id}"
+                f"✓ Skipped existing source brief {source_brief_id} "
+                f"from Max design brief {brief_id}"
             )
         else:
             click.echo(
-                f"✓ Imported source brief {source_brief_id} from Max design brief {brief_id}"
+                f"✓ Updated source brief {source_brief_id} from Max design brief {brief_id}"
             )
         click.echo(f"  Title: {source_brief['title']}")
         click.echo(f"  Domain: {source_brief['domain']}")
@@ -676,25 +681,30 @@ def github_issue(issue_ref: str, replace: bool, skip_existing: bool):
             source_id=source_brief["source_id"],
         )
 
-        source_brief_id = store.upsert_source_brief(
+        source_brief_id, created = store.upsert_source_brief(
             source_brief,
             replace=replace,
             skip_existing=skip_existing,
         )
 
-        if existing_source_brief and replace:
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from GitHub issue "
+                f"{source_brief['source_id']}"
+            )
+        elif replace:
             click.echo(
                 f"✓ Replaced source brief {source_brief_id} from GitHub issue "
                 f"{source_brief['source_id']}"
             )
-        elif existing_source_brief:
+        elif skip_existing:
             click.echo(
                 f"✓ Skipped existing source brief {source_brief_id} from GitHub issue "
                 f"{source_brief['source_id']}"
             )
         else:
             click.echo(
-                f"✓ Imported source brief {source_brief_id} from GitHub issue "
+                f"✓ Updated source brief {source_brief_id} from GitHub issue "
                 f"{source_brief['source_id']}"
             )
         click.echo(f"  Title: {source_brief['title']}")
@@ -730,25 +740,30 @@ def graph_node(file_path: str, replace: bool, skip_existing: bool):
             source_id=source_brief["source_id"],
         )
 
-        source_brief_id = store.upsert_source_brief(
+        source_brief_id, created = store.upsert_source_brief(
             source_brief,
             replace=replace,
             skip_existing=skip_existing,
         )
 
-        if existing_source_brief and replace:
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Graph node "
+                f"{source_brief['source_id']}"
+            )
+        elif replace:
             click.echo(
                 f"✓ Replaced source brief {source_brief_id} from Graph node "
                 f"{source_brief['source_id']}"
             )
-        elif existing_source_brief:
+        elif skip_existing:
             click.echo(
                 f"✓ Skipped existing source brief {source_brief_id} from Graph node "
                 f"{source_brief['source_id']}"
             )
         else:
             click.echo(
-                f"✓ Imported source brief {source_brief_id} from Graph node "
+                f"✓ Updated source brief {source_brief_id} from Graph node "
                 f"{source_brief['source_id']}"
             )
         click.echo(f"  Title: {source_brief['title']}")
@@ -812,7 +827,7 @@ def csv_backlog(
         )
 
         try:
-            source_brief_id = store.upsert_source_brief(
+            source_brief_id, created = store.upsert_source_brief(
                 source_brief,
                 replace=replace,
                 skip_existing=skip_existing,
@@ -824,15 +839,18 @@ def csv_backlog(
             )
             continue
 
-        if existing_source_brief and replace:
+        if created:
+            status = "imported"
+            counts["imported"] += 1
+        elif replace:
             status = "replaced"
             counts["replaced"] += 1
-        elif existing_source_brief:
+        elif skip_existing:
             status = "skipped"
             counts["skipped"] += 1
         else:
-            status = "imported"
-            counts["imported"] += 1
+            status = "updated"
+            counts["replaced"] += 1
 
         results.append(
             {
@@ -936,25 +954,30 @@ def manual(file_path: str, replace: bool, skip_existing: bool):
             source_id=source_brief["source_id"],
         )
 
-        source_brief_id = store.upsert_source_brief(
+        source_brief_id, created = store.upsert_source_brief(
             source_brief,
             replace=replace,
             skip_existing=skip_existing,
         )
 
-        if existing_source_brief and replace:
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from manual brief "
+                f"{source_brief['source_id']}"
+            )
+        elif replace:
             click.echo(
                 f"✓ Replaced source brief {source_brief_id} from manual brief "
                 f"{source_brief['source_id']}"
             )
-        elif existing_source_brief:
+        elif skip_existing:
             click.echo(
                 f"✓ Skipped existing source brief {source_brief_id} from manual brief "
                 f"{source_brief['source_id']}"
             )
         else:
             click.echo(
-                f"✓ Imported source brief {source_brief_id} from manual brief "
+                f"✓ Updated source brief {source_brief_id} from manual brief "
                 f"{source_brief['source_id']}"
             )
         click.echo(f"  Title: {source_brief['title']}")
@@ -989,25 +1012,30 @@ def obsidian_note(path: str, replace: bool, skip_existing: bool):
             source_id=source_brief["source_id"],
         )
 
-        source_brief_id = store.upsert_source_brief(
+        source_brief_id, created = store.upsert_source_brief(
             source_brief,
             replace=replace,
             skip_existing=skip_existing,
         )
 
-        if existing_source_brief and replace:
+        if created:
+            click.echo(
+                f"✓ Imported source brief {source_brief_id} from Obsidian note "
+                f"{source_brief['source_id']}"
+            )
+        elif replace:
             click.echo(
                 f"✓ Replaced source brief {source_brief_id} from Obsidian note "
                 f"{source_brief['source_id']}"
             )
-        elif existing_source_brief:
+        elif skip_existing:
             click.echo(
                 f"✓ Skipped existing source brief {source_brief_id} from Obsidian note "
                 f"{source_brief['source_id']}"
             )
         else:
             click.echo(
-                f"✓ Imported source brief {source_brief_id} from Obsidian note "
+                f"✓ Updated source brief {source_brief_id} from Obsidian note "
                 f"{source_brief['source_id']}"
             )
         click.echo(f"  Title: {source_brief['title']}")
@@ -1071,7 +1099,7 @@ def manual_dir(
                 source_entity_type=source_brief["source_entity_type"],
                 source_id=source_brief["source_id"],
             )
-            source_brief_id = store.upsert_source_brief(
+            source_brief_id, created = store.upsert_source_brief(
                 source_brief,
                 replace=replace,
                 skip_existing=skip_existing,
@@ -1084,11 +1112,14 @@ def manual_dir(
             continue
 
         result["source_brief_id"] = source_brief_id
-        if existing_source_brief and not replace:
+        if created:
+            result["status"] = "imported"
+            counts["imported"] += 1
+        elif skip_existing:
             result["status"] = "skipped"
             counts["skipped"] += 1
         else:
-            result["status"] = "imported"
+            result["status"] = "updated"
             counts["imported"] += 1
         results.append(result)
 
@@ -1177,7 +1208,7 @@ def obsidian_dir(
                 source_entity_type=source_brief["source_entity_type"],
                 source_id=source_brief["source_id"],
             )
-            source_brief_id = store.upsert_source_brief(
+            source_brief_id, created = store.upsert_source_brief(
                 source_brief,
                 replace=replace,
                 skip_existing=skip_existing,
@@ -1190,15 +1221,18 @@ def obsidian_dir(
             continue
 
         result["source_brief_id"] = source_brief_id
-        if existing_source_brief and replace:
+        if created:
+            result["status"] = "imported"
+            counts["imported"] += 1
+        elif replace:
             result["status"] = "replaced"
             counts["replaced"] += 1
-        elif existing_source_brief:
+        elif skip_existing:
             result["status"] = "skipped"
             counts["skipped"] += 1
         else:
-            result["status"] = "imported"
-            counts["imported"] += 1
+            result["status"] = "updated"
+            counts["replaced"] += 1
         results.append(result)
 
     payload = {

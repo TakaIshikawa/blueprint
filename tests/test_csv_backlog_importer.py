@@ -67,14 +67,14 @@ def test_csv_backlog_duplicate_handling_reuses_or_replaces_existing_brief(tmp_pa
     importer = CsvBacklogImporter()
 
     csv_path.write_text("source_id,title,summary\nCSV-1,Original,Original summary\n")
-    first_id = store.upsert_source_brief(importer.import_from_source(str(csv_path)))
+    first_id, _created = store.upsert_source_brief(importer.import_from_source(str(csv_path)))
 
     csv_path.write_text("source_id,title,summary\nCSV-1,Updated,Updated summary\n")
-    skipped_id = store.upsert_source_brief(
+    skipped_id, _skipped_created = store.upsert_source_brief(
         importer.import_from_source(str(csv_path)),
         skip_existing=True,
     )
-    replaced_id = store.upsert_source_brief(
+    replaced_id, _replaced_created = store.upsert_source_brief(
         importer.import_from_source(str(csv_path)),
         replace=True,
     )
