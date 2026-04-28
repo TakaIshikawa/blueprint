@@ -10,6 +10,7 @@ from blueprint.generators.json_repair import (
     parse_and_validate_llm_json,
     validate_execution_plan_payload,
 )
+from blueprint.generators.plan_generator import _format_repository_rules_section
 from blueprint.llm.provider import LLMProvider
 
 
@@ -47,6 +48,7 @@ class StagedPlanGenerator:
         self,
         implementation_brief: dict[str, Any],
         model: str | None = None,
+        rules_text: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """
         Generate an execution plan using staged approach.
@@ -54,12 +56,13 @@ class StagedPlanGenerator:
         Args:
             implementation_brief: Implementation brief dictionary from database
             model: Optional model override
+            rules_text: Optional repository-specific implementation rules
 
         Returns:
             Tuple of (plan_dict, tasks_list) ready for insertion into database
         """
         # Stage 1: Generate milestones
-        milestones_data = self._generate_milestones(implementation_brief, model)
+        milestones_data = self._generate_milestones(implementation_brief, model, rules_text)
 
         # Stage 2: Generate tasks for each milestone
         all_tasks = []
@@ -70,12 +73,13 @@ class StagedPlanGenerator:
                 implementation_brief,
                 milestone,
                 model,
+                rules_text,
             )
             all_tasks.extend(tasks_data["tasks"])
             total_tokens += tasks_data["tokens_used"]
 
         # Stage 3: Generate plan metadata
-        plan_metadata = self._generate_plan_metadata(implementation_brief, model)
+        plan_metadata = self._generate_plan_metadata(implementation_brief, model, rules_text)
         total_tokens += plan_metadata["tokens_used"]
 
         # Build execution plan dict
@@ -102,9 +106,10 @@ class StagedPlanGenerator:
         self,
         brief: dict[str, Any],
         model: str | None,
+        rules_text: str | None = None,
     ) -> dict[str, Any]:
         """Generate milestones (Stage 1)."""
-        prompt = self.build_milestones_prompt(brief)
+        prompt = self.build_milestones_prompt(brief, rules_text=rules_text)
 
         response = self.llm.generate(
             prompt=prompt,
@@ -125,7 +130,7 @@ class StagedPlanGenerator:
         }
 
     @staticmethod
-    def build_milestones_prompt(brief: dict[str, Any]) -> str:
+    def build_milestones_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
         """Build the staged generation prompt for milestone outlining."""
         return f"""# Implementation Brief: {brief['title']}
 
@@ -137,6 +142,7 @@ class StagedPlanGenerator:
 
 ## Scope
 {chr(10).join(f"- {item}" for item in brief.get('scope', []))}
+{_format_repository_rules_section(rules_text)}
 
 ---
 
@@ -170,9 +176,9 @@ Requirements:
 Output ONLY the JSON, no additional text."""
 
     @staticmethod
-    def build_prompt(brief: dict[str, Any]) -> str:
+    def build_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
         """Build the first LLM prompt used by staged plan generation."""
-        return StagedPlanGenerator.build_milestones_prompt(brief)
+        return StagedPlanGenerator.build_milestones_prompt(brief, rules_text=rules_text)
 
     def _build_prompt(self, brief: dict[str, Any]) -> str:
         """Build the first LLM prompt used by staged plan generation."""
@@ -183,9 +189,10 @@ Output ONLY the JSON, no additional text."""
         brief: dict[str, Any],
         milestone: dict[str, Any],
         model: str | None,
+        rules_text: str | None = None,
     ) -> dict[str, Any]:
         """Generate tasks for a specific milestone (Stage 2)."""
-        prompt = self.build_milestone_tasks_prompt(brief, milestone)
+        prompt = self.build_milestone_tasks_prompt(brief, milestone, rules_text=rules_text)
 
         response = self.llm.generate(
             prompt=prompt,
@@ -215,9 +222,7 @@ Output ONLY the JSON, no additional text."""
                 "acceptance_criteria": task_data.get("acceptance_criteria", []),
                 "estimated_complexity": task_data.get("estimated_complexity", "medium"),
                 "estimated_hours": task_data.get("estimated_hours")
-                or _estimated_hours_for_complexity(
-                    task_data.get("estimated_complexity", "medium")
-                ),
+                or _estimated_hours_for_complexity(task_data.get("estimated_complexity", "medium")),
                 "risk_level": task_data.get("risk_level")
                 or _risk_level_for_complexity(task_data.get("estimated_complexity", "medium")),
                 "test_command": task_data.get("test_command"),
@@ -234,6 +239,7 @@ Output ONLY the JSON, no additional text."""
     def build_milestone_tasks_prompt(
         brief: dict[str, Any],
         milestone: dict[str, Any],
+        rules_text: str | None = None,
     ) -> str:
         """Build the staged generation prompt for one milestone's tasks."""
         architecture_notes = brief.get("architecture_notes") or "See brief"
@@ -245,6 +251,7 @@ Output ONLY the JSON, no additional text."""
 ## Context
 Product Surface: {brief.get('product_surface', 'TBD')}
 Architecture: {architecture_notes[:200]}...
+{_format_repository_rules_section(rules_text)}
 
 ---
 
@@ -283,14 +290,14 @@ Requirements:
 
 Output ONLY the JSON, no additional text."""
 
-
     def _generate_plan_metadata(
         self,
         brief: dict[str, Any],
         model: str | None,
+        rules_text: str | None = None,
     ) -> dict[str, Any]:
         """Generate plan metadata (Stage 3)."""
-        prompt = self.build_plan_metadata_prompt(brief)
+        prompt = self.build_plan_metadata_prompt(brief, rules_text=rules_text)
 
         response = self.llm.generate(
             prompt=prompt,
@@ -311,7 +318,10 @@ Output ONLY the JSON, no additional text."""
         }
 
     @staticmethod
-    def build_plan_metadata_prompt(brief: dict[str, Any]) -> str:
+    def build_plan_metadata_prompt(
+        brief: dict[str, Any],
+        rules_text: str | None = None,
+    ) -> str:
         """Build the staged generation prompt for execution plan metadata."""
         return f"""# Implementation Brief: {brief['title']}
 
@@ -320,6 +330,7 @@ Output ONLY the JSON, no additional text."""
 
 ## Architecture
 {brief.get('architecture_notes', 'See brief')}
+{_format_repository_rules_section(rules_text)}
 
 ---
 

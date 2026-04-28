@@ -348,6 +348,46 @@ def _emit_prompt_preview(prompt: str, output: Path | None) -> None:
     click.echo(prompt, nl=False)
 
 
+def _load_planning_rules_text(config) -> str | None:
+    """Load configured repository rules files for plan-generation prompts."""
+    sections: list[str] = []
+    for configured_path in config.planning_rules_files:
+        rules_path = _resolve_planning_rules_path(config, configured_path)
+        try:
+            rules_content = rules_path.read_text()
+        except FileNotFoundError:
+            click.echo(
+                f"Warning: planning rules file not found, skipping: {configured_path}",
+                err=True,
+            )
+            continue
+        except OSError as exc:
+            click.echo(
+                f"Warning: could not read planning rules file {configured_path}: {exc}",
+                err=True,
+            )
+            continue
+
+        if rules_content.strip():
+            sections.append(f"### {configured_path}\n{rules_content.strip()}")
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
+def _resolve_planning_rules_path(config, configured_path: str) -> Path:
+    """Resolve a configured rules path relative to the config file when possible."""
+    rules_path = Path(configured_path)
+    if rules_path.is_absolute():
+        return rules_path
+
+    if config.config_path:
+        return Path(config.config_path).expanduser().resolve().parent / rules_path
+
+    return rules_path
+
+
 def _emit_prompt_estimate(estimate: PromptEstimate, json_output: bool) -> None:
     """Write a prompt estimate as JSON or human-readable text."""
     payload = estimate.to_dict()
@@ -2172,7 +2212,10 @@ def plan_prompt(brief_id: str, output: Path | None):
     if not implementation_brief:
         raise click.ClickException(f"Implementation brief not found: {brief_id}")
 
-    _emit_prompt_preview(PlanGenerator.build_prompt(implementation_brief), output)
+    rules_text = _load_planning_rules_text(config)
+    _emit_prompt_preview(
+        PlanGenerator.build_prompt(implementation_brief, rules_text=rules_text), output
+    )
 
 
 @plan.command(name="estimate")
@@ -2193,7 +2236,11 @@ def plan_estimate(brief_id: str, model: str, json_output: bool):
     if not implementation_brief:
         raise click.ClickException(f"Implementation brief not found: {brief_id}")
 
-    estimate = estimate_prompt(PlanGenerator.build_prompt(implementation_brief), model=model)
+    rules_text = _load_planning_rules_text(config)
+    estimate = estimate_prompt(
+        PlanGenerator.build_prompt(implementation_brief, rules_text=rules_text),
+        model=model,
+    )
     _emit_prompt_estimate(estimate, json_output)
 
 
@@ -2230,6 +2277,8 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
             click.echo(f"✗ Implementation brief not found: {brief_id}", err=True)
             return
 
+        rules_text = _load_planning_rules_text(config)
+
         if dry_run_prompt:
             if no_llm:
                 execution_plan, tasks = HeuristicPlanGenerator().generate(implementation_brief)
@@ -2242,9 +2291,9 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
                 )
                 return
             prompt = (
-                StagedPlanGenerator.build_prompt(implementation_brief)
+                StagedPlanGenerator.build_prompt(implementation_brief, rules_text=rules_text)
                 if staged
-                else PlanGenerator.build_prompt(implementation_brief)
+                else PlanGenerator.build_prompt(implementation_brief, rules_text=rules_text)
             )
             click.echo(prompt, nl=False)
             return
@@ -2292,6 +2341,7 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
         execution_plan, tasks = generator.generate(
             implementation_brief=implementation_brief,
             model=_resolve_llm_model(model),
+            rules_text=rules_text,
         )
 
         # Store in database

@@ -38,6 +38,7 @@ class PlanGenerator:
         self,
         implementation_brief: dict[str, Any],
         model: str | None = None,
+        rules_text: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """
         Generate an execution plan from an implementation brief.
@@ -45,12 +46,13 @@ class PlanGenerator:
         Args:
             implementation_brief: Implementation brief dictionary from database
             model: Optional model override
+            rules_text: Optional repository-specific implementation rules
 
         Returns:
             Tuple of (plan_dict, tasks_list) ready for insertion into database
         """
         # Build prompt from implementation brief
-        prompt = self.build_prompt(implementation_brief)
+        prompt = self.build_prompt(implementation_brief, rules_text=rules_text)
 
         # Generate using LLM
         response = self.llm.generate(
@@ -146,7 +148,7 @@ validation plans. Your task is to:
 Output ONLY valid JSON with no additional commentary. Use the exact schema provided in the user prompt."""
 
     @staticmethod
-    def build_prompt(brief: dict[str, Any]) -> str:
+    def build_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
         """Build generation prompt from implementation brief."""
         # Extract key fields from brief
         title = brief["title"]
@@ -184,6 +186,7 @@ Output ONLY valid JSON with no additional commentary. Use the exact schema provi
 
 ## Architecture Notes
 {architecture}
+{_format_repository_rules_section(rules_text)}
 
 ## Validation Plan
 {validation}
@@ -284,3 +287,16 @@ def _risk_level_for_complexity(complexity: str | None) -> str | None:
         "medium": "medium",
         "high": "high",
     }.get((complexity or "").lower())
+
+
+def _format_repository_rules_section(rules_text: str | None) -> str:
+    """Render optional repository implementation rules for plan prompts."""
+    if not rules_text or not rules_text.strip():
+        return ""
+
+    return f"""
+
+## Repository Rules
+Follow these repository-specific implementation rules when creating the plan:
+
+{rules_text.strip()}"""

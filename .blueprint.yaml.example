@@ -35,6 +35,14 @@ llm:
   default_model: claude-opus-4-6  # or claude-sonnet-4-5
   # Set ANTHROPIC_API_KEY environment variable for API access
 
+# Execution planning configuration
+planning:
+  # Optional repository rules included in plan-generation prompts.
+  # Relative paths resolve from this config file's directory.
+  rules_files:
+    # - AGENTS.md
+    # - .cursorrules
+
 # Export configuration
 exports:
   output_dir: ~/blueprint-exports

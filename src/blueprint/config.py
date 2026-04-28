@@ -53,6 +53,9 @@ class Config:
                 "provider": "anthropic",
                 "default_model": "claude-opus-4-6",
             },
+            "planning": {
+                "rules_files": [],
+            },
             "exports": {
                 "output_dir": str(Path.home() / "blueprint-exports"),
                 "formats": {
@@ -168,6 +171,12 @@ class Config:
                     self._expand_path_value(
                         config, ("exports", "templates", target_name, "task_path")
                     )
+
+        rules_files = self.get_from(config, ("planning", "rules_files"))
+        if isinstance(rules_files, list):
+            config["planning"]["rules_files"] = [
+                self._expand_path(path) if isinstance(path, str) else path for path in rules_files
+            ]
 
     def _expand_path_value(self, config: dict[str, Any], path: tuple[str, ...]) -> None:
         """Expand a string path value at a nested config path when it exists."""
@@ -397,6 +406,29 @@ class Config:
                 "ANTHROPIC_API_KEY environment variable is set",
             )
 
+        rules_files = self.get("planning.rules_files", [])
+        if not isinstance(rules_files, list):
+            self._add_check(
+                checks,
+                "planning.rules_files",
+                False,
+                "planning.rules_files must be a list of path strings",
+            )
+        elif not all(isinstance(path, str) and path for path in rules_files):
+            self._add_check(
+                checks,
+                "planning.rules_files",
+                False,
+                "planning.rules_files entries must be non-empty strings",
+            )
+        else:
+            self._add_check(
+                checks,
+                "planning.rules_files",
+                True,
+                f"Planning rules files configured: {len(rules_files)}",
+            )
+
         return checks
 
     def _add_check(
@@ -573,6 +605,14 @@ class Config:
     def export_dir(self) -> str:
         """Get export directory."""
         return self.get("exports.output_dir")
+
+    @property
+    def planning_rules_files(self) -> list[str]:
+        """Get optional repository rules files for plan generation."""
+        rules_files = self.get("planning.rules_files", [])
+        if not isinstance(rules_files, list):
+            return []
+        return [path for path in rules_files if isinstance(path, str) and path]
 
     @property
     def anthropic_api_key(self) -> str:
