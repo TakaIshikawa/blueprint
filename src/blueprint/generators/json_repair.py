@@ -145,7 +145,7 @@ def parse_and_validate_llm_json(
 
             return validated.model_dump(mode="python", exclude_none=False)
 
-    debug_file = _write_debug_response(content)
+    debug_file = write_debug_response(content)
     message = (
         f"Failed to parse LLM response for {context} after trying multiple repair "
         f"strategies.\n"
@@ -247,8 +247,3 @@ def _truncate(text: str, limit: int = 500) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[:limit]}..."
-
-
-def _write_debug_response(content: str) -> str:
-    """Persist an unrecoverable response for later inspection."""
-    return write_debug_response(content)
