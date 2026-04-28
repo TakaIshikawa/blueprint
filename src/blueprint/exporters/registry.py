@@ -46,6 +46,7 @@ from blueprint.exporters.status_report import StatusReportExporter
 from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.taskfile import TaskfileExporter
+from blueprint.exporters.teamwork_csv import TeamworkCsvExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
@@ -109,6 +110,7 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("task-bundle", TaskBundleExporter, "markdown", ""),
     ExporterRegistration("taskfile", TaskfileExporter, "yaml", ".yml"),
     ExporterRegistration("task-queue-jsonl", TaskQueueJsonlExporter, "jsonl", ".jsonl"),
+    ExporterRegistration("teamwork-csv", TeamworkCsvExporter, "csv", ".csv"),
     ExporterRegistration("trello-json", TrelloJsonExporter, "json", ".json"),
     ExporterRegistration("vscode-tasks", VSCodeTasksExporter, "json", ".json"),
     ExporterRegistration("wave-schedule", WaveScheduleExporter, "json", ".json"),
