@@ -52,6 +52,22 @@ exports:
 
 Set `ANTHROPIC_API_KEY` environment variable for LLM features.
 
+Configuration precedence is: built-in defaults, then `.blueprint.yaml`, then supported
+environment overrides. Path values in config and overrides expand `~` and `${VAR}` syntax.
+
+Supported path overrides:
+
+```bash
+BLUEPRINT_DB_PATH=/tmp/blueprint.db
+BLUEPRINT_EXPORT_DIR=/tmp/blueprint-exports
+BLUEPRINT_MAX_DB_PATH=/tmp/max.db
+BLUEPRINT_GRAPH_PATH=/tmp/graph
+```
+
+Custom sources can use `BLUEPRINT_<SOURCE>_DB_PATH` for `db_path` values or
+`BLUEPRINT_<SOURCE>_PATH` for `path` values, where `<SOURCE>` is the uppercased source
+name with `-` replaced by `_`.
+
 ## Usage
 
 ### Import design briefs

@@ -1,5 +1,16 @@
 # Blueprint Configuration Example
 # Copy this file to ~/.blueprint.yaml or ./.blueprint.yaml and customize
+#
+# Precedence: defaults < this file < environment overrides.
+# Path values expand ~ and ${VAR} references.
+#
+# Supported path overrides:
+#   BLUEPRINT_DB_PATH
+#   BLUEPRINT_EXPORT_DIR
+#   BLUEPRINT_MAX_DB_PATH
+#   BLUEPRINT_GRAPH_PATH
+#   BLUEPRINT_<SOURCE>_DB_PATH for sources with db_path
+#   BLUEPRINT_<SOURCE>_PATH for sources with path
 
 # Database configuration
 database:
