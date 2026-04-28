@@ -11,6 +11,7 @@ from blueprint.generators.json_repair import (
     validate_execution_plan_payload,
 )
 from blueprint.generators.plan_generator import _format_repository_rules_section
+from blueprint.generators.plan_generator import _format_repository_context_section
 from blueprint.llm.provider import LLMProvider
 
 
@@ -49,6 +50,7 @@ class StagedPlanGenerator:
         implementation_brief: dict[str, Any],
         model: str | None = None,
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """
         Generate an execution plan using staged approach.
@@ -57,12 +59,18 @@ class StagedPlanGenerator:
             implementation_brief: Implementation brief dictionary from database
             model: Optional model override
             rules_text: Optional repository-specific implementation rules
+            repo_context: Optional target repository summary
 
         Returns:
             Tuple of (plan_dict, tasks_list) ready for insertion into database
         """
         # Stage 1: Generate milestones
-        milestones_data = self._generate_milestones(implementation_brief, model, rules_text)
+        milestones_data = self._generate_milestones(
+            implementation_brief,
+            model,
+            rules_text,
+            repo_context,
+        )
 
         # Stage 2: Generate tasks for each milestone
         all_tasks = []
@@ -74,12 +82,18 @@ class StagedPlanGenerator:
                 milestone,
                 model,
                 rules_text,
+                repo_context,
             )
             all_tasks.extend(tasks_data["tasks"])
             total_tokens += tasks_data["tokens_used"]
 
         # Stage 3: Generate plan metadata
-        plan_metadata = self._generate_plan_metadata(implementation_brief, model, rules_text)
+        plan_metadata = self._generate_plan_metadata(
+            implementation_brief,
+            model,
+            rules_text,
+            repo_context,
+        )
         total_tokens += plan_metadata["tokens_used"]
 
         # Build execution plan dict
@@ -107,9 +121,14 @@ class StagedPlanGenerator:
         brief: dict[str, Any],
         model: str | None,
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> dict[str, Any]:
         """Generate milestones (Stage 1)."""
-        prompt = self.build_milestones_prompt(brief, rules_text=rules_text)
+        prompt = self.build_milestones_prompt(
+            brief,
+            rules_text=rules_text,
+            repo_context=repo_context,
+        )
 
         response = self.llm.generate(
             prompt=prompt,
@@ -130,7 +149,11 @@ class StagedPlanGenerator:
         }
 
     @staticmethod
-    def build_milestones_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
+    def build_milestones_prompt(
+        brief: dict[str, Any],
+        rules_text: str | None = None,
+        repo_context: str | None = None,
+    ) -> str:
         """Build the staged generation prompt for milestone outlining."""
         return f"""# Implementation Brief: {brief['title']}
 
@@ -143,6 +166,7 @@ class StagedPlanGenerator:
 ## Scope
 {chr(10).join(f"- {item}" for item in brief.get('scope', []))}
 {_format_repository_rules_section(rules_text)}
+{_format_repository_context_section(repo_context)}
 
 ---
 
@@ -176,9 +200,17 @@ Requirements:
 Output ONLY the JSON, no additional text."""
 
     @staticmethod
-    def build_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
+    def build_prompt(
+        brief: dict[str, Any],
+        rules_text: str | None = None,
+        repo_context: str | None = None,
+    ) -> str:
         """Build the first LLM prompt used by staged plan generation."""
-        return StagedPlanGenerator.build_milestones_prompt(brief, rules_text=rules_text)
+        return StagedPlanGenerator.build_milestones_prompt(
+            brief,
+            rules_text=rules_text,
+            repo_context=repo_context,
+        )
 
     def _build_prompt(self, brief: dict[str, Any]) -> str:
         """Build the first LLM prompt used by staged plan generation."""
@@ -190,9 +222,15 @@ Output ONLY the JSON, no additional text."""
         milestone: dict[str, Any],
         model: str | None,
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> dict[str, Any]:
         """Generate tasks for a specific milestone (Stage 2)."""
-        prompt = self.build_milestone_tasks_prompt(brief, milestone, rules_text=rules_text)
+        prompt = self.build_milestone_tasks_prompt(
+            brief,
+            milestone,
+            rules_text=rules_text,
+            repo_context=repo_context,
+        )
 
         response = self.llm.generate(
             prompt=prompt,
@@ -240,6 +278,7 @@ Output ONLY the JSON, no additional text."""
         brief: dict[str, Any],
         milestone: dict[str, Any],
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> str:
         """Build the staged generation prompt for one milestone's tasks."""
         architecture_notes = brief.get("architecture_notes") or "See brief"
@@ -252,6 +291,7 @@ Output ONLY the JSON, no additional text."""
 Product Surface: {brief.get('product_surface', 'TBD')}
 Architecture: {architecture_notes[:200]}...
 {_format_repository_rules_section(rules_text)}
+{_format_repository_context_section(repo_context)}
 
 ---
 
@@ -295,9 +335,14 @@ Output ONLY the JSON, no additional text."""
         brief: dict[str, Any],
         model: str | None,
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> dict[str, Any]:
         """Generate plan metadata (Stage 3)."""
-        prompt = self.build_plan_metadata_prompt(brief, rules_text=rules_text)
+        prompt = self.build_plan_metadata_prompt(
+            brief,
+            rules_text=rules_text,
+            repo_context=repo_context,
+        )
 
         response = self.llm.generate(
             prompt=prompt,
@@ -321,6 +366,7 @@ Output ONLY the JSON, no additional text."""
     def build_plan_metadata_prompt(
         brief: dict[str, Any],
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> str:
         """Build the staged generation prompt for execution plan metadata."""
         return f"""# Implementation Brief: {brief['title']}
@@ -331,6 +377,7 @@ Output ONLY the JSON, no additional text."""
 ## Architecture
 {brief.get('architecture_notes', 'See brief')}
 {_format_repository_rules_section(rules_text)}
+{_format_repository_context_section(repo_context)}
 
 ---
 

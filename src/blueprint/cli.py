@@ -148,6 +148,7 @@ from blueprint.importers.source_jsonl_importer import SourceJsonlImporter
 from blueprint.llm.client import LLMClient
 from blueprint.llm.estimator import PromptEstimate, estimate_prompt
 from blueprint.llm.provider import LLMProvider
+from blueprint.repo_scanner import format_repository_context, scan_repository
 from blueprint.store import Store, current_db_revision, init_db, migrate_db
 
 
@@ -2428,7 +2429,19 @@ def plan_estimate(brief_id: str, model: str, json_output: bool):
     is_flag=True,
     help="Use deterministic heuristic planning without API credentials",
 )
-def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm: bool):
+@click.option(
+    "--repo-path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    help="Scan a target repository and include its context in the plan prompt",
+)
+def create(
+    brief_id: str,
+    model: str,
+    staged: bool,
+    dry_run_prompt: bool,
+    no_llm: bool,
+    repo_path: Path | None,
+):
     """Generate execution plan from implementation brief."""
     config = get_config()
     store = Store(config.db_path)
@@ -2441,6 +2454,9 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
             return
 
         rules_text = _load_planning_rules_text(config)
+        repo_context = None
+        if repo_path is not None:
+            repo_context = format_repository_context(scan_repository(repo_path))
 
         if dry_run_prompt:
             if no_llm:
@@ -2454,9 +2470,17 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
                 )
                 return
             prompt = (
-                StagedPlanGenerator.build_prompt(implementation_brief, rules_text=rules_text)
+                StagedPlanGenerator.build_prompt(
+                    implementation_brief,
+                    rules_text=rules_text,
+                    repo_context=repo_context,
+                )
                 if staged
-                else PlanGenerator.build_prompt(implementation_brief, rules_text=rules_text)
+                else PlanGenerator.build_prompt(
+                    implementation_brief,
+                    rules_text=rules_text,
+                    repo_context=repo_context,
+                )
             )
             click.echo(prompt, nl=False)
             return
@@ -2505,6 +2529,7 @@ def create(brief_id: str, model: str, staged: bool, dry_run_prompt: bool, no_llm
             implementation_brief=implementation_brief,
             model=_resolve_llm_model(model),
             rules_text=rules_text,
+            repo_context=repo_context,
         )
 
         # Store in database

@@ -39,6 +39,7 @@ class PlanGenerator:
         implementation_brief: dict[str, Any],
         model: str | None = None,
         rules_text: str | None = None,
+        repo_context: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """
         Generate an execution plan from an implementation brief.
@@ -47,12 +48,17 @@ class PlanGenerator:
             implementation_brief: Implementation brief dictionary from database
             model: Optional model override
             rules_text: Optional repository-specific implementation rules
+            repo_context: Optional target repository summary
 
         Returns:
             Tuple of (plan_dict, tasks_list) ready for insertion into database
         """
         # Build prompt from implementation brief
-        prompt = self.build_prompt(implementation_brief, rules_text=rules_text)
+        prompt = self.build_prompt(
+            implementation_brief,
+            rules_text=rules_text,
+            repo_context=repo_context,
+        )
 
         # Generate using LLM
         response = self.llm.generate(
@@ -148,7 +154,11 @@ validation plans. Your task is to:
 Output ONLY valid JSON with no additional commentary. Use the exact schema provided in the user prompt."""
 
     @staticmethod
-    def build_prompt(brief: dict[str, Any], rules_text: str | None = None) -> str:
+    def build_prompt(
+        brief: dict[str, Any],
+        rules_text: str | None = None,
+        repo_context: str | None = None,
+    ) -> str:
         """Build generation prompt from implementation brief."""
         # Extract key fields from brief
         title = brief["title"]
@@ -187,6 +197,7 @@ Output ONLY valid JSON with no additional commentary. Use the exact schema provi
 ## Architecture Notes
 {architecture}
 {_format_repository_rules_section(rules_text)}
+{_format_repository_context_section(repo_context)}
 
 ## Validation Plan
 {validation}
@@ -300,3 +311,17 @@ def _format_repository_rules_section(rules_text: str | None) -> str:
 Follow these repository-specific implementation rules when creating the plan:
 
 {rules_text.strip()}"""
+
+
+def _format_repository_context_section(repo_context: str | None) -> str:
+    """Render optional repository scan context for plan prompts."""
+    if not repo_context or not repo_context.strip():
+        return ""
+
+    return f"""
+
+## Repository Context
+Use this target repository scan to make tasks concrete and choose likely files,
+package managers, and validation commands:
+
+{repo_context.strip()}"""
