@@ -100,6 +100,11 @@ class PlanGenerator:
                     "files_or_modules": task_data.get("files_or_modules", []),
                     "acceptance_criteria": task_data["acceptance_criteria"],
                     "estimated_complexity": task_data.get("estimated_complexity"),
+                    "estimated_hours": task_data.get("estimated_hours")
+                    or _estimated_hours_for_complexity(task_data.get("estimated_complexity")),
+                    "risk_level": task_data.get("risk_level")
+                    or _risk_level_for_complexity(task_data.get("estimated_complexity")),
+                    "test_command": task_data.get("test_command"),
                     "status": "pending",
                 }
                 tasks.append(task)
@@ -216,7 +221,10 @@ Your output must be valid JSON matching this exact schema:
             "Specific, testable criterion 1",
             "Specific, testable criterion 2"
           ],
-          "estimated_complexity": "low | medium | high"
+          "estimated_complexity": "low | medium | high",
+          "estimated_hours": 1.5,
+          "risk_level": "low | medium | high",
+          "test_command": "Focused command to validate this task, or null"
         }}
       ]
     }},
@@ -233,6 +241,9 @@ Your output must be valid JSON matching this exact schema:
 Requirements for tasks:
 - Tasks should be small (completable in 30 min - 4 hours for agents, 1-2 days for humans)
 - Each task should have 2-4 acceptance criteria
+- Include estimated_hours as a realistic decimal effort estimate
+- Include risk_level based on implementation uncertainty and blast radius
+- Include test_command when a focused validation command is known; otherwise use null
 - Dependencies use "Milestone Name:task_index" format (e.g., "Milestone 1:0" for first task)
 - files_or_modules helps execution engines know where to work
 - suggested_engine should match task nature:
@@ -255,3 +266,21 @@ Output ONLY the JSON, no additional text."""
     def _build_prompt(self, brief: dict[str, Any]) -> str:
         """Build generation prompt from implementation brief."""
         return self.build_prompt(brief)
+
+
+def _estimated_hours_for_complexity(complexity: str | None) -> float | None:
+    """Return a conservative default task estimate from complexity."""
+    return {
+        "low": 1.0,
+        "medium": 3.0,
+        "high": 6.0,
+    }.get((complexity or "").lower())
+
+
+def _risk_level_for_complexity(complexity: str | None) -> str | None:
+    """Default risk to the existing coarse complexity signal."""
+    return {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+    }.get((complexity or "").lower())

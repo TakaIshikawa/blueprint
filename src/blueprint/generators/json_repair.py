@@ -44,6 +44,9 @@ class PlanTaskSpec(BaseModel):
     files_or_modules: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str]
     estimated_complexity: str | None = None
+    estimated_hours: float | None = None
+    risk_level: str | None = None
+    test_command: str | None = None
 
 
 class PlanMilestoneSpec(BaseModel):

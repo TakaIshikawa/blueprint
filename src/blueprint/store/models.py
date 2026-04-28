@@ -175,6 +175,9 @@ class ExecutionTaskModel(Base):
     files_or_modules = Column(JSON, nullable=True)  # List of files/modules to work on
     acceptance_criteria = Column(JSON, nullable=False)  # List of AC items
     estimated_complexity = Column(String, nullable=True)  # low | medium | high
+    estimated_hours = Column(Float, nullable=True)  # Practical effort estimate
+    risk_level = Column(String, nullable=True)  # low | medium | high
+    test_command = Column(Text, nullable=True)  # Focused validation command
 
     # Status
     status = Column(

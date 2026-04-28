@@ -81,13 +81,19 @@ class RelayExporter(TargetExporter):
                     "files": task.get("files_or_modules", []),
                     "acceptance_criteria": task.get("acceptance_criteria", []),
                     "complexity": task.get("estimated_complexity", "medium"),
+                    "estimated_hours": task.get("estimated_hours"),
+                    "risk_level": task.get("risk_level"),
+                    "test_command": task.get("test_command"),
                     "status": task.get("status", "pending"),
                 }
                 for task in execution_plan["tasks"]
             ],
             "validation": {
                 "test_strategy": execution_plan.get("test_strategy", ""),
-                "commands": self._extract_validation_commands(implementation_brief),
+                "commands": self._extract_validation_commands(
+                    implementation_brief,
+                    execution_plan.get("tasks", []),
+                ),
             },
             "context": {
                 "scope": implementation_brief.get("scope", []),
@@ -106,7 +112,11 @@ class RelayExporter(TargetExporter):
                 return f"m{i}"
         return "m1"  # Default
 
-    def _extract_validation_commands(self, brief: dict[str, Any]) -> list[str]:
+    def _extract_validation_commands(
+        self,
+        brief: dict[str, Any],
+        tasks: list[dict[str, Any]] | None = None,
+    ) -> list[str]:
         """Extract validation commands from brief."""
         commands = []
 
@@ -118,4 +128,8 @@ class RelayExporter(TargetExporter):
             elif "cli" in surface:
                 commands.extend(["<cli> --help", "pytest"])
 
-        return commands
+        for task in tasks or []:
+            if task.get("test_command"):
+                commands.append(task["test_command"])
+
+        return list(dict.fromkeys(commands))

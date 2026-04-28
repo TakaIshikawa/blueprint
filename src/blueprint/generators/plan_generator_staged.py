@@ -214,6 +214,13 @@ Output ONLY the JSON, no additional text."""
                 "files_or_modules": task_data.get("files_or_modules", []),
                 "acceptance_criteria": task_data.get("acceptance_criteria", []),
                 "estimated_complexity": task_data.get("estimated_complexity", "medium"),
+                "estimated_hours": task_data.get("estimated_hours")
+                or _estimated_hours_for_complexity(
+                    task_data.get("estimated_complexity", "medium")
+                ),
+                "risk_level": task_data.get("risk_level")
+                or _risk_level_for_complexity(task_data.get("estimated_complexity", "medium")),
+                "test_command": task_data.get("test_command"),
                 "status": "pending",
             }
             tasks_with_metadata.append(task)
@@ -256,6 +263,9 @@ Output ONLY valid JSON matching this schema:
         "Specific, testable criterion 2"
       ],
       "estimated_complexity": "low | medium | high",
+      "estimated_hours": 1.5,
+      "risk_level": "low | medium | high",
+      "test_command": "Focused command to validate this task, or null",
       "suggested_engine": "claude_code | relay | manual"
     }}
   ]
@@ -264,11 +274,15 @@ Output ONLY valid JSON matching this schema:
 Requirements:
 - 3-6 tasks for this milestone
 - Each task should be completable in 30min - 4 hours
+- estimated_hours should be a realistic decimal effort estimate
+- risk_level should reflect implementation uncertainty and blast radius
+- test_command should be a focused validation command when known, otherwise null
 - Files should match the project (check product surface)
 - Acceptance criteria should be measurable
 - No dependencies needed (we'll add those later)
 
 Output ONLY the JSON, no additional text."""
+
 
     def _generate_plan_metadata(
         self,
@@ -322,3 +336,21 @@ Output ONLY valid JSON matching this schema:
 }}
 
 Output ONLY the JSON, no additional text."""
+
+
+def _estimated_hours_for_complexity(complexity: str | None) -> float:
+    """Return a conservative default task estimate from complexity."""
+    return {
+        "low": 1.0,
+        "medium": 3.0,
+        "high": 6.0,
+    }.get((complexity or "").lower(), 3.0)
+
+
+def _risk_level_for_complexity(complexity: str | None) -> str:
+    """Default risk to the existing coarse complexity signal."""
+    return {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+    }.get((complexity or "").lower(), "medium")

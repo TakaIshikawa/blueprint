@@ -99,6 +99,9 @@ class ExecutionTask(DomainModel):
     files_or_modules: list[str] | None = None
     acceptance_criteria: list[str]
     estimated_complexity: str | None = None
+    estimated_hours: float | None = Field(default=None, ge=0)
+    risk_level: str | None = None
+    test_command: str | None = None
     status: TaskStatus = "pending"
     metadata: dict[str, Any] = Field(default_factory=dict)
     blocked_reason: str | None = None

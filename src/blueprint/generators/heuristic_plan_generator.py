@@ -59,6 +59,9 @@ class HeuristicPlanGenerator:
                         "files_or_modules": task_data["files_or_modules"],
                         "acceptance_criteria": task_data["acceptance_criteria"],
                         "estimated_complexity": task_data["estimated_complexity"],
+                        "estimated_hours": task_data["estimated_hours"],
+                        "risk_level": task_data["risk_level"],
+                        "test_command": task_data["test_command"],
                         "status": "pending",
                     }
                 )
@@ -216,6 +219,9 @@ class HeuristicPlanGenerator:
             "files_or_modules": _dedupe(files) or ["TBD"],
             "acceptance_criteria": acceptance,
             "estimated_complexity": complexity,
+            "estimated_hours": _estimated_hours_for_complexity(complexity),
+            "risk_level": _risk_level_for_complexity(complexity),
+            "test_command": _test_command_for_files(files),
             "suggested_engine": engine,
             "owner_type": "agent",
         }
@@ -322,3 +328,30 @@ def _slugify(value: str) -> str:
 
 def _stable_token(value: str, length: int) -> str:
     return hashlib.sha1(value.encode("utf-8")).hexdigest()[:length]
+
+
+def _estimated_hours_for_complexity(complexity: str) -> float:
+    return {
+        "low": 1.0,
+        "medium": 3.0,
+        "high": 6.0,
+    }.get(complexity, 3.0)
+
+
+def _risk_level_for_complexity(complexity: str) -> str:
+    return {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+    }.get(complexity, "medium")
+
+
+def _test_command_for_files(files: list[str]) -> str | None:
+    test_files = [
+        file_path for file_path in files if file_path.startswith("tests/")
+    ]
+    if test_files:
+        return f"poetry run pytest {' '.join(_dedupe(test_files))}"
+    if any(file_path.endswith(".py") or file_path.startswith("src") for file_path in files):
+        return "poetry run pytest"
+    return None

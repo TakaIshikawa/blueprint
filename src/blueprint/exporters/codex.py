@@ -104,6 +104,16 @@ class CodexExporter(TargetExporter):
                     files_str = ", ".join(f"`{f}`" for f in task["files_or_modules"])
                     sections.append(f"\n*Files:* {files_str}")
 
+                metadata_items = []
+                if task.get("estimated_hours") is not None:
+                    metadata_items.append(f"estimated hours: {task['estimated_hours']}")
+                if task.get("risk_level"):
+                    metadata_items.append(f"risk: {task['risk_level']}")
+                if task.get("test_command"):
+                    metadata_items.append(f"test: `{task['test_command']}`")
+                if metadata_items:
+                    sections.append(f"\n*Planning:* {'; '.join(metadata_items)}")
+
                 # Acceptance
                 if task.get("acceptance_criteria"):
                     sections.append("\n*Success criteria:*")

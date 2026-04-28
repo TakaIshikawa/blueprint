@@ -72,11 +72,22 @@ class Store:
             return
 
         task_columns = {column["name"] for column in inspector.get_columns("execution_tasks")}
+        task_columns_to_add = []
         if "metadata" not in task_columns:
+            task_columns_to_add.append("metadata JSON")
+        if "estimated_hours" not in task_columns:
+            task_columns_to_add.append("estimated_hours FLOAT")
+        if "risk_level" not in task_columns:
+            task_columns_to_add.append("risk_level VARCHAR")
+        if "test_command" not in task_columns:
+            task_columns_to_add.append("test_command TEXT")
+
+        if task_columns_to_add:
             with self.engine.begin() as connection:
-                connection.execute(
-                    text("ALTER TABLE execution_tasks ADD COLUMN metadata JSON")
-                )
+                for column_definition in task_columns_to_add:
+                    connection.execute(
+                        text(f"ALTER TABLE execution_tasks ADD COLUMN {column_definition}")
+                    )
 
     def get_session(self) -> Session:
         """Get a new database session."""
@@ -393,6 +404,9 @@ class Store:
                     files_or_modules=deepcopy(source_task.files_or_modules),
                     acceptance_criteria=deepcopy(source_task.acceptance_criteria),
                     estimated_complexity=source_task.estimated_complexity,
+                    estimated_hours=source_task.estimated_hours,
+                    risk_level=source_task.risk_level,
+                    test_command=source_task.test_command,
                     status="pending" if reset_statuses else source_task.status,
                     task_metadata=task_metadata,
                 )
@@ -671,6 +685,9 @@ class Store:
             "files_or_modules": task.files_or_modules,
             "acceptance_criteria": task.acceptance_criteria,
             "estimated_complexity": task.estimated_complexity,
+            "estimated_hours": task.estimated_hours,
+            "risk_level": task.risk_level,
+            "test_command": task.test_command,
             "status": task.status,
             "metadata": task.task_metadata or {},
             "blocked_reason": (task.task_metadata or {}).get("blocked_reason"),
