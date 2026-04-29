@@ -82,6 +82,12 @@ from blueprint.audits.task_completeness import (
     TaskCompletenessResult,
     audit_task_completeness,
 )
+from blueprint.audits.test_command_quality import (
+    TestCommandQualityFinding,
+    TestCommandQualityResult,
+    TestCommandQualityTaskResult,
+    audit_test_command_quality,
+)
 from blueprint.audits.task_splitting import (
     SuggestedSubtask,
     TaskSplitReason,
@@ -136,6 +142,9 @@ __all__ = [
     "TaskCompletenessFinding",
     "TaskCompletenessItem",
     "TaskCompletenessResult",
+    "TestCommandQualityFinding",
+    "TestCommandQualityResult",
+    "TestCommandQualityTaskResult",
     "TaskSplitReason",
     "TaskSplitRecommendation",
     "TaskSplittingResult",
@@ -155,6 +164,7 @@ __all__ = [
     "audit_release_readiness",
     "audit_risk_coverage",
     "audit_task_completeness",
+    "audit_test_command_quality",
     "find_similar_source_briefs",
     "find_duplicate_source_brief_groups",
     "suggest_dependency_repairs",
