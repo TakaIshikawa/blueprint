@@ -10,6 +10,10 @@ from blueprint.generators.json_repair import (
     validate_execution_plan_payload,
 )
 from blueprint.llm.provider import LLMProvider
+from blueprint.validation_commands import (
+    extract_validation_commands_from_context,
+    flatten_validation_commands,
+)
 
 
 def generate_execution_plan_id() -> str:
@@ -130,6 +134,7 @@ class PlanGenerator:
             "generation_model": response["model"],
             "generation_tokens": response["usage"]["total_tokens"],
             "generation_prompt": prompt[:1000],
+            "metadata": _repository_validation_metadata(repo_context),
         }
 
         validate_execution_plan_payload(execution_plan, tasks)
@@ -258,6 +263,8 @@ Requirements for tasks:
 - Include estimated_hours as a realistic decimal effort estimate
 - Include risk_level based on implementation uncertainty and blast radius
 - Include test_command when a focused validation command is known; otherwise use null
+- Prefer test_command values from the Repository Context recommended validation commands
+  when they fit the task
 - Dependencies use "Milestone Name:task_index" format (e.g., "Milestone 1:0" for first task)
 - files_or_modules helps execution engines know where to work
 - suggested_engine should match task nature:
@@ -325,3 +332,11 @@ Use this target repository scan to make tasks concrete and choose likely files,
 package managers, and validation commands:
 
 {repo_context.strip()}"""
+
+
+def _repository_validation_metadata(repo_context: str | None) -> dict[str, Any]:
+    """Build plan metadata from formatted repository context."""
+    validation_commands = extract_validation_commands_from_context(repo_context)
+    if not flatten_validation_commands(validation_commands):
+        return {}
+    return {"validation_commands": validation_commands}
