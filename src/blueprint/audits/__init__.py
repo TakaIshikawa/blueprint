@@ -50,6 +50,11 @@ from blueprint.audits.env_readiness import (
     EnvReadinessTaskResult,
     audit_env_readiness,
 )
+from blueprint.audits.file_path_hygiene import (
+    FilePathHygieneFinding,
+    FilePathHygieneResult,
+    audit_file_path_hygiene,
+)
 from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyFinding,
     MilestoneDependencyResult,
@@ -117,6 +122,8 @@ __all__ = [
     "EnvReadinessFinding",
     "EnvReadinessResult",
     "EnvReadinessTaskResult",
+    "FilePathHygieneFinding",
+    "FilePathHygieneResult",
     "MilestoneDependencyFinding",
     "MilestoneDependencyResult",
     "OwnershipGapFinding",
@@ -151,6 +158,7 @@ __all__ = [
     "analyze_workload",
     "build_env_inventory",
     "audit_env_readiness",
+    "audit_file_path_hygiene",
     "evaluate_plan_readiness",
     "audit_release_readiness",
     "audit_risk_coverage",
