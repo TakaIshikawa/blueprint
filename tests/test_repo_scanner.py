@@ -46,6 +46,36 @@ def test_scan_repository_ignores_generated_and_dependency_directories(tmp_path):
     assert "generated.py" not in context
 
 
+def test_scan_repository_ignores_python_generated_metadata_directories(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Notes\n")
+
+    egg_info = repo / "demo.egg-info"
+    eggs = repo / ".eggs"
+    pycache = repo / "__pycache__"
+    for generated_dir in [egg_info, eggs, pycache]:
+        generated_dir.mkdir()
+        (generated_dir / "generated.py").write_text("bad = True\n")
+        (generated_dir / "package.json").write_text('{"scripts": {"test": "bad"}}')
+        (generated_dir / "pytest.ini").write_text("[pytest]\n")
+
+    summary = scan_repository(repo)
+    context = format_repository_context(summary)
+
+    assert summary["languages"] == ["Generic"]
+    assert summary["important_files"] == ["README.md"]
+    assert ".eggs" in summary["ignored_directories"]
+    assert "__pycache__" in summary["ignored_directories"]
+    assert "demo.egg-info/" not in summary["top_level_structure"]
+    assert ".eggs/" not in summary["top_level_structure"]
+    assert "__pycache__/" not in summary["top_level_structure"]
+    assert "generated.py" not in context
+    assert "pytest.ini" not in context
+    assert "package.json" not in context
+    assert "demo.egg-info" not in context
+
+
 def test_scan_repository_reports_generic_project_without_language_signals(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -70,4 +100,3 @@ def test_scan_repository_rejects_invalid_paths(tmp_path):
             assert "Repository path" in str(exc)
         else:
             raise AssertionError("scan_repository should reject invalid paths")
-

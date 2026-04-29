@@ -14,6 +14,7 @@ from blueprint.validation_commands import (
 
 IGNORED_DIRS = {
     ".cache",
+    ".eggs",
     ".git",
     ".hg",
     ".mypy_cache",
@@ -31,6 +32,7 @@ IGNORED_DIRS = {
     "target",
     "vendor",
     "venv",
+    "__pycache__",
 }
 
 IMPORTANT_FILENAMES = {
@@ -141,7 +143,7 @@ def _shallow_files(root: Path, max_depth: int = 2, max_files: int = 300) -> list
         current, depth = stack.pop()
         for entry in _safe_iterdir(current):
             if entry.is_dir():
-                if depth < max_depth and entry.name not in IGNORED_DIRS:
+                if depth < max_depth and not _is_ignored_directory(entry):
                     stack.append((entry, depth + 1))
                 continue
             if entry.is_file():
@@ -155,13 +157,17 @@ def _shallow_files(root: Path, max_depth: int = 2, max_files: int = 300) -> list
 def _top_level_structure(root_entries: list[Path], max_entries: int = 40) -> list[str]:
     structure: list[str] = []
     for entry in root_entries:
-        if entry.name in IGNORED_DIRS:
+        if entry.is_dir() and _is_ignored_directory(entry):
             continue
         suffix = "/" if entry.is_dir() else ""
         structure.append(f"{entry.name}{suffix}")
         if len(structure) >= max_entries:
             break
     return structure
+
+
+def _is_ignored_directory(path: Path) -> bool:
+    return path.name in IGNORED_DIRS or path.name.endswith(".egg-info")
 
 
 def _detect_languages(root_file_names: set[str], files: list[Path]) -> list[str]:
