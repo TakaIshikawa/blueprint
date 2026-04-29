@@ -73,7 +73,7 @@ class ImplementationBrief(DomainModel):
     assumptions: list[str]
     architecture_notes: str | None = None
     data_requirements: str | None = None
-    integration_points: list[str] | None = None
+    integration_points: list[str] = Field(default_factory=list)
     risks: list[str]
     validation_plan: str = Field(min_length=1)
     definition_of_done: list[str]

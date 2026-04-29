@@ -1,8 +1,12 @@
 """LLM-based implementation brief generator."""
 
+import re
 import uuid
 from typing import Any
 
+from pydantic import ValidationError
+
+from blueprint.domain import ImplementationBrief
 from blueprint.llm.json_parser import parse_json_response
 from blueprint.llm.provider import LLMProvider
 
@@ -56,34 +60,99 @@ class BriefGenerator:
             context="implementation brief generation",
         )
 
-        # Build implementation brief dict
+        implementation_brief = self._validate_generated_brief(
+            self._build_implementation_brief_payload(
+                source_brief=source_brief,
+                brief_data=brief_data,
+                response=response,
+                prompt=prompt,
+            ),
+            raw_content=response["content"],
+        )
+
+        return implementation_brief
+
+    @staticmethod
+    def _build_implementation_brief_payload(
+        *,
+        source_brief: dict[str, Any],
+        brief_data: dict[str, Any],
+        response: dict[str, Any],
+        prompt: str,
+    ) -> dict[str, Any]:
+        """Build a candidate ImplementationBrief payload from parsed LLM JSON."""
         implementation_brief = {
             "id": generate_implementation_brief_id(),
             "source_brief_id": source_brief["id"],
-            "title": brief_data["title"],
             "domain": source_brief.get("domain"),
-            "target_user": brief_data.get("target_user"),
-            "buyer": brief_data.get("buyer"),
-            "workflow_context": brief_data.get("workflow_context"),
-            "problem_statement": brief_data["problem_statement"],
-            "mvp_goal": brief_data["mvp_goal"],
-            "product_surface": brief_data.get("product_surface"),
-            "scope": brief_data["scope"],
-            "non_goals": brief_data["non_goals"],
-            "assumptions": brief_data["assumptions"],
-            "architecture_notes": brief_data.get("architecture_notes"),
-            "data_requirements": brief_data.get("data_requirements"),
-            "integration_points": brief_data.get("integration_points", []),
-            "risks": brief_data["risks"],
-            "validation_plan": brief_data["validation_plan"],
-            "definition_of_done": brief_data["definition_of_done"],
             "status": "draft",
             "generation_model": response["model"],
             "generation_tokens": response["usage"]["total_tokens"],
             "generation_prompt": prompt[:1000],  # Store first 1000 chars for debugging
         }
 
+        generated_fields = (
+            "title",
+            "target_user",
+            "buyer",
+            "workflow_context",
+            "problem_statement",
+            "mvp_goal",
+            "product_surface",
+            "scope",
+            "non_goals",
+            "assumptions",
+            "architecture_notes",
+            "data_requirements",
+            "risks",
+            "validation_plan",
+            "definition_of_done",
+        )
+        for field_name in generated_fields:
+            if field_name in brief_data:
+                implementation_brief[field_name] = brief_data[field_name]
+
+        if brief_data.get("integration_points") is not None:
+            implementation_brief["integration_points"] = brief_data["integration_points"]
+
         return implementation_brief
+
+    def _validate_generated_brief(
+        self,
+        implementation_brief: dict[str, Any],
+        *,
+        raw_content: str,
+    ) -> dict[str, Any]:
+        """Validate and normalize an LLM-generated implementation brief."""
+        try:
+            return ImplementationBrief.model_validate(implementation_brief).model_dump(
+                mode="python"
+            )
+        except ValidationError as exc:
+            preview = self._invalid_output_preview(raw_content)
+            raise ValueError(
+                "Generated implementation brief failed domain validation.\n"
+                f"{self._format_validation_errors(exc)}\n"
+                f"LLM output preview: {preview}"
+            ) from exc
+
+    @staticmethod
+    def _format_validation_errors(error: ValidationError) -> str:
+        """Format Pydantic validation errors for generator callers."""
+        messages = []
+        for detail in error.errors(include_url=False):
+            location = ".".join(str(part) for part in detail["loc"])
+            messages.append(f"- {location}: {detail['msg']}")
+        return "Validation errors:\n" + "\n".join(messages)
+
+    @staticmethod
+    def _invalid_output_preview(content: str, *, limit: int = 240) -> str:
+        """Return a short, single-line preview of invalid LLM output."""
+        sanitized = re.sub(r"[\x00-\x1f\x7f]+", " ", content)
+        sanitized = re.sub(r"\s+", " ", sanitized).strip()
+        if len(sanitized) > limit:
+            sanitized = sanitized[: limit - 3].rstrip() + "..."
+        return sanitized
 
     def _get_system_prompt(self) -> str:
         """Get system prompt for brief generation."""
