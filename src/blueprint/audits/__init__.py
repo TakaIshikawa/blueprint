@@ -60,6 +60,12 @@ from blueprint.audits.file_path_hygiene import (
     FilePathHygieneResult,
     audit_file_path_hygiene,
 )
+from blueprint.audits.file_contention import (
+    FileContentionFinding,
+    FileContentionResult,
+    FileContentionTask,
+    audit_file_contention,
+)
 from blueprint.audits.milestone_dependencies import (
     MilestoneDependencyFinding,
     MilestoneDependencyResult,
@@ -137,6 +143,9 @@ __all__ = [
     "EnvReadinessTaskResult",
     "FilePathHygieneFinding",
     "FilePathHygieneResult",
+    "FileContentionFinding",
+    "FileContentionResult",
+    "FileContentionTask",
     "MilestoneDependencyFinding",
     "MilestoneDependencyResult",
     "OwnershipGapFinding",
@@ -176,6 +185,7 @@ __all__ = [
     "build_env_inventory",
     "audit_env_readiness",
     "audit_file_path_hygiene",
+    "audit_file_contention",
     "evaluate_plan_readiness",
     "audit_release_readiness",
     "audit_risk_coverage",
