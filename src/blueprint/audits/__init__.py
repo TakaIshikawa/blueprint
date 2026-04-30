@@ -105,6 +105,14 @@ from blueprint.audits.task_splitting import (
     TaskSplittingResult,
     audit_task_splitting,
 )
+from blueprint.audits.task_prompt_budget import (
+    TaskPromptBudgetEstimate,
+    TaskPromptBudgetFinding,
+    TaskPromptBudgetResult,
+    audit_task_prompt_budget,
+    build_task_prompt_budget_text,
+    estimate_task_prompt,
+)
 from blueprint.audits.workload import (
     CrossMilestoneDependencyCount,
     WorkloadOverload,
@@ -156,6 +164,9 @@ __all__ = [
     "TaskCompletenessFinding",
     "TaskCompletenessItem",
     "TaskCompletenessResult",
+    "TaskPromptBudgetEstimate",
+    "TaskPromptBudgetFinding",
+    "TaskPromptBudgetResult",
     "TestCommandQualityFinding",
     "TestCommandQualityResult",
     "TestCommandQualityTaskResult",
@@ -172,8 +183,10 @@ __all__ = [
     "audit_milestone_dependencies",
     "audit_ownership_gaps",
     "audit_task_splitting",
+    "audit_task_prompt_budget",
     "analyze_workload",
     "build_env_inventory",
+    "build_task_prompt_budget_text",
     "audit_env_readiness",
     "audit_file_path_hygiene",
     "evaluate_plan_readiness",
@@ -181,6 +194,7 @@ __all__ = [
     "audit_risk_coverage",
     "audit_task_completeness",
     "audit_test_command_quality",
+    "estimate_task_prompt",
     "find_similar_source_briefs",
     "find_duplicate_source_brief_groups",
     "suggest_dependency_repairs",
