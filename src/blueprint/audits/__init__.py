@@ -21,6 +21,12 @@ from blueprint.audits.acceptance_quality import (
     AcceptanceQualityTaskResult,
     audit_acceptance_quality,
 )
+from blueprint.audits.acceptance_traceability import (
+    AcceptanceTraceabilityCoverage,
+    AcceptanceTraceabilityFinding,
+    AcceptanceTraceabilityResult,
+    audit_acceptance_traceability,
+)
 from blueprint.audits.source_similarity import (
     SourceBriefSimilarityMatch,
     find_similar_source_briefs,
@@ -136,6 +142,9 @@ __all__ = [
     "AcceptanceQualityFinding",
     "AcceptanceQualityResult",
     "AcceptanceQualityTaskResult",
+    "AcceptanceTraceabilityCoverage",
+    "AcceptanceTraceabilityFinding",
+    "AcceptanceTraceabilityResult",
     "CrossMilestoneDependencyCount",
     "DependencyGateReason",
     "DependencyGateResult",
@@ -188,6 +197,7 @@ __all__ = [
     "audit_brief_readiness",
     "audit_change_budget",
     "audit_acceptance_quality",
+    "audit_acceptance_traceability",
     "audit_dependency_gate",
     "audit_milestone_dependencies",
     "audit_ownership_gaps",
