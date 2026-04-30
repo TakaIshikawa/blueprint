@@ -10,6 +10,11 @@ from blueprint.audits.brief_readiness import (
     BriefReadinessResult,
     audit_brief_readiness,
 )
+from blueprint.audits.brief_ambiguity import (
+    BriefAmbiguityIssue,
+    BriefAmbiguityResult,
+    audit_brief_ambiguity,
+)
 from blueprint.audits.change_budget import (
     ChangeBudgetFinding,
     ChangeBudgetResult,
@@ -137,6 +142,8 @@ __all__ = [
     "BlockedTaskImpact",
     "BriefReadinessFinding",
     "BriefReadinessResult",
+    "BriefAmbiguityIssue",
+    "BriefAmbiguityResult",
     "ChangeBudgetFinding",
     "ChangeBudgetResult",
     "AcceptanceQualityFinding",
@@ -195,6 +202,7 @@ __all__ = [
     "WorkloadResult",
     "audit_blocked_impact",
     "audit_brief_readiness",
+    "audit_brief_ambiguity",
     "audit_change_budget",
     "audit_acceptance_quality",
     "audit_acceptance_traceability",
