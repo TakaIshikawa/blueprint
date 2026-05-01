@@ -218,6 +218,14 @@ from blueprint.task_mobile_release_readiness import (
     task_mobile_release_readiness_plan_to_dict,
     task_mobile_release_readiness_plan_to_markdown,
 )
+from blueprint.task_payment_flow_risk import (
+    TaskPaymentFlowRiskFinding,
+    TaskPaymentFlowRiskPlan,
+    build_task_payment_flow_risk_plan,
+    summarize_task_payment_flow_risk,
+    task_payment_flow_risk_plan_to_dict,
+    task_payment_flow_risk_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -299,6 +307,8 @@ __all__ = [
     "TaskLicenseComplianceRecord",
     "TaskMobileReleaseReadinessPlan",
     "TaskMobileReleaseReadinessRecord",
+    "TaskPaymentFlowRiskFinding",
+    "TaskPaymentFlowRiskPlan",
     "TaskRolloutTelemetryPlan",
     "TaskRolloutTelemetryRecord",
     "TaskSchemaEvolutionPlan",
@@ -328,6 +338,7 @@ __all__ = [
     "build_task_legal_terms_impact_plan",
     "build_task_license_compliance_plan",
     "build_task_mobile_release_readiness_plan",
+    "build_task_payment_flow_risk_plan",
     "build_task_rollout_telemetry_plan",
     "build_task_schema_evolution_plan",
     "build_task_secrets_exposure_plan",
@@ -359,6 +370,7 @@ __all__ = [
     "summarize_task_legal_terms_impact",
     "summarize_task_license_compliance",
     "summarize_task_mobile_release_readiness",
+    "summarize_task_payment_flow_risk",
     "summarize_task_rollout_telemetry",
     "summarize_task_schema_evolution",
     "summarize_task_secrets_exposure",
@@ -380,6 +392,8 @@ __all__ = [
     "task_license_compliance_plan_to_markdown",
     "task_mobile_release_readiness_plan_to_dict",
     "task_mobile_release_readiness_plan_to_markdown",
+    "task_payment_flow_risk_plan_to_dict",
+    "task_payment_flow_risk_plan_to_markdown",
     "task_rollout_telemetry_plan_to_dict",
     "task_rollout_telemetry_plan_to_markdown",
     "task_schema_evolution_plan_to_dict",
