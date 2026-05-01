@@ -65,6 +65,14 @@ from blueprint.exporters.teams_digest import TeamsDigestExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
+from blueprint.plan_data_retention_checklist import (
+    PlanDataRetentionChecklist,
+    PlanDataRetentionChecklistItem,
+    build_plan_data_retention_checklist,
+    plan_data_retention_checklist_to_dict,
+    plan_data_retention_checklist_to_markdown,
+    summarize_plan_data_retention_checklist,
+)
 
 __all__ = [
     "ADRExporter",
@@ -103,6 +111,8 @@ __all__ = [
     "NotionMarkdownExporter",
     "OpenProjectCsvExporter",
     "PagerDutyDigestExporter",
+    "PlanDataRetentionChecklist",
+    "PlanDataRetentionChecklistItem",
     "PlanSnapshotExporter",
     "RaciMatrixExporter",
     "RelayExporter",
@@ -125,9 +135,13 @@ __all__ = [
     "TrelloJsonExporter",
     "VSCodeTasksExporter",
     "WaveScheduleExporter",
+    "build_plan_data_retention_checklist",
     "create_exporter",
     "get_exporter_registration",
+    "plan_data_retention_checklist_to_dict",
+    "plan_data_retention_checklist_to_markdown",
     "resolve_target_name",
+    "summarize_plan_data_retention_checklist",
     "supported_target_aliases",
     "supported_target_names",
 ]
