@@ -123,6 +123,14 @@ from blueprint.task_rollout_telemetry import (
     task_rollout_telemetry_plan_to_dict,
     task_rollout_telemetry_plan_to_markdown,
 )
+from blueprint.task_feature_flag_readiness import (
+    TaskFeatureFlagReadinessPlan,
+    TaskFeatureFlagReadinessRecord,
+    build_task_feature_flag_readiness_plan,
+    summarize_task_feature_flag_readiness,
+    task_feature_flag_readiness_plan_to_dict,
+    task_feature_flag_readiness_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -186,6 +194,8 @@ __all__ = [
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
+    "TaskFeatureFlagReadinessPlan",
+    "TaskFeatureFlagReadinessRecord",
     "TaskRolloutTelemetryPlan",
     "TaskRolloutTelemetryRecord",
     "TaskSecretsExposurePlan",
@@ -204,6 +214,7 @@ __all__ = [
     "build_plan_stakeholder_approval_matrix",
     "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
+    "build_task_feature_flag_readiness_plan",
     "build_task_rollout_telemetry_plan",
     "build_task_secrets_exposure_plan",
     "create_exporter",
@@ -220,6 +231,7 @@ __all__ = [
     "summarize_plan_stakeholder_approvals",
     "summarize_task_accessibility_impacts",
     "summarize_task_compliance_evidence",
+    "summarize_task_feature_flag_readiness",
     "summarize_task_rollout_telemetry",
     "summarize_task_secrets_exposure",
     "supported_target_aliases",
@@ -228,6 +240,8 @@ __all__ = [
     "task_accessibility_impact_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
+    "task_feature_flag_readiness_plan_to_dict",
+    "task_feature_flag_readiness_plan_to_markdown",
     "task_rollout_telemetry_plan_to_dict",
     "task_rollout_telemetry_plan_to_markdown",
     "task_secrets_exposure_plan_to_dict",
