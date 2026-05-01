@@ -33,6 +33,13 @@ def test_aliases_resolve_to_canonical_target_and_factory():
     assert alias == canonical
     assert create_exporter("claude_code").__class__ is create_exporter("claude-code").__class__
 
+    assert supported_target_aliases()["pagerduty_digest"] == "pagerduty-digest"
+    assert resolve_target_name("pagerduty_digest") == "pagerduty-digest"
+    assert (
+        create_exporter("pagerduty_digest").__class__
+        is create_exporter("pagerduty-digest").__class__
+    )
+
 
 def test_unknown_target_lookup_raises_value_error():
     with pytest.raises(ValueError, match="Unknown export target: nope"):

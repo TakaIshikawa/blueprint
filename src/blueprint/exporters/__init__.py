@@ -34,6 +34,7 @@ from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExpor
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
 from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
+from blueprint.exporters.pagerduty_digest import PagerDutyDigestExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.registry import (
@@ -101,6 +102,7 @@ __all__ = [
     "MilestoneSummaryExporter",
     "NotionMarkdownExporter",
     "OpenProjectCsvExporter",
+    "PagerDutyDigestExporter",
     "PlanSnapshotExporter",
     "RaciMatrixExporter",
     "RelayExporter",
