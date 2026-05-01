@@ -11,6 +11,7 @@ from blueprint.exporters.checklist import ChecklistExporter
 from blueprint.exporters.claude_code import ClaudeCodeExporter
 from blueprint.exporters.clickup_csv import ClickUpCsvExporter
 from blueprint.exporters.codex import CodexExporter
+from blueprint.exporters.confluence_markdown import ConfluenceMarkdownExporter
 from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
@@ -76,6 +77,7 @@ __all__ = [
     "ClaudeCodeExporter",
     "ClickUpCsvExporter",
     "CodexExporter",
+    "ConfluenceMarkdownExporter",
     "CoverageMatrixExporter",
     "CriticalPathReportExporter",
     "CsvTasksExporter",
