@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from blueprint.importers.csv_backlog_importer import CsvBacklogImporter
     from blueprint.importers.execution_event_jsonl_importer import ExecutionEventJsonlImporter
     from blueprint.importers.manual_importer import ManualBriefImporter
+    from blueprint.importers.meeting_notes_importer import MeetingNotesImporter
     from blueprint.importers.obsidian_importer import ObsidianImporter
     from blueprint.importers.plan_markdown_importer import PlanMarkdownImporter
     from blueprint.importers.slack_thread_importer import SlackThreadImporter
@@ -22,6 +23,7 @@ _EXPORTS = {
     "CsvBacklogImporter": "blueprint.importers.csv_backlog_importer",
     "ExecutionEventJsonlImporter": "blueprint.importers.execution_event_jsonl_importer",
     "ManualBriefImporter": "blueprint.importers.manual_importer",
+    "MeetingNotesImporter": "blueprint.importers.meeting_notes_importer",
     "ObsidianImporter": "blueprint.importers.obsidian_importer",
     "PlanMarkdownImporter": "blueprint.importers.plan_markdown_importer",
     "SlackThreadImporter": "blueprint.importers.slack_thread_importer",
@@ -39,11 +41,13 @@ def __getattr__(name: str) -> Any:
     globals()[name] = value
     return value
 
+
 __all__ = [
     "AdrMarkdownImporter",
     "CsvBacklogImporter",
     "ExecutionEventJsonlImporter",
     "ManualBriefImporter",
+    "MeetingNotesImporter",
     "ObsidianImporter",
     "PlanMarkdownImporter",
     "SlackThreadImporter",
