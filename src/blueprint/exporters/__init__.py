@@ -106,6 +106,14 @@ from blueprint.plan_stakeholder_approvals import (
     plan_stakeholder_approval_matrix_to_markdown,
     summarize_plan_stakeholder_approvals,
 )
+from blueprint.plan_tenant_isolation_matrix import (
+    PlanTenantIsolationMatrix,
+    PlanTenantIsolationMatrixRow,
+    build_plan_tenant_isolation_matrix,
+    plan_tenant_isolation_matrix_to_dict,
+    plan_tenant_isolation_matrix_to_markdown,
+    summarize_plan_tenant_isolation,
+)
 from blueprint.plan_training_enablement import (
     PlanTrainingEnablementChecklist,
     PlanTrainingEnablementChecklistItem,
