@@ -178,6 +178,14 @@ from blueprint.task_license_compliance import (
     task_license_compliance_plan_to_dict,
     task_license_compliance_plan_to_markdown,
 )
+from blueprint.task_legal_terms_impact import (
+    TaskLegalTermsImpactPlan,
+    TaskLegalTermsImpactRecord,
+    build_task_legal_terms_impact_plan,
+    summarize_task_legal_terms_impact,
+    task_legal_terms_impact_plan_to_dict,
+    task_legal_terms_impact_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -251,6 +259,8 @@ __all__ = [
     "TaskDataResidencyRecord",
     "TaskFeatureFlagReadinessPlan",
     "TaskFeatureFlagReadinessRecord",
+    "TaskLegalTermsImpactPlan",
+    "TaskLegalTermsImpactRecord",
     "TaskLicenseCompliancePlan",
     "TaskLicenseComplianceRecord",
     "TaskRolloutTelemetryPlan",
@@ -278,6 +288,7 @@ __all__ = [
     "build_task_compliance_evidence_plan",
     "build_task_data_residency_plan",
     "build_task_feature_flag_readiness_plan",
+    "build_task_legal_terms_impact_plan",
     "build_task_license_compliance_plan",
     "build_task_rollout_telemetry_plan",
     "build_task_schema_evolution_plan",
@@ -306,6 +317,7 @@ __all__ = [
     "summarize_task_compliance_evidence",
     "summarize_task_data_residency",
     "summarize_task_feature_flag_readiness",
+    "summarize_task_legal_terms_impact",
     "summarize_task_license_compliance",
     "summarize_task_rollout_telemetry",
     "summarize_task_schema_evolution",
@@ -320,6 +332,8 @@ __all__ = [
     "task_data_residency_plan_to_markdown",
     "task_feature_flag_readiness_plan_to_dict",
     "task_feature_flag_readiness_plan_to_markdown",
+    "task_legal_terms_impact_plan_to_dict",
+    "task_legal_terms_impact_plan_to_markdown",
     "task_license_compliance_plan_to_dict",
     "task_license_compliance_plan_to_markdown",
     "task_rollout_telemetry_plan_to_dict",
