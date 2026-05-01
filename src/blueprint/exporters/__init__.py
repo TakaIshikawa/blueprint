@@ -82,6 +82,14 @@ from blueprint.plan_stakeholder_approvals import (
     plan_stakeholder_approval_matrix_to_markdown,
     summarize_plan_stakeholder_approvals,
 )
+from blueprint.task_accessibility_impact import (
+    TaskAccessibilityImpactPlan,
+    TaskAccessibilityImpactRecord,
+    build_task_accessibility_impact_plan,
+    summarize_task_accessibility_impacts,
+    task_accessibility_impact_plan_to_dict,
+    task_accessibility_impact_plan_to_markdown,
+)
 from blueprint.task_compliance_evidence import (
     TaskComplianceEvidencePlan,
     TaskComplianceEvidenceRecord,
@@ -146,6 +154,8 @@ __all__ = [
     "SourceManifestExporter",
     "StatusReportExporter",
     "StatusTimelineExporter",
+    "TaskAccessibilityImpactPlan",
+    "TaskAccessibilityImpactRecord",
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
@@ -159,6 +169,7 @@ __all__ = [
     "WaveScheduleExporter",
     "build_plan_data_retention_checklist",
     "build_plan_stakeholder_approval_matrix",
+    "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
     "create_exporter",
     "get_exporter_registration",
@@ -169,9 +180,12 @@ __all__ = [
     "resolve_target_name",
     "summarize_plan_data_retention_checklist",
     "summarize_plan_stakeholder_approvals",
+    "summarize_task_accessibility_impacts",
     "summarize_task_compliance_evidence",
     "supported_target_aliases",
     "supported_target_names",
+    "task_accessibility_impact_plan_to_dict",
+    "task_accessibility_impact_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
 ]
