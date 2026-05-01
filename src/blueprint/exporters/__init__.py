@@ -122,6 +122,14 @@ from blueprint.plan_schema_migration_readiness import (
     plan_schema_migration_readiness_matrix_to_markdown,
     summarize_plan_schema_migration_readiness,
 )
+from blueprint.plan_customer_migration_window import (
+    PlanCustomerMigrationWindowMatrix,
+    PlanCustomerMigrationWindowRow,
+    build_plan_customer_migration_window_matrix,
+    plan_customer_migration_window_matrix_to_dict,
+    plan_customer_migration_window_matrix_to_markdown,
+    summarize_plan_customer_migration_window,
+)
 from blueprint.plan_accessibility_review_matrix import (
     PlanAccessibilityReviewMatrix,
     PlanAccessibilityReviewRecord,
@@ -337,6 +345,8 @@ __all__ = [
     "PlanAccessibilityReviewRecord",
     "PlanApiDeprecationMap",
     "PlanApiDeprecationMapRecord",
+    "PlanCustomerMigrationWindowMatrix",
+    "PlanCustomerMigrationWindowRow",
     "PlanDataRetentionChecklist",
     "PlanDataRetentionChecklistItem",
     "PlanDecisionRecord",
@@ -408,6 +418,7 @@ __all__ = [
     "YouTrackCsvExporter",
     "build_plan_api_deprecation_map",
     "build_plan_accessibility_review_matrix",
+    "build_plan_customer_migration_window_matrix",
     "build_plan_data_retention_checklist",
     "build_plan_decision_register",
     "build_plan_feature_adoption_measurement_matrix",
@@ -437,6 +448,8 @@ __all__ = [
     "plan_accessibility_review_matrix_to_markdown",
     "plan_api_deprecation_map_to_dict",
     "plan_api_deprecation_map_to_markdown",
+    "plan_customer_migration_window_matrix_to_dict",
+    "plan_customer_migration_window_matrix_to_markdown",
     "plan_data_retention_checklist_to_dict",
     "plan_data_retention_checklist_to_markdown",
     "plan_decision_register_to_dict",
@@ -455,6 +468,7 @@ __all__ = [
     "resolve_target_name",
     "summarize_plan_api_deprecations",
     "summarize_plan_accessibility_review_matrix",
+    "summarize_plan_customer_migration_window",
     "summarize_plan_data_retention_checklist",
     "summarize_plan_decision_register",
     "summarize_plan_feature_adoption_measurement",
