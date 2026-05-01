@@ -40,6 +40,13 @@ def test_aliases_resolve_to_canonical_target_and_factory():
         is create_exporter("pagerduty-digest").__class__
     )
 
+    assert supported_target_aliases()["opsgenie_digest"] == "opsgenie-digest"
+    assert resolve_target_name("opsgenie_digest") == "opsgenie-digest"
+    assert (
+        create_exporter("opsgenie_digest").__class__
+        is create_exporter("opsgenie-digest").__class__
+    )
+
 
 def test_unknown_target_lookup_raises_value_error():
     with pytest.raises(ValueError, match="Unknown export target: nope"):
