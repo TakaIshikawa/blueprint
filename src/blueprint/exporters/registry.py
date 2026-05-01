@@ -56,6 +56,7 @@ from blueprint.exporters.teams_digest import TeamsDigestExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
+from blueprint.exporters.youtrack_csv import YouTrackCsvExporter
 
 ExporterFactory = Callable[[], Any]
 
@@ -126,6 +127,7 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("trello-json", TrelloJsonExporter, "json", ".json"),
     ExporterRegistration("vscode-tasks", VSCodeTasksExporter, "json", ".json"),
     ExporterRegistration("wave-schedule", WaveScheduleExporter, "json", ".json"),
+    ExporterRegistration("youtrack-csv", YouTrackCsvExporter, "csv", ".csv"),
 )
 
 

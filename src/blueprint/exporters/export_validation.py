@@ -35,6 +35,7 @@ from blueprint.exporters.sarif_audit import TOOL_NAME as SARIF_TOOL_NAME
 from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.teamwork_csv import TeamworkCsvExporter
 from blueprint.exporters.wave_schedule import SCHEMA_VERSION as WAVE_SCHEDULE_SCHEMA_VERSION
+from blueprint.exporters.youtrack_csv import YouTrackCsvExporter
 
 
 ValidationCheck = Callable[[Path, dict[str, Any], dict[str, Any]], list["ValidationFinding"]]
@@ -3040,6 +3041,110 @@ def _validate_teamwork_csv(
     return findings
 
 
+def _validate_youtrack_csv(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the YouTrack CSV issue export."""
+    findings: list[ValidationFinding] = []
+    try:
+        with artifact_path.open(newline="") as f:
+            reader = csv.DictReader(f, strict=True)
+            rows = list(reader)
+            fieldnames = list(reader.fieldnames or [])
+    except csv.Error as exc:
+        return [
+            ValidationFinding(
+                code="youtrack_csv.invalid_structure",
+                message=f"YouTrack CSV export could not be parsed: {exc}",
+                path=str(artifact_path),
+            )
+        ]
+
+    expected_columns = YouTrackCsvExporter.FIELDNAMES
+    if fieldnames != expected_columns:
+        missing = [column for column in expected_columns if column not in fieldnames]
+        extra = [column for column in fieldnames if column not in expected_columns]
+        if missing:
+            findings.append(
+                ValidationFinding(
+                    code="youtrack_csv.missing_column",
+                    message=(
+                        "YouTrack CSV export is missing required columns: "
+                        f"{', '.join(missing)}"
+                    ),
+                    path=str(artifact_path),
+                )
+            )
+        if extra:
+            findings.append(
+                ValidationFinding(
+                    code="youtrack_csv.unexpected_column",
+                    message=f"YouTrack CSV export has unexpected columns: {', '.join(extra)}",
+                    path=str(artifact_path),
+                )
+            )
+        if not missing and not extra:
+            findings.append(
+                ValidationFinding(
+                    code="youtrack_csv.header_mismatch",
+                    message="YouTrack CSV columns are present but not in the expected order.",
+                    path=str(artifact_path),
+                )
+            )
+
+    tasks = execution_plan.get("tasks", [])
+    expected_task_ids = [task["id"] for task in tasks]
+    row_task_ids = [row.get("External ID", "") for row in rows]
+    if len(rows) != len(tasks):
+        findings.append(
+            ValidationFinding(
+                code="youtrack_csv.row_count_mismatch",
+                message="YouTrack CSV row count does not match one row per task.",
+                path=str(artifact_path),
+            )
+        )
+
+    missing_task_ids = [task_id for task_id in expected_task_ids if task_id not in row_task_ids]
+    if missing_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="youtrack_csv.missing_tasks",
+                message=f"YouTrack CSV is missing task rows: {', '.join(missing_task_ids)}",
+                path=str(artifact_path),
+            )
+        )
+
+    duplicate_task_ids = [
+        task_id for task_id, count in Counter(row_task_ids).items() if task_id and count > 1
+    ]
+    if duplicate_task_ids:
+        findings.append(
+            ValidationFinding(
+                code="youtrack_csv.duplicate_task_id",
+                message=(
+                    "YouTrack CSV contains duplicate task IDs: "
+                    f"{', '.join(duplicate_task_ids)}"
+                ),
+                path=str(artifact_path),
+            )
+        )
+
+    for index, row in enumerate(rows, 1):
+        for column in ["Summary", "Description", "Type", "State", "External ID"]:
+            if column in fieldnames and not row.get(column):
+                findings.append(
+                    ValidationFinding(
+                        code="youtrack_csv.row_missing_required_value",
+                        message=f"YouTrack CSV row {index} is missing {column}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
 def _validate_openproject_csv(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -5308,6 +5413,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "taskfile": _validate_taskfile,
     "task-queue-jsonl": _validate_task_queue_jsonl,
     "teamwork-csv": _validate_teamwork_csv,
+    "youtrack-csv": _validate_youtrack_csv,
     "trello-json": _validate_trello_json,
     "file-impact-map": _validate_file_impact_map,
     "gantt": _validate_gantt,
