@@ -154,6 +154,15 @@ from blueprint.task_analytics_instrumentation import (
     task_analytics_instrumentation_plan_to_dict,
     task_analytics_instrumentation_plan_to_markdown,
 )
+from blueprint.task_notification_deliverability import (
+    TaskNotificationDeliverabilityPlan,
+    TaskNotificationDeliverabilityRecord,
+    build_task_notification_deliverability_plan,
+    derive_task_notification_deliverability_plan,
+    summarize_task_notification_deliverability,
+    task_notification_deliverability_plan_to_dict,
+    task_notification_deliverability_plan_to_markdown,
+)
 from blueprint.task_compliance_evidence import (
     TaskComplianceEvidencePlan,
     TaskComplianceEvidenceRecord,
