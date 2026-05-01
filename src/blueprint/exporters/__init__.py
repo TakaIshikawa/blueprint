@@ -66,6 +66,7 @@ from blueprint.exporters.teams_digest import TeamsDigestExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
+from blueprint.exporters.youtrack_csv import YouTrackCsvExporter
 from blueprint.plan_data_retention_checklist import (
     PlanDataRetentionChecklist,
     PlanDataRetentionChecklistItem,
@@ -197,6 +198,7 @@ __all__ = [
     "TrelloJsonExporter",
     "VSCodeTasksExporter",
     "WaveScheduleExporter",
+    "YouTrackCsvExporter",
     "build_plan_api_deprecation_map",
     "build_plan_data_retention_checklist",
     "build_plan_stakeholder_approval_matrix",
