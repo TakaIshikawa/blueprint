@@ -106,6 +106,14 @@ from blueprint.plan_deployment_freeze_conflicts import (
     plan_deployment_freeze_conflict_report_to_markdown,
     summarize_plan_deployment_freeze_conflicts,
 )
+from blueprint.plan_feature_adoption_measurement import (
+    PlanFeatureAdoptionMeasurementMatrix,
+    PlanFeatureAdoptionMeasurementRow,
+    build_plan_feature_adoption_measurement_matrix,
+    plan_feature_adoption_measurement_matrix_to_dict,
+    plan_feature_adoption_measurement_matrix_to_markdown,
+    summarize_plan_feature_adoption_measurement,
+)
 from blueprint.plan_accessibility_review_matrix import (
     PlanAccessibilityReviewMatrix,
     PlanAccessibilityReviewRecord,
@@ -298,6 +306,8 @@ __all__ = [
     "PlanDataRetentionChecklistItem",
     "PlanDecisionRecord",
     "PlanDecisionRegister",
+    "PlanFeatureAdoptionMeasurementMatrix",
+    "PlanFeatureAdoptionMeasurementRow",
     "PlanPrivacyReviewMatrix",
     "PlanPrivacyReviewMatrixRow",
     "PlanStakeholderApprovalMatrix",
@@ -357,6 +367,7 @@ __all__ = [
     "build_plan_accessibility_review_matrix",
     "build_plan_data_retention_checklist",
     "build_plan_decision_register",
+    "build_plan_feature_adoption_measurement_matrix",
     "build_plan_privacy_review_matrix",
     "build_plan_stakeholder_approval_matrix",
     "build_plan_training_enablement_checklist",
@@ -383,6 +394,8 @@ __all__ = [
     "plan_data_retention_checklist_to_markdown",
     "plan_decision_register_to_dict",
     "plan_decision_register_to_markdown",
+    "plan_feature_adoption_measurement_matrix_to_dict",
+    "plan_feature_adoption_measurement_matrix_to_markdown",
     "plan_privacy_review_matrix_to_dict",
     "plan_privacy_review_matrix_to_markdown",
     "plan_stakeholder_approval_matrix_to_dict",
@@ -394,6 +407,7 @@ __all__ = [
     "summarize_plan_accessibility_review_matrix",
     "summarize_plan_data_retention_checklist",
     "summarize_plan_decision_register",
+    "summarize_plan_feature_adoption_measurement",
     "summarize_plan_stakeholder_approvals",
     "summarize_plan_training_enablement_checklist",
     "summarize_task_accessibility_impacts",
