@@ -106,6 +106,14 @@ from blueprint.plan_deployment_freeze_conflicts import (
     plan_deployment_freeze_conflict_report_to_markdown,
     summarize_plan_deployment_freeze_conflicts,
 )
+from blueprint.plan_accessibility_review_matrix import (
+    PlanAccessibilityReviewMatrix,
+    PlanAccessibilityReviewRecord,
+    build_plan_accessibility_review_matrix,
+    plan_accessibility_review_matrix_to_dict,
+    plan_accessibility_review_matrix_to_markdown,
+    summarize_plan_accessibility_review_matrix,
+)
 from blueprint.plan_stakeholder_approvals import (
     PlanStakeholderApprovalMatrix,
     PlanStakeholderApprovalRow,
@@ -257,6 +265,8 @@ __all__ = [
     "OpenProjectCsvExporter",
     "OpsgenieDigestExporter",
     "PagerDutyDigestExporter",
+    "PlanAccessibilityReviewMatrix",
+    "PlanAccessibilityReviewRecord",
     "PlanApiDeprecationMap",
     "PlanApiDeprecationMapRecord",
     "PlanDataRetentionChecklist",
@@ -315,6 +325,7 @@ __all__ = [
     "WaveScheduleExporter",
     "YouTrackCsvExporter",
     "build_plan_api_deprecation_map",
+    "build_plan_accessibility_review_matrix",
     "build_plan_data_retention_checklist",
     "build_plan_decision_register",
     "build_plan_privacy_review_matrix",
@@ -333,6 +344,8 @@ __all__ = [
     "build_task_secrets_exposure_plan",
     "create_exporter",
     "get_exporter_registration",
+    "plan_accessibility_review_matrix_to_dict",
+    "plan_accessibility_review_matrix_to_markdown",
     "plan_api_deprecation_map_to_dict",
     "plan_api_deprecation_map_to_markdown",
     "plan_data_retention_checklist_to_dict",
@@ -347,6 +360,7 @@ __all__ = [
     "plan_training_enablement_checklist_to_markdown",
     "resolve_target_name",
     "summarize_plan_api_deprecations",
+    "summarize_plan_accessibility_review_matrix",
     "summarize_plan_data_retention_checklist",
     "summarize_plan_decision_register",
     "summarize_plan_stakeholder_approvals",
