@@ -286,6 +286,14 @@ from blueprint.task_payment_flow_risk import (
     task_payment_flow_risk_plan_to_dict,
     task_payment_flow_risk_plan_to_markdown,
 )
+from blueprint.task_bulk_operation_safety import (
+    TaskBulkOperationSafetyPlan,
+    TaskBulkOperationSafetyRecord,
+    build_task_bulk_operation_safety_plan,
+    summarize_task_bulk_operation_safety,
+    task_bulk_operation_safety_plan_to_dict,
+    task_bulk_operation_safety_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -362,6 +370,8 @@ __all__ = [
     "TaskAnalyticsInstrumentationPlan",
     "TaskApiRateLimitImpactPlan",
     "TaskApiRateLimitImpactRecord",
+    "TaskBulkOperationSafetyPlan",
+    "TaskBulkOperationSafetyRecord",
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
@@ -408,6 +418,7 @@ __all__ = [
     "build_task_accessibility_impact_plan",
     "build_task_analytics_instrumentation_plan",
     "build_task_api_rate_limit_impact_plan",
+    "build_task_bulk_operation_safety_plan",
     "build_task_compliance_evidence_plan",
     "build_task_data_quality_validation_plan",
     "build_task_data_residency_plan",
@@ -454,6 +465,7 @@ __all__ = [
     "summarize_task_analytics_instrumentation",
     "summarize_task_api_rate_limit_impact",
     "summarize_task_api_rate_limit_impacts",
+    "summarize_task_bulk_operation_safety",
     "summarize_task_compliance_evidence",
     "summarize_task_data_quality_validation",
     "summarize_task_data_residency",
@@ -474,6 +486,8 @@ __all__ = [
     "task_analytics_instrumentation_plan_to_markdown",
     "task_api_rate_limit_impact_plan_to_dict",
     "task_api_rate_limit_impact_plan_to_markdown",
+    "task_bulk_operation_safety_plan_to_dict",
+    "task_bulk_operation_safety_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
     "task_data_quality_validation_plan_to_dict",
