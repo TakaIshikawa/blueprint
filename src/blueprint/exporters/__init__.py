@@ -146,6 +146,14 @@ from blueprint.task_accessibility_impact import (
     task_accessibility_impact_plan_to_dict,
     task_accessibility_impact_plan_to_markdown,
 )
+from blueprint.task_analytics_instrumentation import (
+    TaskAnalyticsInstrumentationFinding,
+    TaskAnalyticsInstrumentationPlan,
+    build_task_analytics_instrumentation_plan,
+    summarize_task_analytics_instrumentation,
+    task_analytics_instrumentation_plan_to_dict,
+    task_analytics_instrumentation_plan_to_markdown,
+)
 from blueprint.task_compliance_evidence import (
     TaskComplianceEvidencePlan,
     TaskComplianceEvidenceRecord,
@@ -302,6 +310,8 @@ __all__ = [
     "StatusTimelineExporter",
     "TaskAccessibilityImpactPlan",
     "TaskAccessibilityImpactRecord",
+    "TaskAnalyticsInstrumentationFinding",
+    "TaskAnalyticsInstrumentationPlan",
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
@@ -342,6 +352,7 @@ __all__ = [
     "build_plan_stakeholder_approval_matrix",
     "build_plan_training_enablement_checklist",
     "build_task_accessibility_impact_plan",
+    "build_task_analytics_instrumentation_plan",
     "build_task_compliance_evidence_plan",
     "build_task_data_residency_plan",
     "build_task_database_index_impact_plan",
@@ -377,6 +388,7 @@ __all__ = [
     "summarize_plan_stakeholder_approvals",
     "summarize_plan_training_enablement_checklist",
     "summarize_task_accessibility_impacts",
+    "summarize_task_analytics_instrumentation",
     "summarize_task_compliance_evidence",
     "summarize_task_data_residency",
     "summarize_task_database_index_impacts",
@@ -392,6 +404,8 @@ __all__ = [
     "supported_target_names",
     "task_accessibility_impact_plan_to_dict",
     "task_accessibility_impact_plan_to_markdown",
+    "task_analytics_instrumentation_plan_to_dict",
+    "task_analytics_instrumentation_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
     "task_data_residency_plan_to_dict",
