@@ -75,6 +75,13 @@ from blueprint.plan_data_retention_checklist import (
     plan_data_retention_checklist_to_markdown,
     summarize_plan_data_retention_checklist,
 )
+from blueprint.plan_privacy_review_matrix import (
+    PlanPrivacyReviewMatrix,
+    PlanPrivacyReviewMatrixRow,
+    build_plan_privacy_review_matrix,
+    plan_privacy_review_matrix_to_dict,
+    plan_privacy_review_matrix_to_markdown,
+)
 from blueprint.plan_api_deprecation_map import (
     PlanApiDeprecationMap,
     PlanApiDeprecationMapRecord,
@@ -166,6 +173,8 @@ __all__ = [
     "PlanApiDeprecationMapRecord",
     "PlanDataRetentionChecklist",
     "PlanDataRetentionChecklistItem",
+    "PlanPrivacyReviewMatrix",
+    "PlanPrivacyReviewMatrixRow",
     "PlanStakeholderApprovalMatrix",
     "PlanStakeholderApprovalRow",
     "PlanSnapshotExporter",
@@ -201,6 +210,7 @@ __all__ = [
     "YouTrackCsvExporter",
     "build_plan_api_deprecation_map",
     "build_plan_data_retention_checklist",
+    "build_plan_privacy_review_matrix",
     "build_plan_stakeholder_approval_matrix",
     "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
@@ -212,6 +222,8 @@ __all__ = [
     "plan_api_deprecation_map_to_markdown",
     "plan_data_retention_checklist_to_dict",
     "plan_data_retention_checklist_to_markdown",
+    "plan_privacy_review_matrix_to_dict",
+    "plan_privacy_review_matrix_to_markdown",
     "plan_stakeholder_approval_matrix_to_dict",
     "plan_stakeholder_approval_matrix_to_markdown",
     "resolve_target_name",
