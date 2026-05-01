@@ -138,6 +138,14 @@ from blueprint.task_secrets_exposure import (
     task_secrets_exposure_plan_to_dict,
     task_secrets_exposure_plan_to_markdown,
 )
+from blueprint.task_schema_evolution import (
+    TaskSchemaEvolutionPlan,
+    TaskSchemaEvolutionRecord,
+    build_task_schema_evolution_plan,
+    summarize_task_schema_evolution,
+    task_schema_evolution_plan_to_dict,
+    task_schema_evolution_plan_to_markdown,
+)
 from blueprint.task_rollout_telemetry import (
     TaskRolloutTelemetryPlan,
     TaskRolloutTelemetryRecord,
@@ -237,6 +245,8 @@ __all__ = [
     "TaskLicenseComplianceRecord",
     "TaskRolloutTelemetryPlan",
     "TaskRolloutTelemetryRecord",
+    "TaskSchemaEvolutionPlan",
+    "TaskSchemaEvolutionRecord",
     "TaskSecretsExposurePlan",
     "TaskSecretsExposureRecord",
     "TaskfileExporter",
@@ -259,6 +269,7 @@ __all__ = [
     "build_task_feature_flag_readiness_plan",
     "build_task_license_compliance_plan",
     "build_task_rollout_telemetry_plan",
+    "build_task_schema_evolution_plan",
     "build_task_secrets_exposure_plan",
     "create_exporter",
     "get_exporter_registration",
@@ -283,6 +294,7 @@ __all__ = [
     "summarize_task_feature_flag_readiness",
     "summarize_task_license_compliance",
     "summarize_task_rollout_telemetry",
+    "summarize_task_schema_evolution",
     "summarize_task_secrets_exposure",
     "supported_target_aliases",
     "supported_target_names",
@@ -298,6 +310,8 @@ __all__ = [
     "task_license_compliance_plan_to_markdown",
     "task_rollout_telemetry_plan_to_dict",
     "task_rollout_telemetry_plan_to_markdown",
+    "task_schema_evolution_plan_to_dict",
+    "task_schema_evolution_plan_to_markdown",
     "task_secrets_exposure_plan_to_dict",
     "task_secrets_exposure_plan_to_markdown",
 ]
