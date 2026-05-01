@@ -6,6 +6,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from blueprint.importers.adr_markdown_importer import AdrMarkdownImporter
     from blueprint.importers.csv_backlog_importer import CsvBacklogImporter
     from blueprint.importers.execution_event_jsonl_importer import ExecutionEventJsonlImporter
     from blueprint.importers.manual_importer import ManualBriefImporter
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 
 _EXPORTS = {
+    "AdrMarkdownImporter": "blueprint.importers.adr_markdown_importer",
     "CsvBacklogImporter": "blueprint.importers.csv_backlog_importer",
     "ExecutionEventJsonlImporter": "blueprint.importers.execution_event_jsonl_importer",
     "ManualBriefImporter": "blueprint.importers.manual_importer",
@@ -38,6 +40,7 @@ def __getattr__(name: str) -> Any:
     return value
 
 __all__ = [
+    "AdrMarkdownImporter",
     "CsvBacklogImporter",
     "ExecutionEventJsonlImporter",
     "ManualBriefImporter",
