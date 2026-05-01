@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from blueprint.importers.slack_thread_importer import SlackThreadImporter
     from blueprint.importers.source_jsonl_importer import SourceJsonlImporter
     from blueprint.importers.toml_backlog_importer import TomlBacklogImporter
+    from blueprint.importers.yaml_backlog_importer import YamlBacklogImporter
 
 
 _EXPORTS = {
@@ -29,6 +30,7 @@ _EXPORTS = {
     "SlackThreadImporter": "blueprint.importers.slack_thread_importer",
     "SourceJsonlImporter": "blueprint.importers.source_jsonl_importer",
     "TomlBacklogImporter": "blueprint.importers.toml_backlog_importer",
+    "YamlBacklogImporter": "blueprint.importers.yaml_backlog_importer",
 }
 
 
@@ -53,4 +55,5 @@ __all__ = [
     "SlackThreadImporter",
     "SourceJsonlImporter",
     "TomlBacklogImporter",
+    "YamlBacklogImporter",
 ]
