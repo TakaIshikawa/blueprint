@@ -98,6 +98,14 @@ from blueprint.task_compliance_evidence import (
     task_compliance_evidence_plan_to_dict,
     task_compliance_evidence_plan_to_markdown,
 )
+from blueprint.task_secrets_exposure import (
+    TaskSecretsExposurePlan,
+    TaskSecretsExposureRecord,
+    build_task_secrets_exposure_plan,
+    summarize_task_secrets_exposure,
+    task_secrets_exposure_plan_to_dict,
+    task_secrets_exposure_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -159,6 +167,8 @@ __all__ = [
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
+    "TaskSecretsExposurePlan",
+    "TaskSecretsExposureRecord",
     "TaskfileExporter",
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
@@ -171,6 +181,7 @@ __all__ = [
     "build_plan_stakeholder_approval_matrix",
     "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
+    "build_task_secrets_exposure_plan",
     "create_exporter",
     "get_exporter_registration",
     "plan_data_retention_checklist_to_dict",
@@ -182,10 +193,13 @@ __all__ = [
     "summarize_plan_stakeholder_approvals",
     "summarize_task_accessibility_impacts",
     "summarize_task_compliance_evidence",
+    "summarize_task_secrets_exposure",
     "supported_target_aliases",
     "supported_target_names",
     "task_accessibility_impact_plan_to_dict",
     "task_accessibility_impact_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
+    "task_secrets_exposure_plan_to_dict",
+    "task_secrets_exposure_plan_to_markdown",
 ]
