@@ -146,6 +146,14 @@ from blueprint.task_feature_flag_readiness import (
     task_feature_flag_readiness_plan_to_dict,
     task_feature_flag_readiness_plan_to_markdown,
 )
+from blueprint.task_license_compliance import (
+    TaskLicenseCompliancePlan,
+    TaskLicenseComplianceRecord,
+    build_task_license_compliance_plan,
+    summarize_task_license_compliance,
+    task_license_compliance_plan_to_dict,
+    task_license_compliance_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -215,6 +223,8 @@ __all__ = [
     "TaskComplianceEvidenceRecord",
     "TaskFeatureFlagReadinessPlan",
     "TaskFeatureFlagReadinessRecord",
+    "TaskLicenseCompliancePlan",
+    "TaskLicenseComplianceRecord",
     "TaskRolloutTelemetryPlan",
     "TaskRolloutTelemetryRecord",
     "TaskSecretsExposurePlan",
@@ -236,6 +246,7 @@ __all__ = [
     "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
     "build_task_feature_flag_readiness_plan",
+    "build_task_license_compliance_plan",
     "build_task_rollout_telemetry_plan",
     "build_task_secrets_exposure_plan",
     "create_exporter",
@@ -258,6 +269,7 @@ __all__ = [
     "summarize_task_accessibility_impacts",
     "summarize_task_compliance_evidence",
     "summarize_task_feature_flag_readiness",
+    "summarize_task_license_compliance",
     "summarize_task_rollout_telemetry",
     "summarize_task_secrets_exposure",
     "supported_target_aliases",
@@ -268,6 +280,8 @@ __all__ = [
     "task_compliance_evidence_plan_to_markdown",
     "task_feature_flag_readiness_plan_to_dict",
     "task_feature_flag_readiness_plan_to_markdown",
+    "task_license_compliance_plan_to_dict",
+    "task_license_compliance_plan_to_markdown",
     "task_rollout_telemetry_plan_to_dict",
     "task_rollout_telemetry_plan_to_markdown",
     "task_secrets_exposure_plan_to_dict",
