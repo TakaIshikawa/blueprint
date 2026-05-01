@@ -73,6 +73,14 @@ from blueprint.plan_data_retention_checklist import (
     plan_data_retention_checklist_to_markdown,
     summarize_plan_data_retention_checklist,
 )
+from blueprint.task_compliance_evidence import (
+    TaskComplianceEvidencePlan,
+    TaskComplianceEvidenceRecord,
+    build_task_compliance_evidence_plan,
+    summarize_task_compliance_evidence,
+    task_compliance_evidence_plan_to_dict,
+    task_compliance_evidence_plan_to_markdown,
+)
 
 __all__ = [
     "ADRExporter",
@@ -127,6 +135,8 @@ __all__ = [
     "StatusReportExporter",
     "StatusTimelineExporter",
     "TaskBundleExporter",
+    "TaskComplianceEvidencePlan",
+    "TaskComplianceEvidenceRecord",
     "TaskfileExporter",
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
@@ -136,12 +146,16 @@ __all__ = [
     "VSCodeTasksExporter",
     "WaveScheduleExporter",
     "build_plan_data_retention_checklist",
+    "build_task_compliance_evidence_plan",
     "create_exporter",
     "get_exporter_registration",
     "plan_data_retention_checklist_to_dict",
     "plan_data_retention_checklist_to_markdown",
     "resolve_target_name",
     "summarize_plan_data_retention_checklist",
+    "summarize_task_compliance_evidence",
     "supported_target_aliases",
     "supported_target_names",
+    "task_compliance_evidence_plan_to_dict",
+    "task_compliance_evidence_plan_to_markdown",
 ]
