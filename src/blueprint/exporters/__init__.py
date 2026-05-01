@@ -130,6 +130,14 @@ from blueprint.plan_customer_migration_window import (
     plan_customer_migration_window_matrix_to_markdown,
     summarize_plan_customer_migration_window,
 )
+from blueprint.plan_dependency_owner_escalation import (
+    PlanDependencyOwnerEscalationMatrix,
+    PlanDependencyOwnerEscalationRow,
+    build_plan_dependency_owner_escalation_matrix,
+    plan_dependency_owner_escalation_matrix_to_dict,
+    plan_dependency_owner_escalation_matrix_to_markdown,
+    summarize_plan_dependency_owner_escalation,
+)
 from blueprint.plan_accessibility_review_matrix import (
     PlanAccessibilityReviewMatrix,
     PlanAccessibilityReviewRecord,
@@ -357,6 +365,8 @@ __all__ = [
     "PlanCustomerMigrationWindowRow",
     "PlanDataRetentionChecklist",
     "PlanDataRetentionChecklistItem",
+    "PlanDependencyOwnerEscalationMatrix",
+    "PlanDependencyOwnerEscalationRow",
     "PlanDecisionRecord",
     "PlanDecisionRegister",
     "PlanFeatureAdoptionMeasurementMatrix",
@@ -430,6 +440,7 @@ __all__ = [
     "build_plan_accessibility_review_matrix",
     "build_plan_customer_migration_window_matrix",
     "build_plan_data_retention_checklist",
+    "build_plan_dependency_owner_escalation_matrix",
     "build_plan_decision_register",
     "build_plan_feature_adoption_measurement_matrix",
     "build_plan_privacy_review_matrix",
@@ -463,6 +474,8 @@ __all__ = [
     "plan_customer_migration_window_matrix_to_markdown",
     "plan_data_retention_checklist_to_dict",
     "plan_data_retention_checklist_to_markdown",
+    "plan_dependency_owner_escalation_matrix_to_dict",
+    "plan_dependency_owner_escalation_matrix_to_markdown",
     "plan_decision_register_to_dict",
     "plan_decision_register_to_markdown",
     "plan_feature_adoption_measurement_matrix_to_dict",
@@ -481,6 +494,7 @@ __all__ = [
     "summarize_plan_accessibility_review_matrix",
     "summarize_plan_customer_migration_window",
     "summarize_plan_data_retention_checklist",
+    "summarize_plan_dependency_owner_escalation",
     "summarize_plan_decision_register",
     "summarize_plan_feature_adoption_measurement",
     "summarize_plan_schema_migration_readiness",
