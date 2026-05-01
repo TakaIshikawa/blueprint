@@ -770,6 +770,153 @@ def _validate_discord_digest(
     return findings
 
 
+def _validate_teams_digest(
+    artifact_path: Path,
+    execution_plan: dict[str, Any],
+    implementation_brief: dict[str, Any],
+) -> list[ValidationFinding]:
+    """Validate the Teams digest JSON export."""
+    try:
+        payload = json.loads(artifact_path.read_text())
+    except json.JSONDecodeError as exc:
+        return [
+            ValidationFinding(
+                code="teams_digest.invalid_json",
+                message=f"Teams digest is not valid JSON: {exc.msg}",
+                path=str(artifact_path),
+            )
+        ]
+
+    if not isinstance(payload, dict):
+        return [
+            ValidationFinding(
+                code="teams_digest.invalid_shape",
+                message="Teams digest must be a JSON object.",
+                path=str(artifact_path),
+            )
+        ]
+
+    findings: list[ValidationFinding] = []
+    findings.extend(
+        _missing_keys(
+            payload,
+            ["schema_version", "title", "summary", "type", "attachments"],
+            "teams_digest.missing_key",
+            str(artifact_path),
+        )
+    )
+    if payload.get("schema_version") != "blueprint.teams_digest.v1":
+        findings.append(
+            ValidationFinding(
+                code="teams_digest.invalid_schema_version",
+                message="Teams digest has an unexpected schema version.",
+                path=str(artifact_path),
+            )
+        )
+
+    content = _teams_card_content(payload)
+    if content is None:
+        findings.append(
+            ValidationFinding(
+                code="teams_digest.invalid_card_shape",
+                message="Teams digest must contain one MessageCard attachment.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    sections = content.get("sections")
+    if not isinstance(sections, list):
+        findings.append(
+            ValidationFinding(
+                code="teams_digest.sections.invalid_shape",
+                message="Teams digest MessageCard sections must be a list.",
+                path=str(artifact_path),
+            )
+        )
+        return findings
+
+    section_titles = [
+        section.get("activityTitle")
+        for section in sections
+        if isinstance(section, dict) and section.get("activityTitle")
+    ]
+    for expected_title in ["Blocked Tasks", "High-Risk Tasks"]:
+        if expected_title not in section_titles:
+            findings.append(
+                ValidationFinding(
+                    code="teams_digest.missing_section",
+                    message=f"Teams digest is missing the {expected_title} section.",
+                    path=str(artifact_path),
+                )
+            )
+
+    fact_text = json.dumps(sections, sort_keys=True)
+    for status in ["pending", "in_progress", "completed", "blocked", "skipped"]:
+        if f"{status}: " not in fact_text:
+            findings.append(
+                ValidationFinding(
+                    code="teams_digest.missing_status_count",
+                    message=f"Teams digest is missing status count for {status}.",
+                    path=str(artifact_path),
+                )
+            )
+
+    for task in execution_plan.get("tasks", []):
+        task_id = task["id"]
+        if task.get("status") == "blocked" and task_id not in fact_text:
+            findings.append(
+                ValidationFinding(
+                    code="teams_digest.missing_blocked_task",
+                    message=f"Teams digest is missing blocked task {task_id}.",
+                    path=str(artifact_path),
+                )
+            )
+        if _is_high_risk_task(task) and task.get("status") not in {"completed", "skipped"}:
+            if task_id not in fact_text:
+                findings.append(
+                    ValidationFinding(
+                        code="teams_digest.missing_high_risk_task",
+                        message=f"Teams digest is missing high-risk task {task_id}.",
+                        path=str(artifact_path),
+                    )
+                )
+
+    return findings
+
+
+def _teams_card_content(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the Teams MessageCard content object when present."""
+    attachments = payload.get("attachments")
+    if not isinstance(attachments, list) or len(attachments) != 1:
+        return None
+    attachment = attachments[0]
+    if not isinstance(attachment, dict):
+        return None
+    if attachment.get("contentType") != "application/vnd.microsoft.card.message":
+        return None
+    content = attachment.get("content")
+    if not isinstance(content, dict):
+        return None
+    if content.get("@type") != "MessageCard":
+        return None
+    return content
+
+
+def _is_high_risk_task(task: dict[str, Any]) -> bool:
+    """Return whether a task has high priority or high risk markers."""
+    metadata = task.get("metadata") or {}
+    values = [
+        task.get("priority"),
+        task.get("risk_level"),
+        metadata.get("priority"),
+        metadata.get("teams_priority"),
+        metadata.get("risk_level"),
+    ]
+    high_values = {"p0", "p1", "urgent", "critical", "high", "highest", "blocker"}
+    return any(str(value).strip().lower() in high_values for value in values if value)
+
+
 def _validate_milestone_summary(
     artifact_path: Path,
     execution_plan: dict[str, Any],
@@ -5155,6 +5302,7 @@ _VALIDATORS: dict[str, ValidationCheck] = {
     "sarif-audit": _validate_sarif_audit,
     "discord-digest": _validate_discord_digest,
     "slack-digest": _validate_slack_digest,
+    "teams-digest": _validate_teams_digest,
     "status-report": _validate_status_report,
     "csv-tasks": _validate_csv_tasks,
     "taskfile": _validate_taskfile,

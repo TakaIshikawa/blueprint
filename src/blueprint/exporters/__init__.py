@@ -59,6 +59,7 @@ from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
 from blueprint.exporters.teamwork_csv import TeamworkCsvExporter
+from blueprint.exporters.teams_digest import TeamsDigestExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
 from blueprint.exporters.vscode_tasks import VSCodeTasksExporter
 from blueprint.exporters.wave_schedule import WaveScheduleExporter
@@ -116,6 +117,7 @@ __all__ = [
     "TaskQueueJsonlExporter",
     "TaskRosterExporter",
     "TeamworkCsvExporter",
+    "TeamsDigestExporter",
     "TrelloJsonExporter",
     "VSCodeTasksExporter",
     "WaveScheduleExporter",
