@@ -98,6 +98,14 @@ from blueprint.plan_decision_register import (
     plan_decision_register_to_markdown,
     summarize_plan_decision_register,
 )
+from blueprint.plan_deployment_freeze_conflicts import (
+    PlanDeploymentFreezeConflictRecord,
+    PlanDeploymentFreezeConflictReport,
+    build_plan_deployment_freeze_conflict_report,
+    plan_deployment_freeze_conflict_report_to_dict,
+    plan_deployment_freeze_conflict_report_to_markdown,
+    summarize_plan_deployment_freeze_conflicts,
+)
 from blueprint.plan_stakeholder_approvals import (
     PlanStakeholderApprovalMatrix,
     PlanStakeholderApprovalRow,
