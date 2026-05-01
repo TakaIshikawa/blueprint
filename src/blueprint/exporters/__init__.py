@@ -122,6 +122,14 @@ from blueprint.task_compliance_evidence import (
     task_compliance_evidence_plan_to_dict,
     task_compliance_evidence_plan_to_markdown,
 )
+from blueprint.task_data_residency import (
+    TaskDataResidencyPlan,
+    TaskDataResidencyRecord,
+    build_task_data_residency_plan,
+    summarize_task_data_residency,
+    task_data_residency_plan_to_dict,
+    task_data_residency_plan_to_markdown,
+)
 from blueprint.task_secrets_exposure import (
     TaskSecretsExposurePlan,
     TaskSecretsExposureRecord,
@@ -221,6 +229,8 @@ __all__ = [
     "TaskBundleExporter",
     "TaskComplianceEvidencePlan",
     "TaskComplianceEvidenceRecord",
+    "TaskDataResidencyPlan",
+    "TaskDataResidencyRecord",
     "TaskFeatureFlagReadinessPlan",
     "TaskFeatureFlagReadinessRecord",
     "TaskLicenseCompliancePlan",
@@ -245,6 +255,7 @@ __all__ = [
     "build_plan_training_enablement_checklist",
     "build_task_accessibility_impact_plan",
     "build_task_compliance_evidence_plan",
+    "build_task_data_residency_plan",
     "build_task_feature_flag_readiness_plan",
     "build_task_license_compliance_plan",
     "build_task_rollout_telemetry_plan",
@@ -268,6 +279,7 @@ __all__ = [
     "summarize_plan_training_enablement_checklist",
     "summarize_task_accessibility_impacts",
     "summarize_task_compliance_evidence",
+    "summarize_task_data_residency",
     "summarize_task_feature_flag_readiness",
     "summarize_task_license_compliance",
     "summarize_task_rollout_telemetry",
@@ -278,6 +290,8 @@ __all__ = [
     "task_accessibility_impact_plan_to_markdown",
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
+    "task_data_residency_plan_to_dict",
+    "task_data_residency_plan_to_markdown",
     "task_feature_flag_readiness_plan_to_dict",
     "task_feature_flag_readiness_plan_to_markdown",
     "task_license_compliance_plan_to_dict",
