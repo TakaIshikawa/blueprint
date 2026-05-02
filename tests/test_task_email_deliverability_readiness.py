@@ -55,14 +55,19 @@ def test_missing_readiness_detects_email_flows_and_safeguard_gaps():
         "spf",
         "dkim",
         "dmarc",
-        "unsubscribe_preferences",
-        "bounce_complaint_handling",
+        "unsubscribe_handling",
+        "bounce_processing",
+        "suppression_handling",
+        "provider_sandbox_removal",
+        "monitoring",
         "rate_limiting",
         "template_rendering_tests",
         "localization_accessibility",
         "fallback_support_visibility",
+        "sender_reputation_review",
     )
     assert record.readiness_level == "weak"
+    assert record.risk_level == "high"
     assert "files_or_modules: src/mail/transactional_email.py" in record.evidence
     assert any("SPF" in check for check in record.recommended_checks)
     assert result.summary["email_task_count"] == 1
@@ -79,8 +84,10 @@ def test_strong_readiness_has_no_missing_safeguards():
                     description=(
                         "Weekly digest email via Postmark uses SPF, DKIM, and DMARC alignment. "
                         "Add unsubscribe and email preference handling, bounce handling and complaint "
-                        "webhooks, rate limiting with backoff, template rendering tests, localization "
-                        "and accessibility review, plus support visibility with delivery logs and resend fallback."
+                        "webhooks, suppression handling, provider sandbox removal with production access, "
+                        "deliverability monitoring, rate limiting with backoff, template rendering tests, "
+                        "localization and accessibility review, plus support visibility with delivery logs, "
+                        "resend fallback, and sender reputation review."
                     ),
                     files_or_modules=["src/emails/digest/templates/weekly_digest.mjml"],
                 )
@@ -94,16 +101,21 @@ def test_strong_readiness_has_no_missing_safeguards():
         "spf",
         "dkim",
         "dmarc",
-        "unsubscribe_preferences",
-        "bounce_complaint_handling",
+        "unsubscribe_handling",
+        "bounce_processing",
+        "suppression_handling",
+        "provider_sandbox_removal",
+        "monitoring",
         "rate_limiting",
         "template_rendering_tests",
         "localization_accessibility",
         "fallback_support_visibility",
+        "sender_reputation_review",
     )
     assert record.missing_safeguards == ()
     assert record.recommended_checks == ()
     assert record.readiness_level == "strong"
+    assert record.risk_level == "low"
     assert result.summary["readiness_counts"] == {"weak": 0, "partial": 0, "strong": 1}
 
 
@@ -130,18 +142,28 @@ def test_partial_readiness_and_recommended_checks_are_actionable():
         "password_reset_email",
         "email_template",
         "email_provider",
+        "dns_records",
     )
     assert record.present_safeguards == ("spf", "dkim", "dmarc", "rate_limiting", "template_rendering_tests")
     assert record.missing_safeguards == (
-        "bounce_complaint_handling",
+        "bounce_processing",
+        "suppression_handling",
+        "provider_sandbox_removal",
+        "monitoring",
         "localization_accessibility",
         "fallback_support_visibility",
+        "sender_reputation_review",
     )
     assert record.readiness_level == "partial"
+    assert record.risk_level == "medium"
     assert record.recommended_checks == (
-        "Wire bounce and complaint webhooks into suppression handling and operational alerts.",
+        "Wire bounce and complaint events into processing paths with operational ownership.",
+        "Confirm bounced, complained, and unsubscribed recipients are added to suppression handling before future sends.",
+        "Verify provider production access, sender/domain approval, and sandbox-removal steps for the launch environment.",
+        "Add deliverability monitoring for accepts, rejects, bounces, complaints, spam rate, and provider alerts.",
         "Review email content for localization coverage, accessible markup, alt text, and readable contrast.",
         "Document fallback/resend behavior and expose delivery state or logs to support.",
+        "Review sender reputation, warm-up needs, and domain/IP alignment before increasing volume.",
     )
 
 
@@ -173,12 +195,13 @@ def test_signals_are_detected_from_title_description_files_and_metadata():
         "spf",
         "dkim",
         "dmarc",
-        "bounce_complaint_handling",
+        "bounce_processing",
+        "suppression_handling",
         "rate_limiting",
         "localization_accessibility",
         "fallback_support_visibility",
     )
-    assert "unsubscribe_preferences" not in record.missing_safeguards
+    assert "unsubscribe_handling" not in record.missing_safeguards
     assert "template_rendering_tests" in record.missing_safeguards
     assert any("metadata.email_deliverability.authentication" in item for item in record.evidence)
     assert any("tags[0]" in item for item in record.evidence)
@@ -219,30 +242,41 @@ def test_unrelated_tasks_empty_and_malformed_inputs_are_stable():
             "password_reset_email": 0,
             "digest_email": 0,
             "transactional_email": 0,
+            "marketing_email": 0,
             "email_template": 0,
             "email_provider": 0,
+            "dns_records": 0,
         },
+        "risk_counts": {"high": 0, "medium": 0, "low": 0},
         "present_safeguard_counts": {
             "spf": 0,
             "dkim": 0,
             "dmarc": 0,
-            "unsubscribe_preferences": 0,
-            "bounce_complaint_handling": 0,
+            "unsubscribe_handling": 0,
+            "bounce_processing": 0,
+            "suppression_handling": 0,
+            "provider_sandbox_removal": 0,
+            "monitoring": 0,
             "rate_limiting": 0,
             "template_rendering_tests": 0,
             "localization_accessibility": 0,
             "fallback_support_visibility": 0,
+            "sender_reputation_review": 0,
         },
         "missing_safeguard_counts": {
             "spf": 0,
             "dkim": 0,
             "dmarc": 0,
-            "unsubscribe_preferences": 0,
-            "bounce_complaint_handling": 0,
+            "unsubscribe_handling": 0,
+            "bounce_processing": 0,
+            "suppression_handling": 0,
+            "provider_sandbox_removal": 0,
+            "monitoring": 0,
             "rate_limiting": 0,
             "template_rendering_tests": 0,
             "localization_accessibility": 0,
             "fallback_support_visibility": 0,
+            "sender_reputation_review": 0,
         },
     }
     assert "No outbound or transactional email tasks" in no_op.to_markdown()
@@ -261,7 +295,9 @@ def test_serialization_markdown_aliases_order_and_no_source_mutation():
                 title="Digest email",
                 description=(
                     "Digest email has SPF, DKIM, DMARC, unsubscribe preferences, bounce handling, "
-                    "rate limiting, render tests, localization, accessibility, and delivery logs."
+                    "suppression handling, provider sandbox removal, deliverability monitoring, "
+                    "rate limiting, render tests, localization, accessibility, delivery logs, "
+                    "and sender reputation review."
                 ),
             ),
             _task("task-copy", title="Update copy", description="Adjust static wording."),
@@ -296,6 +332,8 @@ def test_serialization_markdown_aliases_order_and_no_source_mutation():
         "task_id",
         "title",
         "readiness_level",
+        "risk_level",
+        "matched_signals",
         "detected_signals",
         "present_safeguards",
         "missing_safeguards",
@@ -328,7 +366,7 @@ def test_execution_plan_execution_task_and_object_inputs_are_supported():
 
     assert first.records[0].task_id == "task-object"
     assert "notification_email" in first.records[0].detected_signals
-    assert "bounce_complaint_handling" in first.records[0].present_safeguards
+    assert "bounce_processing" in first.records[0].present_safeguards
     assert second.plan_id == "plan-model"
     assert second.records[0].task_id == "task-model"
 
