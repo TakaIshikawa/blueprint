@@ -115,6 +115,66 @@ def test_free_text_markdown_extracts_retention_deletion_archival_and_purge():
     ]
 
 
+def test_deletion_only_brief_extracts_window_and_user_request_trigger():
+    result = build_source_data_retention_requirements(
+        _source_brief(
+            summary=(
+                "Delete backup data within 14 days after contract termination. "
+                "Purge account tokens upon user request."
+            ),
+            source_payload={},
+        )
+    )
+
+    assert [
+        (
+            record.requirement_type,
+            record.data_scope,
+            record.retention_window,
+            record.deletion_trigger,
+        )
+        for record in result.requirements
+    ] == [
+        ("deletion", "backup data", "within 14 days", "after contract termination"),
+        ("purge", "account tokens", None, "upon user request"),
+    ]
+
+
+def test_compliance_exception_language_is_reported_as_legal_hold_signal():
+    result = build_source_data_retention_requirements(
+        _source_brief(
+            source_payload={
+                "compliance": (
+                    "Customer records must be deleted within 30 days after account closure "
+                    "unless required by law for regulatory retention."
+                )
+            }
+        )
+    )
+
+    assert [
+        (
+            record.requirement_type,
+            record.data_scope,
+            record.deletion_trigger,
+            record.legal_hold_signal,
+            record.confidence,
+        )
+        for record in result.requirements
+    ] == [
+        (
+            "legal_hold",
+            "customer records",
+            "after account closure",
+            "unless required by law",
+            "high",
+        ),
+        ("retention", "customer records", "after account closure", None, "high"),
+        ("deletion", "customer records", "after account closure", None, "high"),
+    ]
+    assert result.summary["legal_hold_count"] == 1
+
+
 def test_brief_without_retention_or_deletion_signals_returns_no_findings():
     result = build_source_data_retention_requirements(
         _source_brief(
