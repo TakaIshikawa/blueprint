@@ -19,21 +19,28 @@ EmailFlowSignal = Literal[
     "password_reset_email",
     "digest_email",
     "transactional_email",
+    "marketing_email",
     "email_template",
     "email_provider",
+    "dns_records",
 ]
 EmailDeliverabilitySafeguard = Literal[
     "spf",
     "dkim",
     "dmarc",
-    "unsubscribe_preferences",
-    "bounce_complaint_handling",
+    "unsubscribe_handling",
+    "bounce_processing",
+    "suppression_handling",
+    "provider_sandbox_removal",
+    "monitoring",
     "rate_limiting",
     "template_rendering_tests",
     "localization_accessibility",
     "fallback_support_visibility",
+    "sender_reputation_review",
 ]
 EmailDeliverabilityReadinessLevel = Literal["weak", "partial", "strong"]
+EmailDeliverabilityRiskLevel = Literal["high", "medium", "low"]
 _T = TypeVar("_T")
 
 _SPACE_RE = re.compile(r"\s+")
@@ -44,20 +51,26 @@ _SIGNAL_ORDER: tuple[EmailFlowSignal, ...] = (
     "password_reset_email",
     "digest_email",
     "transactional_email",
+    "marketing_email",
     "email_template",
     "email_provider",
+    "dns_records",
 )
 _SIGNAL_RANK: dict[EmailFlowSignal, int] = {signal: index for index, signal in enumerate(_SIGNAL_ORDER)}
 _SAFEGUARD_ORDER: tuple[EmailDeliverabilitySafeguard, ...] = (
     "spf",
     "dkim",
     "dmarc",
-    "unsubscribe_preferences",
-    "bounce_complaint_handling",
+    "unsubscribe_handling",
+    "bounce_processing",
+    "suppression_handling",
+    "provider_sandbox_removal",
+    "monitoring",
     "rate_limiting",
     "template_rendering_tests",
     "localization_accessibility",
     "fallback_support_visibility",
+    "sender_reputation_review",
 )
 _READINESS_ORDER: dict[EmailDeliverabilityReadinessLevel, int] = {
     "weak": 0,
@@ -65,7 +78,7 @@ _READINESS_ORDER: dict[EmailDeliverabilityReadinessLevel, int] = {
     "strong": 2,
 }
 _OPTIONAL_UNSUBSCRIBE_SIGNALS = {"invite_email", "password_reset_email"}
-_GENERIC_SIGNALS = {"outbound_email", "email_template", "email_provider"}
+_GENERIC_SIGNALS = {"outbound_email", "email_template", "email_provider", "dns_records"}
 _REQUIRED_AUTHENTICATION: set[EmailDeliverabilitySafeguard] = {"spf", "dkim", "dmarc"}
 
 _TEXT_SIGNAL_PATTERNS: dict[EmailFlowSignal, re.Pattern[str]] = {
@@ -84,22 +97,42 @@ _TEXT_SIGNAL_PATTERNS: dict[EmailFlowSignal, re.Pattern[str]] = {
         r"\b(?:transactional emails?|receipt emails?|invoice emails?|order confirmation|account emails?|system emails?)\b",
         re.I,
     ),
+    "marketing_email": re.compile(
+        r"\b(?:marketing emails?|promotional emails?|campaign emails?|newsletter|bulk email|broadcast email)\b",
+        re.I,
+    ),
     "email_template": re.compile(
         r"\b(?:email templates?|template rendering|mjml|handlebars email|liquid templates?|html email|text email)\b",
         re.I,
     ),
-    "email_provider": re.compile(r"\b(?:sendgrid|mailgun|postmark|aws ses|ses|smtp provider|email provider|esp)\b", re.I),
+    "email_provider": re.compile(
+        r"\b(?:sendgrid|mailgun|postmark|aws ses|amazon ses|ses|smtp|smtp provider|email provider|esp)\b",
+        re.I,
+    ),
+    "dns_records": re.compile(r"\b(?:dns records?|txt records?|spf|dkim|dmarc|mx records?)\b", re.I),
 }
 _SAFEGUARD_PATTERNS: dict[EmailDeliverabilitySafeguard, re.Pattern[str]] = {
     "spf": re.compile(r"\b(?:spf|sender policy framework|txt record)\b", re.I),
     "dkim": re.compile(r"\b(?:dkim|domainkeys|domain key|selector)\b", re.I),
     "dmarc": re.compile(r"\b(?:dmarc|domain-based message authentication|p=reject|p=quarantine|rua=)\b", re.I),
-    "unsubscribe_preferences": re.compile(
+    "unsubscribe_handling": re.compile(
         r"\b(?:unsubscribe|list-unsubscribe|preference center|email preferences?|opt out|opt-out|mail preferences?)\b",
         re.I,
     ),
-    "bounce_complaint_handling": re.compile(
-        r"\b(?:bounce handling|bounces?|complaint handling|complaints?|suppression list|webhook|feedback loop|fbl)\b",
+    "bounce_processing": re.compile(
+        r"\b(?:bounce processing|bounce handling|bounces?|hard bounce|soft bounce|complaint handling|complaints?|feedback loop|fbl)\b",
+        re.I,
+    ),
+    "suppression_handling": re.compile(
+        r"\b(?:suppression handling|suppression list|suppressed recipients?|blocklist|complaint suppression|unsubscribe suppression)\b",
+        re.I,
+    ),
+    "provider_sandbox_removal": re.compile(
+        r"\b(?:sandbox removal|production access|move out of sandbox|provider sandbox|ses sandbox|sendgrid account review|postmark approval)\b",
+        re.I,
+    ),
+    "monitoring": re.compile(
+        r"\b(?:deliverability monitoring|delivery monitoring|delivery metrics?|bounce metrics?|complaint metrics?|alerts?|alerting|reputation monitoring)\b",
         re.I,
     ),
     "rate_limiting": re.compile(r"\b(?:rate limit|rate limiting|throttle|throttling|send quota|batch size|backoff)\b", re.I),
@@ -115,17 +148,25 @@ _SAFEGUARD_PATTERNS: dict[EmailDeliverabilitySafeguard, re.Pattern[str]] = {
         r"\b(?:delivery fallback|manual fallback|manual resend|resend|support visibility|support dashboard|support runbook|support handoff|delivery logs?|message logs?)\b",
         re.I,
     ),
+    "sender_reputation_review": re.compile(
+        r"\b(?:sender reputation|domain reputation|ip reputation|warm ?up|warming|spam rate|inbox placement)\b",
+        re.I,
+    ),
 }
 _SAFEGUARD_RECOMMENDED_CHECKS: dict[EmailDeliverabilitySafeguard, str] = {
     "spf": "Verify SPF records include the sending provider and pass for the planned From domain.",
     "dkim": "Confirm DKIM keys, selectors, and signing are configured in each sending environment.",
     "dmarc": "Check DMARC policy alignment, aggregate reporting, and launch-safe policy progression.",
-    "unsubscribe_preferences": "Add unsubscribe or preference-center handling for non-essential email and test opt-out behavior.",
-    "bounce_complaint_handling": "Wire bounce and complaint webhooks into suppression handling and operational alerts.",
+    "unsubscribe_handling": "Add unsubscribe or preference-center handling for non-essential email and test opt-out behavior.",
+    "bounce_processing": "Wire bounce and complaint events into processing paths with operational ownership.",
+    "suppression_handling": "Confirm bounced, complained, and unsubscribed recipients are added to suppression handling before future sends.",
+    "provider_sandbox_removal": "Verify provider production access, sender/domain approval, and sandbox-removal steps for the launch environment.",
+    "monitoring": "Add deliverability monitoring for accepts, rejects, bounces, complaints, spam rate, and provider alerts.",
     "rate_limiting": "Define provider quotas, send throttles, retry backoff, and bulk-send limits before rollout.",
     "template_rendering_tests": "Test template rendering, variables, multipart bodies, links, and provider payloads.",
     "localization_accessibility": "Review email content for localization coverage, accessible markup, alt text, and readable contrast.",
     "fallback_support_visibility": "Document fallback/resend behavior and expose delivery state or logs to support.",
+    "sender_reputation_review": "Review sender reputation, warm-up needs, and domain/IP alignment before increasing volume.",
 }
 
 
@@ -136,11 +177,17 @@ class TaskEmailDeliverabilityReadinessRecord:
     task_id: str
     title: str
     readiness_level: EmailDeliverabilityReadinessLevel
+    risk_level: EmailDeliverabilityRiskLevel
     detected_signals: tuple[EmailFlowSignal, ...]
     present_safeguards: tuple[EmailDeliverabilitySafeguard, ...] = field(default_factory=tuple)
     missing_safeguards: tuple[EmailDeliverabilitySafeguard, ...] = field(default_factory=tuple)
     evidence: tuple[str, ...] = field(default_factory=tuple)
     recommended_checks: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def matched_signals(self) -> tuple[EmailFlowSignal, ...]:
+        """Compatibility view for analyzers that name detected signals matched signals."""
+        return self.detected_signals
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
@@ -148,6 +195,8 @@ class TaskEmailDeliverabilityReadinessRecord:
             "task_id": self.task_id,
             "title": self.title,
             "readiness_level": self.readiness_level,
+            "risk_level": self.risk_level,
+            "matched_signals": list(self.matched_signals),
             "detected_signals": list(self.detected_signals),
             "present_safeguards": list(self.present_safeguards),
             "missing_safeguards": list(self.missing_safeguards),
@@ -214,8 +263,8 @@ class TaskEmailDeliverabilityReadinessPlan:
                 "",
                 "## Records",
                 "",
-                "| Task | Title | Readiness | Signals | Missing Safeguards | Evidence |",
-                "| --- | --- | --- | --- | --- | --- |",
+                "| Task | Title | Readiness | Risk | Signals | Missing Safeguards | Recommended Checks | Evidence |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for record in self.records:
@@ -224,8 +273,10 @@ class TaskEmailDeliverabilityReadinessPlan:
                 f"`{_markdown_cell(record.task_id)}` | "
                 f"{_markdown_cell(record.title)} | "
                 f"{record.readiness_level} | "
+                f"{record.risk_level} | "
                 f"{_markdown_cell('; '.join(record.detected_signals) or 'none')} | "
                 f"{_markdown_cell('; '.join(record.missing_safeguards) or 'none')} | "
+                f"{_markdown_cell('; '.join(record.recommended_checks) or 'none')} | "
                 f"{_markdown_cell('; '.join(record.evidence) or 'none')} |"
             )
         if self.no_signal_task_ids:
@@ -347,6 +398,7 @@ def _task_record(task: Mapping[str, Any], index: int) -> TaskEmailDeliverability
         task_id=task_id,
         title=title,
         readiness_level=readiness,
+        risk_level=_risk_level(readiness),
         detected_signals=signals.signals,
         present_safeguards=signals.present_safeguards,
         missing_safeguards=missing_safeguards,
@@ -416,10 +468,14 @@ def _path_signals(path: str) -> set[EmailFlowSignal]:
         signals.add("digest_email")
     if any(token in text for token in ("transactional", "receipt", "invoice email", "order confirmation")):
         signals.add("transactional_email")
+    if any(token in text for token in ("marketing", "promotional", "campaign", "newsletter", "bulk email", "broadcast email")):
+        signals.add("marketing_email")
     if any(token in text for token in ("template", "templates", "mjml", "handlebars", "liquid")):
         signals.add("email_template")
     if any(token in text for token in ("sendgrid", "mailgun", "postmark", "aws ses", "ses", "smtp")):
         signals.add("email_provider")
+    if any(token in text for token in ("dns", "txt record", "spf", "dkim", "dmarc", "mx record")):
+        signals.add("dns_records")
     if name in {"mailer.py", "mailers.py", "email.py", "emails.py", "notifications.py"}:
         signals.add("outbound_email")
     return signals
@@ -435,7 +491,7 @@ def _missing_safeguards(
         "digest_email",
         "transactional_email",
     }:
-        required.remove("unsubscribe_preferences")
+        required.remove("unsubscribe_handling")
     present = set(present_safeguards)
     return tuple(safeguard for safeguard in _SAFEGUARD_ORDER if safeguard in required and safeguard not in present)
 
@@ -452,6 +508,14 @@ def _readiness_level(
     return "weak"
 
 
+def _risk_level(readiness: EmailDeliverabilityReadinessLevel) -> EmailDeliverabilityRiskLevel:
+    if readiness == "strong":
+        return "low"
+    if readiness == "partial":
+        return "medium"
+    return "high"
+
+
 def _summary(
     records: tuple[TaskEmailDeliverabilityReadinessRecord, ...],
     *,
@@ -466,6 +530,10 @@ def _summary(
         "readiness_counts": {
             level: sum(1 for record in records if record.readiness_level == level)
             for level in _READINESS_ORDER
+        },
+        "risk_counts": {
+            risk: sum(1 for record in records if record.risk_level == risk)
+            for risk in ("high", "medium", "low")
         },
         "signal_counts": {
             signal: sum(1 for record in records if signal in record.detected_signals)
@@ -729,6 +797,7 @@ def _dedupe(values: Iterable[_T]) -> list[_T]:
 
 __all__ = [
     "EmailDeliverabilityReadinessLevel",
+    "EmailDeliverabilityRiskLevel",
     "EmailDeliverabilitySafeguard",
     "EmailFlowSignal",
     "TaskEmailDeliverabilityReadinessPlan",
