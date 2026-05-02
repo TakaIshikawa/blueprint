@@ -1,10 +1,10 @@
-"""Extract billing proration and subscription-change requirements from briefs."""
+"""Extract source-level billing proration requirements from briefs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping, TypeVar
 
 from pydantic import ValidationError
 
@@ -22,6 +22,7 @@ BillingProrationCategory = Literal[
     "tax_interaction",
 ]
 BillingProrationConfidence = Literal["high", "medium", "low"]
+_T = TypeVar("_T")
 
 _CATEGORY_ORDER: tuple[BillingProrationCategory, ...] = (
     "plan_upgrade_proration",
@@ -41,139 +42,47 @@ _CONFIDENCE_ORDER: dict[BillingProrationConfidence, int] = {
 _SPACE_RE = re.compile(r"\s+")
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _CHECKBOX_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[[ xX]\]\s+")
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _CLAUSE_SPLIT_RE = re.compile(r",\s+(?:and|but|or)\s+", re.I)
-_REQUIRED_RE = re.compile(
-    r"\b(?:must|shall|required|requires?|requirement|needs?|need to|should|ensure|"
-    r"acceptance|done when|before launch|cannot ship|support|calculate|apply|document|"
-    r"define|defines|defined)\b",
-    re.I,
-)
 _BILLING_CONTEXT_RE = re.compile(
-    r"\b(?:billing|subscription|subscrib(?:e|er|ers|ed|ing)|plan|pricing|charge|"
-    r"invoice|credit|refund|tax|vat|sales tax|prorat(?:e|ed|ion|ing)|billing cycle|"
-    r"renewal|seat|license|trial|checkout|accounting|ledger|revenue)\b",
+    r"\b(?:billing|subscription|subscriptions?|plan|plans?|pricing|invoice|invoices?|"
+    r"charge|charges?|charged|credit|credits?|refund|refunds?|tax|vat|sales tax|"
+    r"trial|renewal|billing cycle|cycle|seat|seats?|quantity|account balance)\b",
     re.I,
 )
-_NEGATED_SCOPE_RE = re.compile(
-    r"\b(?:no|not|without)\s+(?:billing|subscription|prorat(?:e|ed|ion|ing)|invoice|"
-    r"refund|credit|tax|seat|plan change).*?\b(?:in scope|required|requirements?|needed|changes?)\b",
+_PRORATION_CONTEXT_RE = re.compile(
+    r"\b(?:prorat(?:e|ed|es|ion)|pro[- ]?rat(?:e|ed|es|ion)|mid[- ]cycle|"
+    r"remaining billing period|unused time|unused value|partial period|co[- ]?term|"
+    r"renewal date|upgrade|downgrade|plan change|subscription change|seat count|"
+    r"added seats?|removed seats?|trial conversion|convert(?:s|ed)? to paid|"
+    r"first paid subscription|credit memo|debit memo|invoice adjustment|line item|"
+    r"partial refund|cancelled subscriptions?|canceled subscriptions?)\b",
+    re.I,
+)
+_AMBIGUOUS_BILLING_CHANGE_RE = re.compile(
+    r"\b(?:billing|subscription|plan|pricing)\s+(?:change|changes|update|updates|"
+    r"migration|migrations|adjustment|adjustments)\b",
     re.I,
 )
 _STRUCTURED_FIELD_RE = re.compile(
-    r"(?:billing|subscription|prorat|plan|downgrade|upgrade|seat|license|credit|refund|"
-    r"invoice|tax|vat|trial|cycle|renewal|accounting|revenue|requirements?|acceptance|"
-    r"constraints?)",
+    r"(?:billing|subscription|pricing|plan|upgrade|downgrade|seat|quantity|cycle|"
+    r"renewal|trial|refund|credit|invoice|adjustment|tax|vat|prorat|accounting|"
+    r"requirements?|acceptance|criteria|definition[-_ ]?of[-_ ]?done|metadata|"
+    r"source[-_ ]?payload)",
     re.I,
 )
-_CATEGORY_PATTERNS: dict[BillingProrationCategory, re.Pattern[str]] = {
-    "plan_upgrade_proration": re.compile(
-        r"\b(?:(?:upgrade|plan upgrade|upgrade plan|upgrade tier|higher tier|move to a paid tier|"
-        r"change to premium).{0,90}(?:prorat(?:e|ed|ion|ing)|partial[- ]?period|"
-        r"remaining billing period|mid[- ]?cycle|immediate charge|charge the difference)|"
-        r"(?:prorat(?:e|ed|ion|ing)|partial[- ]?period|remaining billing period|mid[- ]?cycle)"
-        r".{0,90}(?:upgrade|higher tier|premium plan))\b",
-        re.I,
-    ),
-    "downgrade_credit": re.compile(
-        r"\b(?:(?:downgrade|lower tier|reduce plan|cancel add[- ]?on).{0,90}"
-        r"(?:credit|account credit|service credit|credit balance|carry[- ]?forward|"
-        r"unused time|unused value|partial credit)|"
-        r"(?:credit|account credit|credit balance|carry[- ]?forward|unused time|unused value)"
-        r".{0,90}(?:downgrade|lower tier|reduce plan))\b",
-        re.I,
-    ),
-    "seat_count_change": re.compile(
-        r"\b(?:(?:seat|seats|user licenses?|licenses?|license count|member count|quantity)"
-        r".{0,90}(?:add|added|remove|removed|change|increase|decrease|true[- ]?up|true[- ]?down|"
-        r"prorat(?:e|ed|ion|ing)|charge|credit)|"
-        r"(?:add|remove|increase|decrease|change).{0,50}(?:seat|seats|user licenses?|licenses?))\b",
-        re.I,
-    ),
-    "billing_cycle_alignment": re.compile(
-        r"\b(?:billing cycle alignment|align(?:ed|ment)? to (?:the )?billing cycle|"
-        r"co[- ]?term(?:ination|ed)?|coterm(?:ination|ed)?|anniversary date|renewal date|"
-        r"billing anchor|cycle anchor|calendar billing|same billing date|next billing cycle|"
-        r"mid[- ]?cycle.{0,60}(?:align|cycle|renewal|anniversary))\b",
-        re.I,
-    ),
-    "trial_conversion": re.compile(
-        r"\b(?:(?:trial|free trial|trialing|trial period).{0,90}(?:convert|conversion|"
-        r"paid|charge|subscription|billing starts?|first invoice|prorat(?:e|ed|ion|ing))|"
-        r"(?:convert|conversion).{0,60}(?:trial|free trial).{0,60}(?:paid|subscription|billing))\b",
-        re.I,
-    ),
-    "refund_policy": re.compile(
-        r"\b(?:refund(?:s|ed|ing)?|refund policy|refundable|non[- ]?refundable|money back|"
-        r"partial refund|refund window|refund eligibility|refund calculation|refund rules?)\b",
-        re.I,
-    ),
-    "invoice_adjustment": re.compile(
-        r"\b(?:invoice adjustment|adjust(?:ed|ment|ments)? invoice|invoice correction|"
-        r"corrective invoice|credit memo|debit memo|invoice line adjustment|adjust invoice lines?|"
-        r"amend invoice|void and reissue invoice|invoice true[- ]?up|invoice true[- ]?down)\b",
-        re.I,
-    ),
-    "tax_interaction": re.compile(
-        r"\b(?:(?:tax|taxes|sales tax|vat|gst|hst|tax jurisdiction|tax rate|tax calculation|"
-        r"tax inclusive|tax exclusive).{0,90}(?:prorat(?:e|ed|ion|ing)|credit|refund|invoice|"
-        r"plan change|seat change|billing cycle)|"
-        r"(?:prorat(?:e|ed|ion|ing)|credit|refund|invoice|plan change|seat change).{0,90}"
-        r"(?:tax|taxes|sales tax|vat|gst|hst))\b",
-        re.I,
-    ),
-}
-_OWNER_SUGGESTIONS: dict[BillingProrationCategory, str] = {
-    "plan_upgrade_proration": "billing",
-    "downgrade_credit": "billing",
-    "seat_count_change": "billing",
-    "billing_cycle_alignment": "billing",
-    "trial_conversion": "product",
-    "refund_policy": "support",
-    "invoice_adjustment": "finance",
-    "tax_interaction": "tax",
-}
-_PLANNING_NOTES: dict[BillingProrationCategory, str] = {
-    "plan_upgrade_proration": "Define how mid-cycle upgrades calculate immediate charges and remaining-period proration.",
-    "downgrade_credit": "Define how downgrades create, carry forward, or suppress credits for unused value.",
-    "seat_count_change": "Define how added and removed seats affect charges, credits, and invoice quantities.",
-    "billing_cycle_alignment": "Define how plan changes align to billing anchors, renewal dates, and co-termed cycles.",
-    "trial_conversion": "Define when trial conversion starts billing and whether partial periods are prorated.",
-    "refund_policy": "Define refund eligibility, refund windows, and partial-period refund calculations.",
-    "invoice_adjustment": "Define when invoice corrections, credit memos, debit memos, or line adjustments are issued.",
-    "tax_interaction": "Define how taxes are recalculated for prorations, credits, refunds, and invoice adjustments.",
-}
-_SCANNED_FIELDS: tuple[str, ...] = (
-    "title",
-    "summary",
-    "body",
-    "description",
-    "problem",
-    "problem_statement",
-    "goal",
-    "goals",
-    "mvp_goal",
-    "context",
-    "workflow_context",
-    "requirements",
-    "constraints",
-    "scope",
-    "acceptance",
-    "acceptance_criteria",
-    "success_criteria",
-    "definition_of_done",
-    "validation_plan",
-    "architecture_notes",
-    "data_requirements",
-    "integration_points",
-    "risks",
-    "metadata",
-    "brief_metadata",
-    "implementation_notes",
-    "source_payload",
-    "files",
-    "file_paths",
-    "paths",
+_REQUIREMENT_RE = re.compile(
+    r"\b(?:must|shall|required|requires?|requirement|needs?|need to|should|ensure|"
+    r"support|allow|provide|define|document|calculate|recalculate|validat(?:e|es|ed|ing)|charge|credit|"
+    r"refund|issue|create|apply|validate|done when|acceptance|cannot ship)\b",
+    re.I,
+)
+_NEGATED_SCOPE_RE = re.compile(
+    r"\b(?:no|not|without)\b.{0,80}\b(?:billing|subscription|plan|pricing|invoice|"
+    r"prorat(?:e|ed|es|ion)|credit|refund)\b.{0,80}\b(?:in scope|required|"
+    r"requirements?|needed|changes?)\b",
+    re.I,
 )
 _IGNORED_FIELDS = {
     "created_at",
@@ -186,16 +95,99 @@ _IGNORED_FIELDS = {
     "generation_prompt",
 }
 
+_CATEGORY_PATTERNS: dict[BillingProrationCategory, re.Pattern[str]] = {
+    "plan_upgrade_proration": re.compile(
+        r"\b(?:(?:plan|subscription)?\s*upgrades?.{0,80}\b(?:prorat|remaining billing period|"
+        r"charge(?:s|d)? the difference|difference immediately|mid[- ]cycle)|"
+        r"upgrade proration|prorat(?:e|ed|es|ion).{0,80}\bupgrade)\b",
+        re.I,
+    ),
+    "downgrade_credit": re.compile(
+        r"\b(?:downgrades?.{0,100}\b(?:credit|unused|carry forward|account balance)|"
+        r"downgrade credits?|credit(?:s)?.{0,80}\b(?:downgrade|unused subscription value|unused time))\b",
+        re.I,
+    ),
+    "seat_count_change": re.compile(
+        r"\b(?:seat count changes?|added seats?|removed seats?|seat quantity|quantity changes?|"
+        r"per[- ]seat|seats?.{0,80}\b(?:prorat|charge|credit|quantity))\b",
+        re.I,
+    ),
+    "billing_cycle_alignment": re.compile(
+        r"\b(?:billing cycle alignment|billing cycle|co[- ]?term|coterm|co[- ]?terminal|"
+        r"renewal date|align(?:s|ed|ment)? to (?:the )?renewal|cycle alignment)\b",
+        re.I,
+    ),
+    "trial_conversion": re.compile(
+        r"\b(?:trial conversion|free trial conversion|convert(?:s|ed|ing)? to paid|"
+        r"trial.{0,80}\b(?:paid subscription|first invoice|billing starts?|starts billing|"
+        r"subscription invoice)|first paid subscription invoice)\b",
+        re.I,
+    ),
+    "refund_policy": re.compile(
+        r"\b(?:refund policy|partial refunds?|refund window|refund eligibility|"
+        r"non[- ]refundable|cancelled subscriptions?|canceled subscriptions?|refunds?.{0,80}\bpolicy)\b",
+        re.I,
+    ),
+    "invoice_adjustment": re.compile(
+        r"\b(?:invoice adjustments?|invoice line(?: item)? corrections?|line item clarity|"
+        r"invoice line items?|credit memos?|debit memos?|invoice corrections?|"
+        r"invoice adjustment rules?)\b",
+        re.I,
+    ),
+    "tax_interaction": re.compile(
+        r"\b(?:(?:sales tax|vat|tax(?:es)?|tax calculation).{0,100}\b(?:prorat\w*|credit\w*|"
+        r"invoice adjustment\w*|recalculat\w*)|(?:prorat\w*|credit\w*|invoice adjustment\w*).{0,100}\b"
+        r"(?:sales tax|vat|tax(?:es)?|tax calculation)|tax interaction)\b",
+        re.I,
+    ),
+}
+_OWNER_BY_CATEGORY: dict[BillingProrationCategory, str] = {
+    "plan_upgrade_proration": "billing_engineering",
+    "downgrade_credit": "finance",
+    "seat_count_change": "billing_engineering",
+    "billing_cycle_alignment": "billing_engineering",
+    "trial_conversion": "product",
+    "refund_policy": "support",
+    "invoice_adjustment": "finance",
+    "tax_interaction": "finance",
+}
+_PLANNING_NOTES_BY_CATEGORY: dict[BillingProrationCategory, tuple[str, ...]] = {
+    "plan_upgrade_proration": (
+        "Define upgrade proration timing, immediate charge behavior, and customer-visible explanation.",
+    ),
+    "downgrade_credit": (
+        "Document downgrade credit calculation, account balance handling, and customer-visible explanation.",
+    ),
+    "seat_count_change": (
+        "Specify added and removed seat proration, quantity boundaries, and invoice line item presentation.",
+    ),
+    "billing_cycle_alignment": (
+        "Confirm renewal-date alignment, co-terming rules, and mid-cycle effective dates.",
+    ),
+    "trial_conversion": (
+        "Define trial conversion timing, first paid invoice behavior, and subscription start dates.",
+    ),
+    "refund_policy": (
+        "Capture refund eligibility, refund window, non-refundable items, and support handling.",
+    ),
+    "invoice_adjustment": (
+        "Plan invoice adjustment, debit memo, credit memo, and line item clarity requirements.",
+    ),
+    "tax_interaction": (
+        "Validate tax recalculation for prorated charges, credits, refunds, and invoice adjustments.",
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SourceBillingProrationRequirement:
-    """One source-backed billing proration or subscription-change requirement."""
+    """One source-backed billing proration requirement."""
 
     source_brief_id: str | None
     category: BillingProrationCategory
     evidence: tuple[str, ...] = field(default_factory=tuple)
     confidence: BillingProrationConfidence = "medium"
-    owner_suggestion: str | None = None
+    owner_suggestion: str = ""
     planning_notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -220,7 +212,7 @@ class SourceBillingProrationRequirementsReport:
 
     @property
     def records(self) -> tuple[SourceBillingProrationRequirement, ...]:
-        """Compatibility view matching extractors that name findings records."""
+        """Compatibility view matching reports that expose extracted rows as records."""
         return self.requirements
 
     def to_dict(self) -> dict[str, Any]:
@@ -229,7 +221,7 @@ class SourceBillingProrationRequirementsReport:
             "source_id": self.source_id,
             "requirements": [requirement.to_dict() for requirement in self.requirements],
             "summary": dict(self.summary),
-            "records": [requirement.to_dict() for requirement in self.records],
+            "records": [record.to_dict() for record in self.records],
         }
 
     def to_dicts(self) -> list[dict[str, Any]]:
@@ -260,9 +252,7 @@ class SourceBillingProrationRequirementsReport:
             ),
         ]
         if not self.requirements:
-            lines.extend(
-                ["", "No billing proration requirements were found in the source brief."]
-            )
+            lines.extend(["", "No billing proration requirements were found in the source brief."])
             return "\n".join(lines)
 
         lines.extend(
@@ -280,7 +270,7 @@ class SourceBillingProrationRequirementsReport:
                 f"{_markdown_cell(requirement.source_brief_id or '')} | "
                 f"{requirement.category} | "
                 f"{requirement.confidence} | "
-                f"{_markdown_cell(requirement.owner_suggestion or '')} | "
+                f"{_markdown_cell(requirement.owner_suggestion)} | "
                 f"{_markdown_cell('; '.join(requirement.planning_notes))} | "
                 f"{_markdown_cell('; '.join(requirement.evidence))} |"
             )
@@ -297,19 +287,9 @@ def build_source_billing_proration_requirements(
         | object
     ),
 ) -> SourceBillingProrationRequirementsReport:
-    """Extract billing proration requirement records from brief-shaped input."""
+    """Extract source-level billing proration requirement records from brief-shaped input."""
     brief_payloads = _source_payloads(source)
-    requirements = tuple(
-        sorted(
-            _merge_candidates(_candidates_for_briefs(brief_payloads)),
-            key=lambda requirement: (
-                _optional_text(requirement.source_brief_id) or "",
-                _category_index(requirement.category),
-                _CONFIDENCE_ORDER[requirement.confidence],
-                requirement.evidence,
-            ),
-        )
-    )
+    requirements = tuple(_merge_candidates(_candidates_for_briefs(brief_payloads)))
     source_ids = _dedupe(source_id for source_id, _ in brief_payloads if source_id)
     return SourceBillingProrationRequirementsReport(
         source_id=source_ids[0] if len(source_ids) == 1 else None,
@@ -414,6 +394,13 @@ source_billing_proration_requirements_to_markdown.__test__ = False
 
 
 @dataclass(frozen=True, slots=True)
+class _Segment:
+    source_field: str
+    text: str
+    section_context: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _Candidate:
     source_brief_id: str | None
     category: BillingProrationCategory
@@ -446,8 +433,8 @@ def _source_payload(
     if isinstance(source, str):
         return None, {"body": source}
     if isinstance(source, (SourceBrief, ImplementationBrief)):
-        payload = source.model_dump(mode="python")
-        return _source_id(payload), dict(payload)
+        payload = dict(source.model_dump(mode="python"))
+        return _source_id(payload), payload
     if hasattr(source, "model_dump"):
         value = source.model_dump(mode="python")
         payload = dict(value) if isinstance(value, Mapping) else {}
@@ -455,14 +442,16 @@ def _source_payload(
     if isinstance(source, Mapping):
         for model in (SourceBrief, ImplementationBrief):
             try:
-                value = model.model_validate(source).model_dump(mode="python")
-                payload = dict(value)
+                payload = dict(model.model_validate(source).model_dump(mode="python"))
                 return _source_id(payload), payload
             except (TypeError, ValueError, ValidationError):
                 continue
         payload = dict(source)
         return _source_id(payload), payload
-    return None, _object_payload(source)
+    if not isinstance(source, (bytes, bytearray)):
+        payload = _object_payload(source)
+        return _source_id(payload), payload
+    return None, {}
 
 
 def _source_id(payload: Mapping[str, Any]) -> str | None:
@@ -478,32 +467,41 @@ def _candidates_for_briefs(
 ) -> list[_Candidate]:
     candidates: list[_Candidate] = []
     for source_brief_id, payload in brief_payloads:
-        for source_field, segment in _candidate_segments(payload):
-            if _NEGATED_SCOPE_RE.search(segment):
+        for segment in _candidate_segments(payload):
+            if not _is_requirement(segment):
                 continue
-            categories = _categories(segment, source_field)
-            if not categories:
-                continue
-            evidence = _evidence_snippet(source_field, segment)
-            for category in categories:
+            searchable = f"{_field_words(segment.source_field)} {segment.text}"
+            categories = [
+                category
+                for category in _CATEGORY_ORDER
+                if _CATEGORY_PATTERNS[category].search(searchable)
+            ]
+            if not categories and _AMBIGUOUS_BILLING_CHANGE_RE.search(searchable):
+                categories = ["billing_cycle_alignment"]
+            for category in _dedupe(categories):
                 candidates.append(
                     _Candidate(
                         source_brief_id=source_brief_id,
                         category=category,
-                        evidence=evidence,
-                        confidence=_confidence(category, segment, source_field),
+                        evidence=_evidence_snippet(segment.source_field, segment.text),
+                        confidence=_confidence(segment, category),
                     )
                 )
     return candidates
 
 
-def _merge_candidates(candidates: Iterable[_Candidate]) -> list[SourceBillingProrationRequirement]:
+def _merge_candidates(
+    candidates: Iterable[_Candidate],
+) -> list[SourceBillingProrationRequirement]:
     grouped: dict[tuple[str | None, BillingProrationCategory], list[_Candidate]] = {}
     for candidate in candidates:
         grouped.setdefault((candidate.source_brief_id, candidate.category), []).append(candidate)
 
     requirements: list[SourceBillingProrationRequirement] = []
     for (source_brief_id, category), items in grouped.items():
+        evidence = tuple(
+            sorted(_dedupe_evidence(item.evidence for item in items), key=str.casefold)
+        )[:5]
         confidence = min(
             (item.confidence for item in items), key=lambda value: _CONFIDENCE_ORDER[value]
         )
@@ -511,148 +509,28 @@ def _merge_candidates(candidates: Iterable[_Candidate]) -> list[SourceBillingPro
             SourceBillingProrationRequirement(
                 source_brief_id=source_brief_id,
                 category=category,
-                evidence=tuple(
-                    sorted(
-                        _dedupe(item.evidence for item in items),
-                        key=lambda item: item.casefold(),
-                    )
-                )[:5],
+                evidence=evidence,
                 confidence=confidence,
-                owner_suggestion=_OWNER_SUGGESTIONS[category],
-                planning_notes=(_PLANNING_NOTES[category],),
+                owner_suggestion=_OWNER_BY_CATEGORY[category],
+                planning_notes=_PLANNING_NOTES_BY_CATEGORY[category],
             )
         )
-    return requirements
+    return sorted(
+        requirements,
+        key=lambda requirement: (
+            _optional_text(requirement.source_brief_id) or "",
+            _CATEGORY_ORDER.index(requirement.category),
+            _CONFIDENCE_ORDER[requirement.confidence],
+            requirement.evidence,
+        ),
+    )
 
 
-def _candidate_segments(payload: Mapping[str, Any]) -> list[tuple[str, str]]:
-    values: list[tuple[str, str]] = []
+def _candidate_segments(payload: Mapping[str, Any]) -> list[_Segment]:
+    segments: list[_Segment] = []
     visited: set[str] = set()
-    for field_name in _SCANNED_FIELDS:
-        if field_name in payload:
-            _append_value(values, field_name, payload[field_name])
-            visited.add(field_name)
-    for key in sorted(payload, key=lambda item: str(item)):
-        if key not in visited and str(key) not in _IGNORED_FIELDS:
-            _append_value(values, str(key), payload[key])
-    return [(field, segment) for field, segment in values if segment]
-
-
-def _append_value(values: list[tuple[str, str]], source_field: str, value: Any) -> None:
-    if isinstance(value, Mapping):
-        for key in sorted(value, key=lambda item: str(item)):
-            child = value[key]
-            child_field = f"{source_field}.{key}"
-            key_text = _clean_text(str(key).replace("_", " ").replace("-", " "))
-            if _any_signal(key_text) and not isinstance(child, (Mapping, list, tuple, set)):
-                if text := _optional_text(child):
-                    values.append((child_field, _clean_text(f"{key_text}: {text}")))
-                continue
-            _append_value(values, child_field, child)
-        return
-    if isinstance(value, (list, tuple, set)):
-        items = sorted(value, key=lambda item: str(item)) if isinstance(value, set) else value
-        for index, item in enumerate(items):
-            _append_value(values, f"{source_field}[{index}]", item)
-        return
-    if text := _optional_text(value):
-        values.extend((source_field, segment) for segment in _segments(text))
-
-
-def _segments(value: str) -> list[str]:
-    segments: list[str] = []
-    for line in value.splitlines() or [value]:
-        cleaned = _clean_text(line)
-        if not cleaned:
-            continue
-        parts = (
-            [cleaned]
-            if _BULLET_RE.match(line) or _CHECKBOX_RE.match(line)
-            else _SENTENCE_SPLIT_RE.split(cleaned)
-        )
-        for sentence in parts:
-            segments.extend(_CLAUSE_SPLIT_RE.split(sentence))
-    return [_clean_text(part) for part in segments if _clean_text(part)]
-
-
-def _categories(text: str, source_field: str) -> tuple[BillingProrationCategory, ...]:
-    searchable = _searchable_text(source_field, text)
-    categories = [
-        category
-        for category in _CATEGORY_ORDER
-        if _CATEGORY_PATTERNS[category].search(searchable)
-    ]
-    if source_field == "title" and categories and not _REQUIRED_RE.search(text):
-        return ()
-    if categories and not (
-        _BILLING_CONTEXT_RE.search(text)
-        or _STRUCTURED_FIELD_RE.search(_field_words(source_field))
-        or _REQUIRED_RE.search(text)
-    ):
-        return ()
-    return tuple(_dedupe(categories))
-
-
-def _confidence(
-    category: BillingProrationCategory, text: str, source_field: str
-) -> BillingProrationConfidence:
-    field_text = source_field.replace("-", "_").casefold()
-    if _REQUIRED_RE.search(text) or any(
-        marker in field_text
-        for marker in (
-            "requirements",
-            "acceptance_criteria",
-            "success_criteria",
-            "definition_of_done",
-            "constraints",
-            "scope",
-            "billing_rules",
-            "billing_requirements",
-            "proration_rules",
-            "subscription_rules",
-        )
-    ):
-        return "high"
-    if _CATEGORY_PATTERNS[category].search(_field_words(source_field)):
-        return "high"
-    if _BILLING_CONTEXT_RE.search(text) or _STRUCTURED_FIELD_RE.search(_field_words(source_field)):
-        return "medium"
-    return "low"
-
-
-def _summary(
-    requirements: tuple[SourceBillingProrationRequirement, ...], source_count: int
-) -> dict[str, Any]:
-    return {
-        "source_count": source_count,
-        "requirement_count": len(requirements),
-        "category_counts": {
-            category: sum(1 for requirement in requirements if requirement.category == category)
-            for category in _CATEGORY_ORDER
-        },
-        "confidence_counts": {
-            confidence: sum(
-                1 for requirement in requirements if requirement.confidence == confidence
-            )
-            for confidence in _CONFIDENCE_ORDER
-        },
-        "categories": [
-            category
-            for category in _CATEGORY_ORDER
-            if any(requirement.category == category for requirement in requirements)
-        ],
-    }
-
-
-def _object_payload(value: object) -> dict[str, Any]:
-    fields = (
-        "id",
-        "source_brief_id",
-        "source_id",
+    for field_name in (
         "title",
-        "domain",
-        "target_user",
-        "buyer",
         "summary",
         "body",
         "description",
@@ -663,10 +541,8 @@ def _object_payload(value: object) -> dict[str, Any]:
         "mvp_goal",
         "context",
         "workflow_context",
-        "product_surface",
         "requirements",
         "constraints",
-        "scope",
         "acceptance",
         "acceptance_criteria",
         "success_criteria",
@@ -674,80 +550,246 @@ def _object_payload(value: object) -> dict[str, Any]:
         "validation_plan",
         "architecture_notes",
         "data_requirements",
-        "integration_points",
         "risks",
+        "scope",
+        "non_goals",
+        "assumptions",
+        "integration_points",
+        "billing",
+        "subscription",
+        "pricing",
+        "invoice",
+        "tax",
+        "refund",
         "metadata",
         "brief_metadata",
-        "implementation_notes",
         "source_payload",
-        "files",
-        "file_paths",
-        "paths",
-    )
+    ):
+        if field_name in payload:
+            _append_value(segments, field_name, payload[field_name], False)
+            visited.add(field_name)
+    for key in sorted(payload, key=lambda item: str(item)):
+        if key in visited or str(key) in _IGNORED_FIELDS:
+            continue
+        _append_value(segments, str(key), payload[key], False)
+    return segments
+
+
+def _append_value(
+    segments: list[_Segment],
+    source_field: str,
+    value: Any,
+    section_context: bool,
+) -> None:
+    field_context = section_context or bool(_STRUCTURED_FIELD_RE.search(_field_words(source_field)))
+    if isinstance(value, Mapping):
+        for key in sorted(value, key=lambda item: str(item)):
+            child_field = f"{source_field}.{key}"
+            key_text = _clean_text(str(key).replace("_", " "))
+            child_context = field_context or bool(
+                _STRUCTURED_FIELD_RE.search(key_text)
+                or _BILLING_CONTEXT_RE.search(key_text)
+                or _PRORATION_CONTEXT_RE.search(key_text)
+            )
+            _append_value(segments, child_field, value[key], child_context)
+        return
+    if isinstance(value, (list, tuple, set)):
+        items = sorted(value, key=lambda item: str(item)) if isinstance(value, set) else value
+        for index, item in enumerate(items):
+            _append_value(segments, f"{source_field}[{index}]", item, field_context)
+        return
+    if text := _optional_text(value):
+        for segment_text, segment_context in _segments(text, field_context):
+            segments.append(_Segment(source_field, segment_text, segment_context))
+
+
+def _segments(value: str, inherited_context: bool) -> list[tuple[str, bool]]:
+    segments: list[tuple[str, bool]] = []
+    section_context = inherited_context
+    for raw_line in value.splitlines() or [value]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading = _HEADING_RE.match(line)
+        if heading:
+            title = _clean_text(heading.group("title"))
+            section_context = inherited_context or bool(
+                _BILLING_CONTEXT_RE.search(title)
+                or _PRORATION_CONTEXT_RE.search(title)
+                or _STRUCTURED_FIELD_RE.search(title)
+            )
+            if title:
+                segments.append((title, section_context))
+            continue
+        cleaned = _clean_text(line)
+        if not cleaned:
+            continue
+        parts = (
+            [cleaned]
+            if _BULLET_RE.match(line) or _CHECKBOX_RE.match(line)
+            else _SENTENCE_SPLIT_RE.split(cleaned)
+        )
+        for part in parts:
+            for clause in _CLAUSE_SPLIT_RE.split(part):
+                text = _clean_text(clause)
+                if text:
+                    segments.append((text, section_context))
+    return segments
+
+
+def _is_requirement(segment: _Segment) -> bool:
+    text = segment.text
+    searchable = f"{_field_words(segment.source_field)} {text}"
+    if _NEGATED_SCOPE_RE.search(searchable):
+        return False
+    has_category = any(pattern.search(searchable) for pattern in _CATEGORY_PATTERNS.values())
+    if has_category and (
+        _REQUIREMENT_RE.search(text)
+        or segment.section_context
+        or _STRUCTURED_FIELD_RE.search(_field_words(segment.source_field))
+    ):
+        return True
+    if has_category and _BILLING_CONTEXT_RE.search(searchable) and _PRORATION_CONTEXT_RE.search(searchable):
+        return True
+    if _AMBIGUOUS_BILLING_CHANGE_RE.search(searchable):
+        return bool(
+            _REQUIREMENT_RE.search(text)
+            and (segment.section_context or _STRUCTURED_FIELD_RE.search(_field_words(segment.source_field)))
+        )
+    return False
+
+
+def _confidence(segment: _Segment, category: BillingProrationCategory) -> BillingProrationConfidence:
+    searchable = f"{_field_words(segment.source_field)} {segment.text}"
+    if _AMBIGUOUS_BILLING_CHANGE_RE.search(searchable) and not _PRORATION_CONTEXT_RE.search(searchable):
+        return "low"
+    if _PRORATION_CONTEXT_RE.search(searchable) or category in {
+        "refund_policy",
+        "invoice_adjustment",
+        "tax_interaction",
+        "trial_conversion",
+    }:
+        return "high"
+    if not _REQUIREMENT_RE.search(segment.text):
+        return "medium"
+    return "medium"
+
+
+def _summary(
+    requirements: tuple[SourceBillingProrationRequirement, ...],
+    source_count: int,
+) -> dict[str, Any]:
     return {
-        field_name: getattr(value, field_name)
-        for field_name in fields
-        if hasattr(value, field_name)
+        "source_count": source_count,
+        "requirement_count": len(requirements),
+        "category_counts": {
+            category: sum(1 for requirement in requirements if requirement.category == category)
+            for category in _CATEGORY_ORDER
+        },
+        "confidence_counts": {
+            confidence: sum(1 for requirement in requirements if requirement.confidence == confidence)
+            for confidence in _CONFIDENCE_ORDER
+        },
+        "categories": [requirement.category for requirement in requirements],
     }
 
 
-def _any_signal(text: str) -> bool:
-    return _BILLING_CONTEXT_RE.search(text) is not None or any(
-        pattern.search(text) for pattern in _CATEGORY_PATTERNS.values()
+def _object_payload(value: object) -> dict[str, Any]:
+    fields = (
+        "id",
+        "source_brief_id",
+        "source_id",
+        "title",
+        "domain",
+        "summary",
+        "body",
+        "description",
+        "workflow_context",
+        "problem_statement",
+        "mvp_goal",
+        "requirements",
+        "constraints",
+        "acceptance",
+        "acceptance_criteria",
+        "definition_of_done",
+        "validation_plan",
+        "architecture_notes",
+        "data_requirements",
+        "risks",
+        "scope",
+        "non_goals",
+        "assumptions",
+        "integration_points",
+        "billing",
+        "subscription",
+        "pricing",
+        "invoice",
+        "tax",
+        "refund",
+        "metadata",
+        "brief_metadata",
+        "source_payload",
     )
+    return {field_name: getattr(value, field_name) for field_name in fields if hasattr(value, field_name)}
+
+
+def _field_words(source_field: str) -> str:
+    return source_field.replace("_", " ").replace("-", " ").replace(".", " ")
+
+
+def _clean_text(value: Any) -> str:
+    text = "" if value is None or isinstance(value, (bytes, bytearray)) else str(value)
+    text = _CHECKBOX_RE.sub("", text.strip())
+    text = _BULLET_RE.sub("", text)
+    text = re.sub(r"^#+\s*", "", text)
+    return _SPACE_RE.sub(" ", text).strip()
 
 
 def _optional_text(value: Any) -> str | None:
     if value is None or isinstance(value, (bytes, bytearray)):
         return None
-    text = _clean_text(str(value))
+    text = str(value).strip()
     return text or None
 
 
-def _clean_text(value: str) -> str:
-    text = _CHECKBOX_RE.sub("", _BULLET_RE.sub("", value.strip()))
-    return _SPACE_RE.sub(" ", text).strip()
-
-
-def _field_words(source_field: str) -> str:
-    return source_field.replace("_", " ").replace("-", " ").replace(".", " ").replace("/", " ")
-
-
-def _searchable_text(source_field: str, text: str) -> str:
-    value = f"{_field_words(source_field)} {text}"
-    value = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
-    return value.replace("/", " ").replace("_", " ").replace("-", " ")
-
-
 def _evidence_snippet(source_field: str, text: str) -> str:
-    value = _clean_text(text)
-    if len(value) > 180:
-        value = f"{value[:177].rstrip()}..."
-    return f"{source_field}: {value}"
+    cleaned = _clean_text(text)
+    if len(cleaned) > 180:
+        cleaned = f"{cleaned[:177].rstrip()}..."
+    return f"{source_field}: {cleaned}"
 
 
 def _markdown_cell(value: str) -> str:
     return _clean_text(value).replace("|", "\\|").replace("\n", " ")
 
 
-def _category_index(category: BillingProrationCategory) -> int:
-    return _CATEGORY_ORDER.index(category)
-
-
-def _dedupe(values: Iterable[Any]) -> list[Any]:
+def _dedupe_evidence(values: Iterable[str]) -> list[str]:
+    deduped: list[str] = []
     seen: set[str] = set()
-    result: list[Any] = []
     for value in values:
-        key = _dedupe_key(value)
-        if not key or key in seen:
+        if not value:
             continue
+        _, _, statement = value.partition(": ")
+        key = _clean_text(statement or value).casefold()
+        if key in seen:
+            continue
+        deduped.append(value)
         seen.add(key)
-        result.append(value)
-    return result
+    return deduped
 
 
-def _dedupe_key(value: Any) -> str:
-    return _clean_text(str(value)).casefold() if value is not None else ""
+def _dedupe(values: Iterable[_T]) -> list[_T]:
+    deduped: list[_T] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        key = str(value).casefold()
+        if key in seen:
+            continue
+        deduped.append(value)
+        seen.add(key)
+    return deduped
 
 
 __all__ = [
