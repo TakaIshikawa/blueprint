@@ -50,7 +50,10 @@ _TYPE_PATTERNS: dict[DataRetentionRequirementType, re.Pattern[str]] = {
     ),
     "legal_hold": re.compile(
         r"\b(?:legal hold|litigation hold|hold order|e[- ]?discovery|regulatory hold|"
-        r"audit hold|do not delete|suspend deletion|preservation notice)\b",
+        r"audit hold|do not delete|suspend deletion|preservation notice|"
+        r"unless required by law|as required by law|regulatory retention|"
+        r"compliance retention|legal retention exception|retention exception|"
+        r"audit evidence carve[- ]?out)\b",
         re.I,
     ),
 }
@@ -58,7 +61,8 @@ _LIFECYCLE_RE = re.compile(
     r"\b(?:retain|retained|retention|keep|kept|delete|deleted|deletion|erase|erasure|"
     r"archive|archived|archival|purge|purged|hard delete|legal hold|litigation hold|"
     r"do not delete|suspend deletion|"
-    r"right to erasure|anonymi[sz]e)\b",
+    r"right to erasure|anonymi[sz]e|regulatory retention|compliance retention|"
+    r"retention exception|audit evidence carve[- ]?out)\b",
     re.I,
 )
 _EXPLICIT_RE = re.compile(
@@ -87,7 +91,10 @@ _TRIGGER_RE = re.compile(
 )
 _LEGAL_HOLD_SIGNAL_RE = re.compile(
     r"\b(?:legal hold|litigation hold|hold order|regulatory hold|audit hold|"
-    r"do not delete|suspend deletion|preservation notice|until legal hold is lifted)\b",
+    r"do not delete|suspend deletion|preservation notice|until legal hold is lifted|"
+    r"unless required by law|as required by law|regulatory retention|"
+    r"compliance retention|legal retention exception|retention exception|"
+    r"audit evidence carve[- ]?out)\b",
     re.I,
 )
 _SCOPE_RE = re.compile(
@@ -267,7 +274,11 @@ def _requirement_for(
     text: str,
 ) -> SourceDataRetentionRequirement:
     retention_window = _match_text(_WINDOW_RE, text) or _match_text(_UNTIL_RE, text)
-    legal_hold_signal = _match_text(_LEGAL_HOLD_SIGNAL_RE, text)
+    legal_hold_signal = (
+        _match_text(_LEGAL_HOLD_SIGNAL_RE, text)
+        if requirement_type == "legal_hold"
+        else None
+    )
     deletion_trigger = _match_text(_TRIGGER_RE, text)
     if requirement_type == "legal_hold" and legal_hold_signal and not deletion_trigger:
         deletion_trigger = "until legal hold is lifted" if "lifted" in text.casefold() else None
@@ -318,7 +329,10 @@ def _is_standalone_legal_hold(text: str) -> bool:
     return bool(
         re.search(
             r"\b(?:do not delete|suspend deletion|litigation hold|regulatory hold|audit hold|"
-            r"hold order|preservation notice|legal hold requires|until legal hold is lifted)\b",
+            r"hold order|preservation notice|legal hold requires|until legal hold is lifted|"
+            r"unless required by law|as required by law|regulatory retention|"
+            r"compliance retention|legal retention exception|retention exception|"
+            r"audit evidence carve[- ]?out)\b",
             text,
             re.I,
         )
