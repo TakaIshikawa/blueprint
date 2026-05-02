@@ -1,11 +1,12 @@
 import copy
 import json
 
-from blueprint.domain.models import SourceBrief
+from blueprint.domain.models import ImplementationBrief, SourceBrief
 from blueprint.source_audit_logging_requirements import (
     SourceAuditLoggingRequirement,
     SourceAuditLoggingRequirementsReport,
     build_source_audit_logging_requirements,
+    derive_source_audit_logging_requirements,
     extract_source_audit_logging_requirements,
     generate_source_audit_logging_requirements,
     source_audit_logging_requirements_to_dict,
@@ -20,6 +21,7 @@ def test_structured_payload_fields_extract_audit_logging_requirements():
         _source_brief(
             source_payload={
                 "audit_logging": {
+                    "trail": "Audit trail must record billing changes for compliance.",
                     "admin_actions": (
                         "Admin actions must be recorded with actor identity and UTC timestamp."
                     ),
@@ -47,6 +49,7 @@ def test_structured_payload_fields_extract_audit_logging_requirements():
         "actor_identity",
         "timestamping",
         "immutable_logs",
+        "tamper_evidence",
         "exportable_audit_history",
     ]
     assert by_type["admin_actions"].subject_scope == "admin actions"
@@ -55,6 +58,7 @@ def test_structured_payload_fields_extract_audit_logging_requirements():
     assert "timestamp source" not in by_type["timestamping"].missing_details
     assert "retention period" not in by_type["audit_log_retention"].missing_details
     assert "immutability mechanism" not in by_type["immutable_logs"].missing_details
+    assert "integrity proof mechanism" not in by_type["tamper_evidence"].missing_details
     assert "export format" not in by_type["exportable_audit_history"].missing_details
     assert any(
         "source_payload.audit_logging.admin_actions" in item
@@ -62,6 +66,48 @@ def test_structured_payload_fields_extract_audit_logging_requirements():
     )
     assert result.summary["requirement_count"] == len(result.requirements)
     assert result.summary["type_counts"]["security_events"] == 1
+
+
+def test_extracts_actor_action_resource_metadata_tamper_evidence_and_compliance_review():
+    brief = ImplementationBrief.model_validate(
+        _implementation_brief(
+            scope=[
+                (
+                    "Audit trail must capture actor, action, resource id, before and after "
+                    "values, request id, and UTC timestamp for user permission changes."
+                ),
+                (
+                    "Audit logs must be immutable, retained for seven years, and use hash "
+                    "chain tamper evidence for compliance review."
+                ),
+                "Auditors need reviewable evidence for admin access logging each quarter.",
+            ]
+        )
+    )
+
+    result = derive_source_audit_logging_requirements(brief)
+    by_type = {record.requirement_type: record for record in result.records}
+
+    assert result.source_id == "impl-audit"
+    assert [record.requirement_type for record in result.records] == [
+        "audit_trail",
+        "admin_actions",
+        "audit_log_retention",
+        "actor_action_resource_metadata",
+        "actor_identity",
+        "timestamping",
+        "immutable_logs",
+        "tamper_evidence",
+        "compliance_review",
+    ]
+    metadata = by_type["actor_action_resource_metadata"]
+    assert metadata.subject_scope == "user permission changes"
+    assert "actor identifier source" not in metadata.missing_details
+    assert "action taxonomy" not in metadata.missing_details
+    assert "resource identifier schema" not in metadata.missing_details
+    assert "integrity proof mechanism" not in by_type["tamper_evidence"].missing_details
+    assert "reviewer access" not in by_type["compliance_review"].missing_details
+    assert result.summary["type_counts"]["compliance_review"] == 1
 
 
 def test_free_text_markdown_extracts_audit_trail_security_and_export_scope():
@@ -91,7 +137,10 @@ def test_duplicate_evidence_is_merged_and_deduplicated():
     result = build_source_audit_logging_requirements(
         {
             "id": "dupe-audit",
-            "summary": "Audit logs must record admin actions. Audit logs must record admin actions.",
+            "summary": (
+                "Audit logs must record admin actions. "
+                "Audit logs must record admin actions."
+            ),
             "source_payload": {
                 "requirements": [
                     "Audit logs must record admin actions.",
@@ -135,10 +184,13 @@ def test_empty_and_malformed_inputs_return_empty_aggregate():
             "admin_actions": 0,
             "security_events": 0,
             "audit_log_retention": 0,
+            "actor_action_resource_metadata": 0,
             "actor_identity": 0,
             "timestamping": 0,
             "immutable_logs": 0,
+            "tamper_evidence": 0,
             "exportable_audit_history": 0,
+            "compliance_review": 0,
         },
         "confidence_counts": {"high": 0, "medium": 0, "low": 0},
         "requirement_types": [],
@@ -146,6 +198,24 @@ def test_empty_and_malformed_inputs_return_empty_aggregate():
     assert "No audit logging requirements were found" in empty.to_markdown()
     assert malformed.source_id is None
     assert malformed.requirements == ()
+
+
+def test_vague_observability_language_does_not_create_audit_logging_requirements():
+    result = build_source_audit_logging_requirements(
+        _source_brief(
+            title="Operational visibility",
+            summary="Add better observability logs and metrics for troubleshooting.",
+            source_payload={
+                "requirements": [
+                    "Support debug logging around checkout failures.",
+                    "Track general user activity someday if useful.",
+                ]
+            },
+        )
+    )
+
+    assert result.requirements == ()
+    assert result.summary["requirement_count"] == 0
 
 
 def test_source_brief_model_input_matches_mapping_and_is_not_mutated():
@@ -164,13 +234,16 @@ def test_source_brief_model_input_matches_mapping_and_is_not_mutated():
 
     mapping_result = build_source_audit_logging_requirements(source)
     model_result = generate_source_audit_logging_requirements(model)
+    derived_result = derive_source_audit_logging_requirements(model)
     payload = source_audit_logging_requirements_to_dict(model_result)
 
     assert source == original
     assert payload == source_audit_logging_requirements_to_dict(mapping_result)
+    assert derived_result.to_dict() == model_result.to_dict()
     assert json.loads(json.dumps(payload)) == payload
     assert model_result.records == model_result.requirements
     assert source_audit_logging_requirements_to_dicts(model_result.records) == payload["records"]
+    assert source_audit_logging_requirements_to_dicts(model_result) == payload["requirements"]
     assert summarize_source_audit_logging_requirements(model_result) == model_result.summary
     assert list(payload) == ["source_id", "requirements", "summary", "records"]
     assert list(payload["requirements"][0]) == [
@@ -232,4 +305,34 @@ def _source_brief(
         "source_links": {} if source_links is None else source_links,
         "created_at": None,
         "updated_at": None,
+    }
+
+
+def _implementation_brief(
+    *,
+    source_id="impl-audit",
+    title="Audit implementation",
+    summary="Audit implementation requirements.",
+    scope=None,
+):
+    return {
+        "id": source_id,
+        "source_brief_id": source_id,
+        "title": title,
+        "domain": "compliance",
+        "target_user": None,
+        "buyer": None,
+        "workflow_context": None,
+        "problem_statement": summary,
+        "mvp_goal": "Implement audit logging safely.",
+        "product_surface": None,
+        "scope": [] if scope is None else scope,
+        "non_goals": [],
+        "assumptions": [],
+        "architecture_notes": None,
+        "data_requirements": None,
+        "integration_points": [],
+        "risks": [],
+        "validation_plan": "Validate audit logging behavior.",
+        "definition_of_done": [],
     }
