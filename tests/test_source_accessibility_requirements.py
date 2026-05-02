@@ -76,6 +76,51 @@ def test_implementation_brief_mapping_extracts_definition_of_done_and_validation
     assert "definition_of_done" in by_signal["wcag_conformance"].evidence[0]
 
 
+def test_wcag_level_text_and_assistive_technology_compatibility_are_normalized():
+    result = build_source_accessibility_requirements(
+        _source_brief(
+            summary="Meet Level AA conformance and Section 508 obligations for the new form.",
+            source_payload={
+                "requirements": [
+                    "Compatibility with assistive technologies is required.",
+                    "Screen reader users receive status updates after saving.",
+                ]
+            },
+        )
+    )
+
+    by_signal = {requirement.signal: requirement for requirement in result.requirements}
+
+    assert [requirement.signal for requirement in result.requirements] == [
+        "screen_reader",
+        "wcag_conformance",
+    ]
+    assert any("Level AA conformance" in item for item in by_signal["wcag_conformance"].evidence)
+    assert len(by_signal["screen_reader"].evidence) == 2
+
+
+def test_implied_accessibility_obligations_detect_keyboard_contrast_and_focus_states():
+    result = build_source_accessibility_requirements(
+        _implementation_brief(
+            workflow_context="People who cannot use a mouse need to finish onboarding.",
+            validation_plan=(
+                "Confirm low vision users can read error text and selected focus states "
+                "remain visible."
+            ),
+        )
+    )
+
+    by_signal = {requirement.signal: requirement for requirement in result.requirements}
+
+    assert [requirement.signal for requirement in result.requirements] == [
+        "keyboard",
+        "contrast",
+        "focus_management",
+    ]
+    assert any("cannot use a mouse" in item for item in by_signal["keyboard"].evidence)
+    assert any("focus states" in item for item in by_signal["focus_management"].evidence)
+
+
 def test_model_inputs_match_mapping_inputs_without_mutation():
     source = _source_brief(
         summary="Keyboard and screen reader support are required.",

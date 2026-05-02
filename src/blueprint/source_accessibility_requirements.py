@@ -37,7 +37,9 @@ _SIGNAL_ORDER: dict[SourceAccessibilitySignal, int] = {
 _SIGNAL_PATTERNS: dict[SourceAccessibilitySignal, re.Pattern[str]] = {
     "keyboard": re.compile(
         r"\b(?:keyboard(?: navigation| accessible| support)?|tab(?:bing)?|tab order|"
-        r"shortcut keys?|hotkeys?|enter key|escape key|space(?:bar)? key|arrow keys?)\b",
+        r"shortcut keys?|hotkeys?|enter key|escape key|space(?:bar)? key|arrow keys?|"
+        r"without (?:a )?mouse|cannot use (?:a )?mouse|no mouse|mouse[- ]free|"
+        r"pointer[- ]free|non[- ]pointer)\b",
         re.I,
     ),
     "screen_reader": re.compile(
@@ -61,14 +63,14 @@ _SIGNAL_PATTERNS: dict[SourceAccessibilitySignal, re.Pattern[str]] = {
         re.I,
     ),
     "focus_management": re.compile(
-        r"\b(?:focus management|focus order|focus trap|focus ring|focus indicator|focus state|"
+        r"\b(?:focus management|focus order|focus trap|focus ring|focus indicator|focus states?|"
         r"initial focus|restore focus|return focus|visible focus|skip link|skip to content)\b",
         re.I,
     ),
     "wcag_conformance": re.compile(
         r"\b(?:wcag|web content accessibility guidelines|a11y|accessibility conformance|"
         r"accessibility compliance|aa compliant|aaa compliant|level aa|level aaa|"
-        r"section 508|ada compliant)\b",
+        r"level a conformance|level aa conformance|level aaa conformance|section 508|ada compliant)\b",
         re.I,
     ),
     "aria_labels": re.compile(
