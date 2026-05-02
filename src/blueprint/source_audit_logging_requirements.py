@@ -8,7 +8,7 @@ from typing import Any, Iterable, Literal, Mapping, TypeVar
 
 from pydantic import ValidationError
 
-from blueprint.domain.models import SourceBrief
+from blueprint.domain.models import ImplementationBrief, SourceBrief
 
 
 SourceAuditLoggingRequirementType = Literal[
@@ -16,10 +16,13 @@ SourceAuditLoggingRequirementType = Literal[
     "admin_actions",
     "security_events",
     "audit_log_retention",
+    "actor_action_resource_metadata",
     "actor_identity",
     "timestamping",
     "immutable_logs",
+    "tamper_evidence",
     "exportable_audit_history",
+    "compliance_review",
 ]
 SourceAuditLoggingRequirementConfidence = Literal["high", "medium", "low"]
 _T = TypeVar("_T")
@@ -29,10 +32,13 @@ _TYPE_ORDER: tuple[SourceAuditLoggingRequirementType, ...] = (
     "admin_actions",
     "security_events",
     "audit_log_retention",
+    "actor_action_resource_metadata",
     "actor_identity",
     "timestamping",
     "immutable_logs",
+    "tamper_evidence",
     "exportable_audit_history",
+    "compliance_review",
 )
 _CONFIDENCE_ORDER: dict[SourceAuditLoggingRequirementConfidence, int] = {
     "high": 0,
@@ -43,7 +49,7 @@ _SPACE_RE = re.compile(r"\s+")
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _CHECKBOX_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[[ xX]\]\s+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
-_CLAUSE_SPLIT_RE = re.compile(r",\s+(?:and|but)\s+", re.I)
+_CLAUSE_SPLIT_RE = re.compile(r",\s+(?:but|or)\s+", re.I)
 _REQUIRED_RE = re.compile(
     r"\b(?:must|shall|required|requires?|requirement|needs?|need to|should|ensure|"
     r"acceptance|done when|before launch|compliance|policy|cannot ship)\b",
@@ -61,7 +67,7 @@ _STRUCTURED_FIELD_RE = re.compile(
 )
 _AUDIT_CONTEXT_RE = re.compile(
     r"\b(?:audit|auditing|auditability|audit trail|audit log|audit logs|activity log|"
-    r"activity history|security log|security event|event log|change history|"
+    r"activity history|security log|security events?|event log|change history|"
     r"admin action|administrator action|compliance evidence)\b",
     re.I,
 )
@@ -90,10 +96,18 @@ _TYPE_PATTERNS: dict[SourceAuditLoggingRequirementType, re.Pattern[str]] = {
         r"audit logs? for \d+|retention period)\b",
         re.I,
     ),
+    "actor_action_resource_metadata": re.compile(
+        r"\b(?:actor[,\s]+action[,\s]+(?:and\s+)?resource|actor/action/resource|"
+        r"who did what to which|who did what|action metadata|resource metadata|"
+        r"before and after values?|old and new values?|changed fields?|target resource|"
+        r"affected resource|resource id|object id|entity id|ip address|user agent|"
+        r"request id|correlation id)\b",
+        re.I,
+    ),
     "actor_identity": re.compile(
         r"\b(?:actor identity|who performed|who made|performed by|initiated by|"
         r"user id|user email|admin id|service account|principal|actor id|"
-        r"originating user)\b",
+        r"originating user|capture actor|record actor)\b",
         re.I,
     ),
     "timestamping": re.compile(
@@ -103,13 +117,28 @@ _TYPE_PATTERNS: dict[SourceAuditLoggingRequirementType, re.Pattern[str]] = {
     ),
     "immutable_logs": re.compile(
         r"\b(?:immutable audit logs?|tamper[- ]proof|tamper evident|append[- ]only|"
-        r"cannot be edited|cannot be deleted|non[- ]repudiation|write once|worm storage)\b",
+        r"cannot be edited|cannot be deleted|non[- ]repudiation|write once|worm storage|"
+        r"audit logs?.{0,80}\b(?:immutable|append[- ]only|write once|worm storage))\b",
+        re.I,
+    ),
+    "tamper_evidence": re.compile(
+        r"\b(?:tamper[- ]evident|tamper evidence|tamper detection|tampering|"
+        r"hash chain|signed audit events?|signature verification|integrity check|"
+        r"integrity proof|detect audit log changes?)\b",
         re.I,
     ),
     "exportable_audit_history": re.compile(
         r"\b(?:export(?:able)? audit (?:history|logs?)|audit export|download audit logs?|"
         r"csv export|export history|auditor export|compliance export|export.*audit logs?|"
         r"retrieve audit history)\b",
+        re.I,
+    ),
+    "compliance_review": re.compile(
+        r"\b(?:compliance review|compliance audit|auditors? need reviewable|"
+        r"auditors? need evidence|auditor review|audit review|"
+        r"security review|sox review|soc ?2 review|iso ?27001 review|gdpr review|"
+        r"reviewable by auditors?|auditor access|compliance evidence|evidence for auditors?|"
+        r"regulatory review)\b",
         re.I,
     ),
 }
@@ -142,10 +171,17 @@ _MISSING_DETAILS: dict[SourceAuditLoggingRequirementType, tuple[str, ...]] = {
     "admin_actions": ("admin action inventory", "actor identity", "authorization context"),
     "security_events": ("security event inventory", "severity mapping", "alerting destination"),
     "audit_log_retention": ("retention period", "deletion policy", "legal hold behavior"),
+    "actor_action_resource_metadata": (
+        "actor identifier source",
+        "action taxonomy",
+        "resource identifier schema",
+    ),
     "actor_identity": ("actor identifier source", "service account representation"),
     "timestamping": ("timestamp source", "timezone standard", "clock skew handling"),
     "immutable_logs": ("immutability mechanism", "privileged deletion policy"),
+    "tamper_evidence": ("integrity proof mechanism", "verification workflow"),
     "exportable_audit_history": ("export format", "access control", "export retention"),
+    "compliance_review": ("review cadence", "reviewer access", "evidence package format"),
 }
 
 
@@ -246,7 +282,12 @@ class SourceAuditLoggingRequirementsReport:
 
 def build_source_audit_logging_requirements(
     source: (
-        Mapping[str, Any] | SourceBrief | Iterable[Mapping[str, Any] | SourceBrief] | str | object
+        Mapping[str, Any]
+        | SourceBrief
+        | ImplementationBrief
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
+        | str
+        | object
     ),
 ) -> SourceAuditLoggingRequirementsReport:
     """Extract audit logging requirement records from SourceBrief-shaped input."""
@@ -273,7 +314,12 @@ def build_source_audit_logging_requirements(
 
 def extract_source_audit_logging_requirements(
     source: (
-        Mapping[str, Any] | SourceBrief | Iterable[Mapping[str, Any] | SourceBrief] | str | object
+        Mapping[str, Any]
+        | SourceBrief
+        | ImplementationBrief
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
+        | str
+        | object
     ),
 ) -> SourceAuditLoggingRequirementsReport:
     """Compatibility alias for building an audit logging requirements report."""
@@ -282,10 +328,29 @@ def extract_source_audit_logging_requirements(
 
 def generate_source_audit_logging_requirements(
     source: (
-        Mapping[str, Any] | SourceBrief | Iterable[Mapping[str, Any] | SourceBrief] | str | object
+        Mapping[str, Any]
+        | SourceBrief
+        | ImplementationBrief
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
+        | str
+        | object
     ),
 ) -> SourceAuditLoggingRequirementsReport:
     """Compatibility helper for callers that use generate_* naming."""
+    return build_source_audit_logging_requirements(source)
+
+
+def derive_source_audit_logging_requirements(
+    source: (
+        Mapping[str, Any]
+        | SourceBrief
+        | ImplementationBrief
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
+        | str
+        | object
+    ),
+) -> SourceAuditLoggingRequirementsReport:
+    """Compatibility helper for callers that use derive_* naming."""
     return build_source_audit_logging_requirements(source)
 
 
@@ -293,8 +358,9 @@ def summarize_source_audit_logging_requirements(
     source_or_result: (
         Mapping[str, Any]
         | SourceBrief
+        | ImplementationBrief
         | SourceAuditLoggingRequirementsReport
-        | Iterable[Mapping[str, Any] | SourceBrief]
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
         | str
         | object
     ),
@@ -316,9 +382,15 @@ source_audit_logging_requirements_to_dict.__test__ = False
 
 
 def source_audit_logging_requirements_to_dicts(
-    requirements: tuple[SourceAuditLoggingRequirement, ...] | list[SourceAuditLoggingRequirement],
+    requirements: (
+        tuple[SourceAuditLoggingRequirement, ...]
+        | list[SourceAuditLoggingRequirement]
+        | SourceAuditLoggingRequirementsReport
+    ),
 ) -> list[dict[str, Any]]:
     """Serialize audit logging requirement records to dictionaries."""
+    if isinstance(requirements, SourceAuditLoggingRequirementsReport):
+        return requirements.to_dicts()
     return [requirement.to_dict() for requirement in requirements]
 
 
@@ -347,12 +419,17 @@ class _Candidate:
 
 def _source_payloads(
     source: (
-        Mapping[str, Any] | SourceBrief | Iterable[Mapping[str, Any] | SourceBrief] | str | object
+        Mapping[str, Any]
+        | SourceBrief
+        | ImplementationBrief
+        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
+        | str
+        | object
     ),
 ) -> list[tuple[str | None, dict[str, Any]]]:
-    if isinstance(source, (str, bytes, bytearray, Mapping, SourceBrief)) or hasattr(
-        source, "model_dump"
-    ):
+    if isinstance(
+        source, (str, bytes, bytearray, Mapping, SourceBrief, ImplementationBrief)
+    ) or hasattr(source, "model_dump"):
         return [_source_payload(source)]
     if isinstance(source, Iterable):
         return [_source_payload(item) for item in source]
@@ -360,11 +437,11 @@ def _source_payloads(
 
 
 def _source_payload(
-    source: Mapping[str, Any] | SourceBrief | str | object
+    source: Mapping[str, Any] | SourceBrief | ImplementationBrief | str | object
 ) -> tuple[str | None, dict[str, Any]]:
     if isinstance(source, str):
         return None, {"body": source}
-    if isinstance(source, SourceBrief):
+    if isinstance(source, (SourceBrief, ImplementationBrief)):
         payload = source.model_dump(mode="python")
         return _source_id(payload), dict(payload)
     if hasattr(source, "model_dump"):
@@ -372,11 +449,14 @@ def _source_payload(
         payload = dict(value) if isinstance(value, Mapping) else {}
         return _source_id(payload), payload
     if isinstance(source, Mapping):
-        try:
-            value = SourceBrief.model_validate(source).model_dump(mode="python")
-            payload = dict(value)
-        except (TypeError, ValueError, ValidationError):
-            payload = dict(source)
+        for model in (SourceBrief, ImplementationBrief):
+            try:
+                value = model.model_validate(source).model_dump(mode="python")
+                payload = dict(value)
+                return _source_id(payload), payload
+            except (TypeError, ValueError, ValidationError):
+                continue
+        payload = dict(source)
         return _source_id(payload), payload
     return None, _object_payload(source)
 
@@ -554,10 +634,20 @@ def _requirement_types(
         and "audit_trail" in types
         and not re.search(
             r"\b(?:audit trail|activity log(?:s)?|activity history|change history|"
-            r"record all changes|track changes|auditability|audit logs?.{0,40}\b(?:track|record))\b",
+            r"record all changes|track changes|auditability|"
+            r"audit logs?.{0,40}\b(?:track|record))\b",
             text,
             re.I,
         )
+    ):
+        types.remove("audit_trail")
+    if "audit_trail" in types and not re.search(
+        r"\b(?:audit trail|activity log(?:s)?|activity history|change history|"
+        r"record all changes|track changes|auditability|"
+        r"audit logs?.{0,80}\b(?:track|record|include|capture)|"
+        r"\b(?:track|record|include|capture)\b.{0,80}\baudit logs?)\b",
+        text,
+        re.I,
     ):
         types.remove("audit_trail")
     if "audit_log_retention" in types and not (
@@ -566,6 +656,16 @@ def _requirement_types(
         or re.search(r"\bretention\b", field_text, re.I)
     ):
         types.remove("audit_log_retention")
+    if "actor_action_resource_metadata" in types and not _audit_context(text, source_field):
+        types.remove("actor_action_resource_metadata")
+    if "actor_identity" in types and not _audit_context(text, source_field):
+        types.remove("actor_identity")
+    if "timestamping" in types and not _audit_context(text, source_field):
+        types.remove("timestamping")
+    if "tamper_evidence" in types and not _audit_context(text, source_field):
+        types.remove("tamper_evidence")
+    if "compliance_review" in types and not _audit_context(text, source_field):
+        types.remove("compliance_review")
     return tuple(_dedupe(types))
 
 
@@ -603,6 +703,16 @@ def _missing_details(
     if _actor_present(text):
         _remove(missing, "actor identity")
         _remove(missing, "actor identifier source")
+    if re.search(
+        r"\b(?:action|change|event|operation|changed fields?|before and after)\b", text, re.I
+    ):
+        _remove(missing, "action taxonomy")
+    if re.search(
+        r"\b(?:resource|object|entity|target|workspace|tenant|account|user|role|permission)\b",
+        text,
+        re.I,
+    ):
+        _remove(missing, "resource identifier schema")
     if _timestamp_present(text):
         _remove(missing, "timestamp source")
         _remove(missing, "timezone standard")
@@ -614,6 +724,9 @@ def _missing_details(
         r"\b(?:append[- ]only|immutable|tamper[- ]proof|tamper evident|write once)\b", text, re.I
     ):
         _remove(missing, "immutability mechanism")
+        _remove(missing, "integrity proof mechanism")
+    if re.search(r"\b(?:review|auditor|compliance|evidence package)\b", text, re.I):
+        _remove(missing, "reviewer access")
     return tuple(missing)
 
 
@@ -629,10 +742,13 @@ def _confidence(
     if _REQUIRED_RE.search(text) or (structured_field and has_detail):
         return "high"
     if structured_field or requirement_type in {
+        "actor_action_resource_metadata",
         "actor_identity",
         "timestamping",
         "immutable_logs",
+        "tamper_evidence",
         "exportable_audit_history",
+        "compliance_review",
     }:
         return "medium"
     return "low"
@@ -695,8 +811,16 @@ def _object_payload(value: object) -> dict[str, Any]:
         "summary",
         "body",
         "description",
+        "problem",
+        "problem_statement",
+        "goal",
+        "goals",
+        "mvp_goal",
+        "context",
+        "workflow_context",
         "requirements",
         "constraints",
+        "scope",
         "risks",
         "metadata",
         "brief_metadata",
@@ -704,6 +828,10 @@ def _object_payload(value: object) -> dict[str, Any]:
         "source_links",
         "acceptance_criteria",
         "implementation_notes",
+        "architecture_notes",
+        "data_requirements",
+        "integration_points",
+        "definition_of_done",
         "validation_plan",
         "security",
         "compliance",
@@ -776,6 +904,7 @@ __all__ = [
     "build_source_audit_logging_requirements",
     "extract_source_audit_logging_requirements",
     "generate_source_audit_logging_requirements",
+    "derive_source_audit_logging_requirements",
     "source_audit_logging_requirements_to_dict",
     "source_audit_logging_requirements_to_dicts",
     "source_audit_logging_requirements_to_markdown",
