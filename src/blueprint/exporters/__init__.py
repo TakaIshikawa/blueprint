@@ -379,6 +379,14 @@ from blueprint.task_bulk_operation_safety import (
     task_bulk_operation_safety_plan_to_dict,
     task_bulk_operation_safety_plan_to_markdown,
 )
+from blueprint.task_destructive_action_safeguards import (
+    TaskDestructiveActionSafeguardPlan,
+    TaskDestructiveActionSafeguardRecord,
+    build_task_destructive_action_safeguard_plan,
+    summarize_task_destructive_action_safeguards,
+    task_destructive_action_safeguard_plan_to_dict,
+    task_destructive_action_safeguard_plan_to_markdown,
+)
 from blueprint.task_third_party_sandbox_readiness import (
     TaskThirdPartySandboxReadinessPlan,
     TaskThirdPartySandboxReadinessRecord,
@@ -484,6 +492,8 @@ __all__ = [
     "TaskComplianceEvidenceRecord",
     "TaskDataPortabilityImpactFinding",
     "TaskDataPortabilityImpactPlan",
+    "TaskDestructiveActionSafeguardPlan",
+    "TaskDestructiveActionSafeguardRecord",
     "TaskDataQualityValidationPlan",
     "TaskDataQualityValidationRecord",
     "TaskDataResidencyPlan",
@@ -548,6 +558,7 @@ __all__ = [
     "build_task_cache_warming_readiness_plan",
     "build_task_compliance_evidence_plan",
     "build_task_data_portability_impact_plan",
+    "build_task_destructive_action_safeguard_plan",
     "build_task_data_quality_validation_plan",
     "build_task_data_residency_plan",
     "build_task_database_index_impact_plan",
@@ -630,6 +641,7 @@ __all__ = [
     "summarize_task_cache_warming_readiness",
     "summarize_task_compliance_evidence",
     "summarize_task_data_portability_impact",
+    "summarize_task_destructive_action_safeguards",
     "summarize_task_data_quality_validation",
     "summarize_task_data_residency",
     "summarize_task_database_index_impacts",
@@ -663,6 +675,8 @@ __all__ = [
     "task_compliance_evidence_plan_to_dict",
     "task_compliance_evidence_plan_to_markdown",
     "task_data_portability_impact_plan_to_dict",
+    "task_destructive_action_safeguard_plan_to_dict",
+    "task_destructive_action_safeguard_plan_to_markdown",
     "task_data_quality_validation_plan_to_dict",
     "task_data_quality_validation_plan_to_markdown",
     "task_data_residency_plan_to_dict",
