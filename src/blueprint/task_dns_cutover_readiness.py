@@ -1,4 +1,4 @@
-"""Plan DNS, certificate, CDN, and traffic cutover readiness safeguards."""
+"""Plan DNS, domain, TLS, and traffic cutover readiness safeguards."""
 
 from __future__ import annotations
 
@@ -14,169 +14,152 @@ from blueprint.validation_commands import flatten_validation_commands
 
 
 DnsCutoverSignal = Literal[
-    "dns",
-    "cname",
-    "a_record",
-    "mx",
-    "txt",
-    "domain",
-    "subdomain",
-    "certificate",
-    "tls",
-    "ssl",
-    "cdn",
-    "cloudflare",
-    "route53",
-    "propagation",
-    "ttl",
-    "traffic_cutover",
-    "rollback",
-]
-DnsCutoverSafeguard = Literal[
-    "ttl_lowering",
-    "staged_validation",
-    "certificate_renewal_checks",
-    "propagation_window",
-    "rollback_records",
+    "dns_record_change",
+    "ttl_management",
+    "tls_certificate",
+    "domain_verification",
+    "traffic_shift",
+    "rollback_record",
+    "monitoring_probe",
     "owner_approval",
 ]
-DnsCutoverReadinessLevel = Literal["weak", "partial", "strong"]
+DnsCutoverSafeguard = Literal[
+    "ttl_management",
+    "tls_certificate",
+    "domain_verification",
+    "rollback_record",
+    "monitoring_probe",
+    "owner_approval",
+]
+DnsCutoverReadinessRisk = Literal["high", "medium", "low"]
 _T = TypeVar("_T")
 
 _SPACE_RE = re.compile(r"\s+")
-_SIGNAL_ORDER: dict[DnsCutoverSignal, int] = {
-    "dns": 0,
-    "cname": 1,
-    "a_record": 2,
-    "mx": 3,
-    "txt": 4,
-    "domain": 5,
-    "subdomain": 6,
-    "certificate": 7,
-    "tls": 8,
-    "ssl": 9,
-    "cdn": 10,
-    "cloudflare": 11,
-    "route53": 12,
-    "propagation": 13,
-    "ttl": 14,
-    "traffic_cutover": 15,
-    "rollback": 16,
-}
-_SAFEGUARD_ORDER: tuple[DnsCutoverSafeguard, ...] = (
-    "ttl_lowering",
-    "staged_validation",
-    "certificate_renewal_checks",
-    "propagation_window",
-    "rollback_records",
+_SIGNAL_ORDER: tuple[DnsCutoverSignal, ...] = (
+    "dns_record_change",
+    "ttl_management",
+    "tls_certificate",
+    "domain_verification",
+    "traffic_shift",
+    "rollback_record",
+    "monitoring_probe",
     "owner_approval",
 )
-_READINESS_ORDER: dict[DnsCutoverReadinessLevel, int] = {"weak": 0, "partial": 1, "strong": 2}
-_DNS_LIKE_SIGNALS = {
-    "dns",
-    "cname",
-    "a_record",
-    "mx",
-    "txt",
-    "domain",
-    "subdomain",
-    "cdn",
-    "cloudflare",
-    "route53",
-    "ttl",
-    "traffic_cutover",
+_SAFEGUARD_ORDER: tuple[DnsCutoverSafeguard, ...] = (
+    "ttl_management",
+    "tls_certificate",
+    "domain_verification",
+    "rollback_record",
+    "monitoring_probe",
+    "owner_approval",
+)
+_RISK_ORDER: dict[DnsCutoverReadinessRisk, int] = {"high": 0, "medium": 1, "low": 2}
+_CORE_CUTOVER_SIGNALS = {"dns_record_change", "tls_certificate", "domain_verification", "traffic_shift"}
+_PATH_SIGNAL_PATTERNS: dict[DnsCutoverSignal, re.Pattern[str]] = {
+    "dns_record_change": re.compile(
+        r"(?:^|/)(?:dns|zone|zones|records?|route53|cloudflare)(?:/|$)|"
+        r"(?:cname|a[_-]?record|aaaa[_-]?record|mx[_-]?record|txt[_-]?record|hosted[_-]?zone|dns)",
+        re.I,
+    ),
+    "ttl_management": re.compile(r"(?:ttl|time[_-]?to[_-]?live)", re.I),
+    "tls_certificate": re.compile(r"(?:tls|ssl|https|cert|certificate|acm|letsencrypt)", re.I),
+    "domain_verification": re.compile(r"(?:domain[_-]?verification|txt[_-]?verification|spf|dkim|dmarc|ownership)", re.I),
+    "traffic_shift": re.compile(r"(?:cutover|traffic[_-]?shift|traffic[_-]?switch|weighted[_-]?routing|blue[_-]?green|canary)", re.I),
+    "rollback_record": re.compile(r"(?:rollback|backout|revert|previous[_-]?record|prior[_-]?record)", re.I),
+    "monitoring_probe": re.compile(r"(?:probe|synthetic|health[_-]?check|smoke|dig|nslookup|curl|openssl)", re.I),
+    "owner_approval": re.compile(r"(?:approval|signoff|sign[_-]?off|owner)", re.I),
 }
-_CERTIFICATE_SIGNALS = {"certificate", "tls", "ssl"}
-
 _TEXT_SIGNAL_PATTERNS: dict[DnsCutoverSignal, re.Pattern[str]] = {
-    "dns": re.compile(r"\b(?:dns|nameservers?|name servers?|hosted zone|zone file|dns record)\b", re.I),
-    "cname": re.compile(r"\b(?:cname|canonical name)\b", re.I),
-    "a_record": re.compile(r"\b(?:a record|aaaa record|address record|apex record|root record)\b", re.I),
-    "mx": re.compile(r"\b(?:mx|mail exchanger|mail routing|email routing)\b", re.I),
-    "txt": re.compile(r"\b(?:txt record|spf|dkim|dmarc|domain verification|site verification)\b", re.I),
-    "domain": re.compile(r"\b(?:domain|custom domain|hostname|host name|registrar|zone apex)\b", re.I),
-    "subdomain": re.compile(r"\b(?:subdomain|sub-domain|www\.|api\.|app\.)\b", re.I),
-    "certificate": re.compile(r"\b(?:certificates?|cert renewal|cert expiry|x509|acm|let'?s encrypt)\b", re.I),
-    "tls": re.compile(r"\b(?:tls|tls handshake|tls termination|https)\b", re.I),
-    "ssl": re.compile(r"\b(?:ssl|ssl certificate)\b", re.I),
-    "cdn": re.compile(r"\b(?:cdn|edge cache|edge distribution|fastly|cloudfront|akamai)\b", re.I),
-    "cloudflare": re.compile(r"\bcloudflare\b", re.I),
-    "route53": re.compile(r"\b(?:route ?53|route53|aws hosted zone)\b", re.I),
-    "propagation": re.compile(r"\b(?:propagat(?:e|es|ion)|dns cache|resolver cache|global resolvers?)\b", re.I),
-    "ttl": re.compile(r"\b(?:ttl|time to live)\b", re.I),
-    "traffic_cutover": re.compile(
-        r"\b(?:traffic cutover|cut over|cutover|flip traffic|switch traffic|route traffic|"
-        r"migrate traffic|weighted routing|blue[- ]green|canary)\b",
+    "dns_record_change": re.compile(
+        r"\b(?:dns record|dns change|dns update|cname|a record|aaaa record|mx record|txt record|"
+        r"hosted zone|zone file|route ?53|cloudflare|nameserver|name server)\b",
         re.I,
     ),
-    "rollback": re.compile(r"\b(?:rollback|roll back|backout|back out|revert|restore previous)\b", re.I),
-}
-_SAFEGUARD_PATTERNS: dict[DnsCutoverSafeguard, re.Pattern[str]] = {
-    "ttl_lowering": re.compile(
-        r"\b(?:lower(?:ed|ing)? ttl|reduce(?:d|ing)? ttl|short ttl|ttl (?:to )?(?:60|120|300|600)|"
-        r"time to live (?:to )?(?:60|120|300|600))\b",
+    "ttl_management": re.compile(
+        r"\b(?:ttl|time to live|lower ttl|lowered ttl|reduce ttl|reduced ttl|short ttl|"
+        r"cache expiry|resolver cache)\b",
         re.I,
     ),
-    "staged_validation": re.compile(
-        r"\b(?:staged validation|validate(?:d|s)?|preflight|smoke tests?|canary|dry run|"
-        r"dig\b|nslookup\b|curl\b|openssl s_client|health checks?|synthetic checks?)\b",
+    "tls_certificate": re.compile(
+        r"\b(?:tls|ssl|https|certificate|cert renewal|cert expiry|certificate expiry|x509|"
+        r"acm|let'?s encrypt|san coverage|tls handshake)\b",
         re.I,
     ),
-    "certificate_renewal_checks": re.compile(
-        r"\b(?:cert(?:ificate)? renewal|certificate expiry|cert expiry|expiration check|expires?|"
-        r"validity window|renewal check|acm validation|let'?s encrypt renewal|tls renewal)\b",
+    "domain_verification": re.compile(
+        r"\b(?:domain verification|domain ownership|verify domain|verified domain|validates? domain verification|"
+        r"txt verification|site verification|spf|dkim|dmarc|acm validation|certificate validation)\b",
         re.I,
     ),
-    "propagation_window": re.compile(
-        r"\b(?:propagation window|propagation wait|wait for propagation|dns propagation|"
-        r"resolver propagation|cache expiry|ttl window|monitor propagation)\b",
+    "traffic_shift": re.compile(
+        r"\b(?:traffic cutover|cut over|cutover|shift traffic|switch traffic|flip traffic|"
+        r"route traffic|weighted routing|blue[- ]green|canary|production traffic)\b",
         re.I,
     ),
-    "rollback_records": re.compile(
-        r"\b(?:rollback records?|roll back records?|previous records?|restore records?|"
-        r"backout records?|revert dns|old cname|old a record|prior dns)\b",
+    "rollback_record": re.compile(
+        r"\b(?:rollback record|rollback records|rollback plan|roll back|rollback|backout|back out|"
+        r"revert|restore previous|records? rollback values?|previous cname|previous a record|previous dns|"
+        r"prior dns|old record)\b",
+        re.I,
+    ),
+    "monitoring_probe": re.compile(
+        r"\b(?:monitoring probes?|synthetic probes?|synthetic monitoring probes?|synthetic checks?|"
+        r"health checks?|smoke tests?|"
+        r"dig|nslookup|curl|openssl s_client|resolver check|http probe|tls check)\b",
         re.I,
     ),
     "owner_approval": re.compile(
-        r"\b(?:owner approval|domain owner|service owner|release owner|approval required|"
-        r"approved by|sign[- ]off|signoff|change approval|cab approval)\b",
+        r"\b(?:owner approval|domain owner|service owner|release owner|approved by|sign[- ]?off|"
+        r"signoff|change approval|cab approval)\b",
         re.I,
     ),
 }
-_SAFEGUARD_ACCEPTANCE_CRITERIA: dict[DnsCutoverSafeguard, str] = {
-    "ttl_lowering": "Lower DNS TTLs ahead of the cutover and confirm caches can expire inside the change window.",
-    "staged_validation": "Run staged DNS, certificate, CDN, and HTTP validation before moving production traffic.",
-    "certificate_renewal_checks": "Check certificate validation, expiry, renewal automation, SAN coverage, and TLS handshake behavior.",
-    "propagation_window": "Reserve a propagation window and monitor authoritative and public resolvers until records converge.",
-    "rollback_records": "Record previous DNS, CDN, and traffic-routing values so rollback can be executed without rediscovery.",
-    "owner_approval": "Capture domain, service, or release owner approval before executing the cutover.",
+_SAFEGUARD_PATTERNS: dict[DnsCutoverSafeguard, re.Pattern[str]] = {
+    safeguard: _TEXT_SIGNAL_PATTERNS[safeguard] for safeguard in _SAFEGUARD_ORDER
 }
+_RECOMMENDED_STEPS: dict[DnsCutoverSafeguard, str] = {
+    "ttl_management": "Lower TTLs before cutover and confirm resolver caches can expire inside the change window.",
+    "tls_certificate": "Verify certificate validation, expiry, SAN coverage, renewal automation, and TLS handshake behavior.",
+    "domain_verification": "Confirm required domain ownership or TXT verification records are present before production routing changes.",
+    "rollback_record": "Record previous DNS, TLS, CDN, and routing values so rollback can be executed without rediscovery.",
+    "monitoring_probe": "Define DNS, TLS, HTTP, and synthetic monitoring probes for the cutover and rollback window.",
+    "owner_approval": "Attach domain, service, release, or change owner approval before executing the cutover.",
+}
+_NO_IMPACT_RE = re.compile(
+    r"\b(?:no|not|without)\b.{0,80}\b(?:dns|domain|tls|ssl|certificate|traffic|cutover)\b"
+    r".{0,80}\b(?:scope|impact|changes?|required|needed)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class TaskDnsCutoverReadinessRecord:
-    """Readiness guidance for one DNS, certificate, CDN, or traffic cutover task."""
+    """Readiness guidance for one DNS, domain, TLS, or traffic cutover task."""
 
     task_id: str
     title: str
-    readiness_level: DnsCutoverReadinessLevel
     detected_signals: tuple[DnsCutoverSignal, ...]
     present_safeguards: tuple[DnsCutoverSafeguard, ...] = field(default_factory=tuple)
     missing_safeguards: tuple[DnsCutoverSafeguard, ...] = field(default_factory=tuple)
+    risk_level: DnsCutoverReadinessRisk = "medium"
     evidence: tuple[str, ...] = field(default_factory=tuple)
-    recommended_acceptance_criteria: tuple[str, ...] = field(default_factory=tuple)
+    recommended_readiness_steps: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def readiness_level(self) -> DnsCutoverReadinessRisk:
+        """Compatibility view for older callers that used readiness_level."""
+        return self.risk_level
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
         return {
             "task_id": self.task_id,
             "title": self.title,
-            "readiness_level": self.readiness_level,
             "detected_signals": list(self.detected_signals),
             "present_safeguards": list(self.present_safeguards),
             "missing_safeguards": list(self.missing_safeguards),
+            "risk_level": self.risk_level,
             "evidence": list(self.evidence),
-            "recommended_acceptance_criteria": list(self.recommended_acceptance_criteria),
+            "recommended_readiness_steps": list(self.recommended_readiness_steps),
         }
 
 
@@ -186,17 +169,27 @@ class TaskDnsCutoverReadinessPlan:
 
     plan_id: str | None = None
     records: tuple[TaskDnsCutoverReadinessRecord, ...] = field(default_factory=tuple)
-    affected_task_ids: tuple[str, ...] = field(default_factory=tuple)
-    no_signal_task_ids: tuple[str, ...] = field(default_factory=tuple)
+    cutover_task_ids: tuple[str, ...] = field(default_factory=tuple)
+    not_applicable_task_ids: tuple[str, ...] = field(default_factory=tuple)
     summary: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def affected_task_ids(self) -> tuple[str, ...]:
+        """Compatibility view for older callers."""
+        return self.cutover_task_ids
+
+    @property
+    def no_signal_task_ids(self) -> tuple[str, ...]:
+        """Compatibility view for older callers."""
+        return self.not_applicable_task_ids
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
         return {
             "plan_id": self.plan_id,
             "records": [record.to_dict() for record in self.records],
-            "affected_task_ids": list(self.affected_task_ids),
-            "no_signal_task_ids": list(self.no_signal_task_ids),
+            "cutover_task_ids": list(self.cutover_task_ids),
+            "not_applicable_task_ids": list(self.not_applicable_task_ids),
             "summary": dict(self.summary),
         }
 
@@ -205,35 +198,32 @@ class TaskDnsCutoverReadinessPlan:
         return [record.to_dict() for record in self.records]
 
     def to_markdown(self) -> str:
-        """Render the readiness plan as deterministic Markdown."""
-        title = "# Task DNS Cutover Readiness Plan"
+        """Render DNS cutover readiness as deterministic Markdown."""
+        title = "# Task DNS Cutover Readiness"
         if self.plan_id:
             title = f"{title}: {self.plan_id}"
-        readiness_counts = self.summary.get("readiness_counts", {})
+        risk_counts = self.summary.get("risk_counts", {})
         lines = [
             title,
             "",
             "## Summary",
             "",
             f"- Task count: {self.summary.get('task_count', 0)}",
-            f"- Affected task count: {self.summary.get('affected_task_count', 0)}",
+            f"- Cutover task count: {self.summary.get('cutover_task_count', 0)}",
             f"- Missing safeguard count: {self.summary.get('missing_safeguard_count', 0)}",
-            "- Readiness counts: "
-            + ", ".join(f"{level} {readiness_counts.get(level, 0)}" for level in _READINESS_ORDER),
+            "- Risk counts: " + ", ".join(f"{risk} {risk_counts.get(risk, 0)}" for risk in _RISK_ORDER),
         ]
         if not self.records:
-            lines.extend(["", "No DNS, certificate, CDN, or traffic cutover tasks were detected."])
-            if self.no_signal_task_ids:
-                lines.extend(["", f"No-signal tasks: {_markdown_cell(', '.join(self.no_signal_task_ids))}"])
+            lines.extend(["", "No DNS cutover readiness records were inferred."])
+            if self.not_applicable_task_ids:
+                lines.extend(["", f"Not-applicable tasks: {_markdown_cell(', '.join(self.not_applicable_task_ids))}"])
             return "\n".join(lines)
 
         lines.extend(
             [
                 "",
-                "## Records",
-                "",
-                "| Task | Title | Readiness | Signals | Missing Safeguards | Evidence |",
-                "| --- | --- | --- | --- | --- | --- |",
+                "| Task | Title | Risk | Signals | Present Safeguards | Missing Safeguards | Evidence |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for record in self.records:
@@ -241,39 +231,29 @@ class TaskDnsCutoverReadinessPlan:
                 "| "
                 f"`{_markdown_cell(record.task_id)}` | "
                 f"{_markdown_cell(record.title)} | "
-                f"{record.readiness_level} | "
-                f"{_markdown_cell('; '.join(record.detected_signals) or 'none')} | "
-                f"{_markdown_cell('; '.join(record.missing_safeguards) or 'none')} | "
+                f"{record.risk_level} | "
+                f"{_markdown_cell(', '.join(record.detected_signals) or 'none')} | "
+                f"{_markdown_cell(', '.join(record.present_safeguards) or 'none')} | "
+                f"{_markdown_cell(', '.join(record.missing_safeguards) or 'none')} | "
                 f"{_markdown_cell('; '.join(record.evidence) or 'none')} |"
             )
-        if self.no_signal_task_ids:
-            lines.extend(["", f"No-signal tasks: {_markdown_cell(', '.join(self.no_signal_task_ids))}"])
+        if self.not_applicable_task_ids:
+            lines.extend(["", f"Not-applicable tasks: {_markdown_cell(', '.join(self.not_applicable_task_ids))}"])
         return "\n".join(lines)
 
 
-def build_task_dns_cutover_readiness_plan(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> TaskDnsCutoverReadinessPlan:
-    """Build readiness records for DNS, certificate, CDN, and traffic cutover tasks."""
+def build_task_dns_cutover_readiness_plan(source: Any) -> TaskDnsCutoverReadinessPlan:
+    """Build readiness records for DNS, domain, TLS, and traffic cutover tasks."""
     plan_id, tasks = _source_payload(source)
     candidates = [_task_record(task, index) for index, task in enumerate(tasks, start=1)]
     records = tuple(
         sorted(
             (record for record in candidates if record is not None),
-            key=lambda record: (
-                _READINESS_ORDER[record.readiness_level],
-                record.task_id,
-                record.title.casefold(),
-            ),
+            key=lambda record: (_RISK_ORDER[record.risk_level], record.task_id, record.title.casefold()),
         )
     )
-    no_signal_task_ids = tuple(
+    cutover_task_ids = tuple(record.task_id for record in records)
+    not_applicable_task_ids = tuple(
         _task_id(task, index)
         for index, task in enumerate(tasks, start=1)
         if candidates[index - 1] is None
@@ -281,41 +261,33 @@ def build_task_dns_cutover_readiness_plan(
     return TaskDnsCutoverReadinessPlan(
         plan_id=plan_id,
         records=records,
-        affected_task_ids=tuple(record.task_id for record in records),
-        no_signal_task_ids=no_signal_task_ids,
-        summary=_summary(records, task_count=len(tasks), no_signal_task_count=len(no_signal_task_ids)),
+        cutover_task_ids=cutover_task_ids,
+        not_applicable_task_ids=not_applicable_task_ids,
+        summary=_summary(records, task_count=len(tasks), not_applicable_task_ids=not_applicable_task_ids),
     )
 
 
-def analyze_task_dns_cutover_readiness(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> TaskDnsCutoverReadinessPlan:
+def analyze_task_dns_cutover_readiness(source: Any) -> TaskDnsCutoverReadinessPlan:
     """Compatibility alias for building DNS cutover readiness plans."""
     return build_task_dns_cutover_readiness_plan(source)
 
 
-def summarize_task_dns_cutover_readiness(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> TaskDnsCutoverReadinessPlan:
+def summarize_task_dns_cutover_readiness(source: Any) -> TaskDnsCutoverReadinessPlan:
     """Compatibility alias for building DNS cutover readiness plans."""
     return build_task_dns_cutover_readiness_plan(source)
 
 
-def task_dns_cutover_readiness_plan_to_dict(
-    result: TaskDnsCutoverReadinessPlan,
-) -> dict[str, Any]:
+def extract_task_dns_cutover_readiness(source: Any) -> TaskDnsCutoverReadinessPlan:
+    """Compatibility alias for extracting DNS cutover readiness plans."""
+    return build_task_dns_cutover_readiness_plan(source)
+
+
+def generate_task_dns_cutover_readiness(source: Any) -> TaskDnsCutoverReadinessPlan:
+    """Compatibility alias for generating DNS cutover readiness plans."""
+    return build_task_dns_cutover_readiness_plan(source)
+
+
+def task_dns_cutover_readiness_plan_to_dict(result: TaskDnsCutoverReadinessPlan) -> dict[str, Any]:
     """Serialize a DNS cutover readiness plan to a plain dictionary."""
     return result.to_dict()
 
@@ -323,9 +295,19 @@ def task_dns_cutover_readiness_plan_to_dict(
 task_dns_cutover_readiness_plan_to_dict.__test__ = False
 
 
-def task_dns_cutover_readiness_plan_to_markdown(
-    result: TaskDnsCutoverReadinessPlan,
-) -> str:
+def task_dns_cutover_readiness_plan_to_dicts(
+    result: TaskDnsCutoverReadinessPlan | Iterable[TaskDnsCutoverReadinessRecord],
+) -> list[dict[str, Any]]:
+    """Serialize DNS cutover readiness records to plain dictionaries."""
+    if isinstance(result, TaskDnsCutoverReadinessPlan):
+        return result.to_dicts()
+    return [record.to_dict() for record in result]
+
+
+task_dns_cutover_readiness_plan_to_dicts.__test__ = False
+
+
+def task_dns_cutover_readiness_plan_to_markdown(result: TaskDnsCutoverReadinessPlan) -> str:
     """Render a DNS cutover readiness plan as Markdown."""
     return result.to_markdown()
 
@@ -336,189 +318,133 @@ task_dns_cutover_readiness_plan_to_markdown.__test__ = False
 @dataclass(frozen=True, slots=True)
 class _Signals:
     signals: tuple[DnsCutoverSignal, ...] = field(default_factory=tuple)
-    signal_evidence: tuple[str, ...] = field(default_factory=tuple)
     present_safeguards: tuple[DnsCutoverSafeguard, ...] = field(default_factory=tuple)
-    safeguard_evidence: tuple[str, ...] = field(default_factory=tuple)
-    validation_commands: tuple[str, ...] = field(default_factory=tuple)
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    explicitly_no_impact: bool = False
 
 
 def _task_record(task: Mapping[str, Any], index: int) -> TaskDnsCutoverReadinessRecord | None:
-    task_id = _task_id(task, index)
-    title = _optional_text(task.get("title")) or task_id
     signals = _signals(task)
-    if not signals.signals:
+    if signals.explicitly_no_impact or not (set(signals.signals) & _CORE_CUTOVER_SIGNALS):
         return None
 
-    missing_safeguards = _missing_safeguards(signals.signals, signals.present_safeguards)
-    readiness = _readiness_level(
-        signals.signals,
-        present_safeguards=signals.present_safeguards,
-        missing_safeguards=missing_safeguards,
-    )
+    missing = _missing_safeguards(signals.signals, signals.present_safeguards)
+    task_id = _task_id(task, index)
+    title = _optional_text(task.get("title")) or task_id
     return TaskDnsCutoverReadinessRecord(
         task_id=task_id,
         title=title,
-        readiness_level=readiness,
         detected_signals=signals.signals,
         present_safeguards=signals.present_safeguards,
-        missing_safeguards=missing_safeguards,
-        evidence=tuple(_dedupe([*signals.signal_evidence, *signals.safeguard_evidence])),
-        recommended_acceptance_criteria=tuple(
-            _SAFEGUARD_ACCEPTANCE_CRITERIA[safeguard] for safeguard in missing_safeguards
-        ),
+        missing_safeguards=missing,
+        risk_level=_risk_level(set(signals.signals), set(signals.present_safeguards), missing),
+        evidence=signals.evidence,
+        recommended_readiness_steps=tuple(_RECOMMENDED_STEPS[safeguard] for safeguard in missing),
     )
 
 
 def _signals(task: Mapping[str, Any]) -> _Signals:
     signal_hits: set[DnsCutoverSignal] = set()
     safeguard_hits: set[DnsCutoverSafeguard] = set()
-    signal_evidence: list[str] = []
-    safeguard_evidence: list[str] = []
+    evidence: list[str] = []
+    explicitly_no_impact = False
 
-    for path in _strings(task.get("files_or_modules") or task.get("files")):
+    for path in _strings(task.get("files_or_modules") or task.get("files") or task.get("paths")):
         normalized = _normalized_path(path)
         if not normalized:
             continue
-        path_signals = _path_signals(normalized)
-        if path_signals:
-            signal_hits.update(path_signals)
-            signal_evidence.append(f"files_or_modules: {path}")
+        searchable = normalized.replace("/", " ").replace("_", " ").replace("-", " ")
+        matched = False
+        for signal, pattern in _PATH_SIGNAL_PATTERNS.items():
+            if pattern.search(normalized) or pattern.search(searchable):
+                signal_hits.add(signal)
+                matched = True
+        if matched:
+            evidence.append(f"files_or_modules: {path}")
 
-    for source_field, text in _candidate_texts(task):
+    for source_field, text in [*_candidate_texts(task), *_validation_command_texts(task)]:
+        if _NO_IMPACT_RE.search(text):
+            explicitly_no_impact = True
         snippet = _evidence_snippet(source_field, text)
+        searchable = text.replace("/", " ").replace("_", " ").replace("-", " ")
+        matched = False
         for signal, pattern in _TEXT_SIGNAL_PATTERNS.items():
-            if pattern.search(text):
+            if pattern.search(text) or pattern.search(searchable):
                 signal_hits.add(signal)
-                signal_evidence.append(snippet)
+                matched = True
         for safeguard, pattern in _SAFEGUARD_PATTERNS.items():
-            if pattern.search(text):
+            if pattern.search(text) or pattern.search(searchable):
                 safeguard_hits.add(safeguard)
-                safeguard_evidence.append(snippet)
+                matched = True
+        if matched:
+            evidence.append(snippet)
 
-    validation_commands = tuple(_validation_commands(task))
-    for command in validation_commands:
-        snippet = _evidence_snippet("validation_commands", command)
-        searchable = command.replace("/", " ").replace("_", " ").replace("-", " ")
-        signal_added = False
-        for signal, pattern in _TEXT_SIGNAL_PATTERNS.items():
-            if pattern.search(command) or pattern.search(searchable):
-                signal_hits.add(signal)
-                signal_added = True
-        if signal_added:
-            signal_evidence.append(snippet)
-        if signal_added or re.search(r"\b(?:dig|nslookup|curl|openssl|pytest|smoke)\b", command, re.I):
-            safeguard_hits.add("staged_validation")
-            safeguard_evidence.append(snippet)
-
+    if "traffic_shift" in signal_hits and "dns_record_change" not in signal_hits:
+        signal_hits.add("dns_record_change")
     return _Signals(
         signals=tuple(signal for signal in _SIGNAL_ORDER if signal in signal_hits),
-        signal_evidence=tuple(_dedupe(signal_evidence)),
         present_safeguards=tuple(safeguard for safeguard in _SAFEGUARD_ORDER if safeguard in safeguard_hits),
-        safeguard_evidence=tuple(_dedupe(safeguard_evidence)),
-        validation_commands=validation_commands,
+        evidence=tuple(_dedupe(evidence)),
+        explicitly_no_impact=explicitly_no_impact,
     )
-
-
-def _path_signals(path: str) -> set[DnsCutoverSignal]:
-    normalized = path.casefold()
-    posix = PurePosixPath(normalized)
-    parts = set(posix.parts)
-    name = posix.name
-    text = normalized.replace("/", " ").replace("_", " ").replace("-", " ")
-    signals: set[DnsCutoverSignal] = set()
-    if {"dns", "zones", "zone", "hosted-zones", "hosted_zones"} & parts:
-        signals.add("dns")
-    if "cname" in text:
-        signals.add("cname")
-    if any(token in text for token in ("a record", "aaaa record", "arecord", "apex")):
-        signals.add("a_record")
-    if "mx" in parts or "mx record" in text:
-        signals.add("mx")
-    if any(token in text for token in ("txt record", "spf", "dkim", "dmarc")):
-        signals.add("txt")
-    if any(token in text for token in ("domain", "hostname", "hosted zone")):
-        signals.add("domain")
-    if "subdomain" in text:
-        signals.add("subdomain")
-    if any(token in text for token in ("certificate", "cert", "acm", "letsencrypt")):
-        signals.add("certificate")
-    if any(token in text for token in ("tls", "https")):
-        signals.add("tls")
-    if "ssl" in text:
-        signals.add("ssl")
-    if any(token in text for token in ("cdn", "cloudfront", "fastly", "akamai")):
-        signals.add("cdn")
-    if "cloudflare" in text:
-        signals.add("cloudflare")
-    if "route53" in text or "route 53" in text:
-        signals.add("route53")
-    if "propagation" in text:
-        signals.add("propagation")
-    if "ttl" in text:
-        signals.add("ttl")
-    if any(token in text for token in ("cutover", "traffic switch", "weighted routing")):
-        signals.add("traffic_cutover")
-    if any(token in text for token in ("rollback", "backout", "revert")):
-        signals.add("rollback")
-    if name in {"zone.tf", "dns.tf", "records.tf", "cloudflare.tf", "route53.tf"}:
-        signals.add("dns")
-    return signals
 
 
 def _missing_safeguards(
     signals: tuple[DnsCutoverSignal, ...],
     present_safeguards: tuple[DnsCutoverSafeguard, ...],
 ) -> tuple[DnsCutoverSafeguard, ...]:
-    required: set[DnsCutoverSafeguard] = {
-        "staged_validation",
-        "propagation_window",
-        "rollback_records",
-        "owner_approval",
-    }
     signal_set = set(signals)
-    if signal_set & _DNS_LIKE_SIGNALS:
-        required.add("ttl_lowering")
-    if signal_set & _CERTIFICATE_SIGNALS:
-        required.add("certificate_renewal_checks")
+    required: set[DnsCutoverSafeguard] = {"rollback_record", "monitoring_probe", "owner_approval"}
+    if signal_set & {"dns_record_change", "traffic_shift"}:
+        required.add("ttl_management")
+    if "tls_certificate" in signal_set:
+        required.add("tls_certificate")
+    if "domain_verification" in signal_set:
+        required.add("domain_verification")
     present = set(present_safeguards)
     return tuple(safeguard for safeguard in _SAFEGUARD_ORDER if safeguard in required and safeguard not in present)
 
 
-def _readiness_level(
-    signals: tuple[DnsCutoverSignal, ...],
-    *,
-    present_safeguards: tuple[DnsCutoverSafeguard, ...],
-    missing_safeguards: tuple[DnsCutoverSafeguard, ...],
-) -> DnsCutoverReadinessLevel:
-    present = set(present_safeguards)
-    has_validation = "staged_validation" in present
-    has_propagation = "propagation_window" in present or "propagation" in signals
-    has_rollback = "rollback_records" in present or "rollback" in signals
-    if not missing_safeguards and has_validation and has_propagation and has_rollback:
-        return "strong"
-    if len(present) >= 2 or {"staged_validation", "rollback_records"} <= present:
-        return "partial"
-    return "weak"
+def _risk_level(
+    signals: set[DnsCutoverSignal],
+    present: set[DnsCutoverSafeguard],
+    missing: tuple[DnsCutoverSafeguard, ...],
+) -> DnsCutoverReadinessRisk:
+    if not missing:
+        return "low"
+    missing_set = set(missing)
+    if "traffic_shift" in signals and {"rollback_record", "monitoring_probe"} & missing_set:
+        return "high"
+    if "dns_record_change" in signals and {"ttl_management", "rollback_record"} <= missing_set:
+        return "high"
+    if "tls_certificate" in signals and {"tls_certificate", "monitoring_probe"} <= missing_set:
+        return "high"
+    if len(missing) >= 4:
+        return "high"
+    if present:
+        return "medium"
+    return "medium"
 
 
 def _summary(
     records: tuple[TaskDnsCutoverReadinessRecord, ...],
     *,
     task_count: int,
-    no_signal_task_count: int,
+    not_applicable_task_ids: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "task_count": task_count,
-        "affected_task_count": len(records),
-        "no_signal_task_count": no_signal_task_count,
+        "cutover_task_count": len(records),
+        "not_applicable_task_ids": list(not_applicable_task_ids),
         "missing_safeguard_count": sum(len(record.missing_safeguards) for record in records),
-        "readiness_counts": {
-            level: sum(1 for record in records if record.readiness_level == level)
-            for level in _READINESS_ORDER
-        },
+        "risk_counts": {risk: sum(1 for record in records if record.risk_level == risk) for risk in _RISK_ORDER},
         "signal_counts": {
             signal: sum(1 for record in records if signal in record.detected_signals)
             for signal in _SIGNAL_ORDER
+        },
+        "present_safeguard_counts": {
+            safeguard: sum(1 for record in records if safeguard in record.present_safeguards)
+            for safeguard in _SAFEGUARD_ORDER
         },
         "missing_safeguard_counts": {
             safeguard: sum(1 for record in records if safeguard in record.missing_safeguards)
@@ -527,15 +453,7 @@ def _summary(
     }
 
 
-def _source_payload(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> tuple[str | None, list[dict[str, Any]]]:
+def _source_payload(source: Any) -> tuple[str | None, list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):
         return None, [source.model_dump(mode="python")]
     if isinstance(source, ExecutionPlan):
@@ -552,26 +470,18 @@ def _source_payload(
         return _optional_text(payload.get("id")), _task_payloads(payload.get("tasks"))
 
     try:
-        iterator = iter(source)  # type: ignore[arg-type]
+        iterator = iter(source)
     except TypeError:
         return None, []
 
     tasks: list[dict[str, Any]] = []
     for item in iterator:
-        if isinstance(item, ExecutionTask):
-            tasks.append(item.model_dump(mode="python"))
-        elif hasattr(item, "model_dump"):
-            task = item.model_dump(mode="python")
-            if isinstance(task, Mapping):
-                tasks.append(dict(task))
-        elif isinstance(item, Mapping):
-            tasks.append(dict(item))
-        elif _looks_like_task(item):
-            tasks.append(_object_payload(item))
+        if task := _task_payload(item):
+            tasks.append(task)
     return None, tasks
 
 
-def _plan_payload(plan: Mapping[str, Any] | ExecutionPlan | object) -> dict[str, Any]:
+def _plan_payload(plan: Mapping[str, Any] | object) -> dict[str, Any]:
     if hasattr(plan, "model_dump"):
         value = plan.model_dump(mode="python")
         return dict(value) if isinstance(value, Mapping) else {}
@@ -590,17 +500,22 @@ def _task_payloads(value: Any) -> list[dict[str, Any]]:
     items = sorted(value, key=lambda item: str(item)) if isinstance(value, set) else value
     tasks: list[dict[str, Any]] = []
     for item in items:
-        if isinstance(item, ExecutionTask):
-            tasks.append(item.model_dump(mode="python"))
-        elif hasattr(item, "model_dump"):
-            task = item.model_dump(mode="python")
-            if isinstance(task, Mapping):
-                tasks.append(dict(task))
-        elif isinstance(item, Mapping):
-            tasks.append(dict(item))
-        elif _looks_like_task(item):
-            tasks.append(_object_payload(item))
+        if task := _task_payload(item):
+            tasks.append(task)
     return tasks
+
+
+def _task_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, ExecutionTask):
+        return value.model_dump(mode="python")
+    if hasattr(value, "model_dump"):
+        task = value.model_dump(mode="python")
+        return dict(task) if isinstance(task, Mapping) else {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    if _looks_like_task(value):
+        return _object_payload(value)
+    return {}
 
 
 def _looks_like_plan(value: object) -> bool:
@@ -625,23 +540,24 @@ def _object_payload(value: object) -> dict[str, Any]:
         "files_or_modules",
         "files",
         "acceptance_criteria",
+        "validation_plan",
+        "validation_command",
+        "validation_commands",
+        "test_command",
+        "test_commands",
         "estimated_complexity",
         "estimated_hours",
         "risk_level",
-        "test_command",
-        "test_commands",
-        "validation_command",
-        "validation_commands",
         "status",
         "metadata",
         "blocked_reason",
         "tasks",
+        "tags",
+        "labels",
+        "notes",
+        "risks",
     )
-    return {
-        field_name: getattr(value, field_name)
-        for field_name in fields
-        if hasattr(value, field_name)
-    }
+    return {field_name: getattr(value, field_name) for field_name in fields if hasattr(value, field_name)}
 
 
 def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -655,10 +571,11 @@ def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
         "risk_level",
         "test_command",
         "blocked_reason",
+        "validation_plan",
     ):
         if text := _optional_text(task.get(field_name)):
             texts.append((field_name, text))
-    for field_name in ("acceptance_criteria", "tags", "labels", "notes", "risks"):
+    for field_name in ("acceptance_criteria", "tags", "labels", "notes", "risks", "depends_on"):
         for index, text in enumerate(_strings(task.get(field_name))):
             texts.append((f"{field_name}[{index}]", text))
     for source_field, text in _metadata_texts(task.get("metadata")):
@@ -672,20 +589,19 @@ def _metadata_texts(value: Any, prefix: str = "metadata") -> list[tuple[str, str
         for key in sorted(value, key=lambda item: str(item)):
             field = f"{prefix}.{key}"
             child = value[key]
-            key_text = str(key).replace("_", " ")
-            if (
-                any(pattern.search(key_text) for pattern in _TEXT_SIGNAL_PATTERNS.values())
-                or any(pattern.search(key_text) for pattern in _SAFEGUARD_PATTERNS.values())
-            ):
+            key_text = str(key).replace("_", " ").replace("-", " ")
+            if _metadata_key_is_signal(key_text):
                 texts.append((field, key_text))
             if isinstance(child, (Mapping, list, tuple, set)):
                 texts.extend(_metadata_texts(child, field))
             elif text := _optional_text(child):
                 texts.append((field, text))
+                if _metadata_key_is_signal(key_text):
+                    texts.append((field, f"{key_text}: {text}"))
         return texts
     if isinstance(value, (list, tuple, set)):
-        texts = []
         items = sorted(value, key=lambda item: str(item)) if isinstance(value, set) else value
+        texts = []
         for index, item in enumerate(items):
             field = f"{prefix}[{index}]"
             if isinstance(item, (Mapping, list, tuple, set)):
@@ -697,21 +613,26 @@ def _metadata_texts(value: Any, prefix: str = "metadata") -> list[tuple[str, str
     return [(prefix, text)] if text else []
 
 
-def _validation_commands(task: Mapping[str, Any]) -> list[str]:
+def _metadata_key_is_signal(value: str) -> bool:
+    return any(pattern.search(value) for pattern in [*_TEXT_SIGNAL_PATTERNS.values(), *_SAFEGUARD_PATTERNS.values()])
+
+
+def _validation_command_texts(task: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     commands: list[str] = []
     metadata = task.get("metadata")
     for key in ("validation_commands", "validation_command", "test_commands", "test_command"):
-        if value := task.get(key):
-            if isinstance(value, Mapping):
-                commands.extend(flatten_validation_commands(value))
+        value = task.get(key)
+        if isinstance(value, Mapping):
+            commands.extend(flatten_validation_commands(value))
+        else:
+            commands.extend(_strings(value))
+        if isinstance(metadata, Mapping):
+            metadata_value = metadata.get(key)
+            if isinstance(metadata_value, Mapping):
+                commands.extend(flatten_validation_commands(metadata_value))
             else:
-                commands.extend(_strings(value))
-        if isinstance(metadata, Mapping) and (value := metadata.get(key)):
-            if isinstance(value, Mapping):
-                commands.extend(flatten_validation_commands(value))
-            else:
-                commands.extend(_strings(value))
-    return _dedupe(commands)
+                commands.extend(_strings(metadata_value))
+    return tuple(("validation_commands", command) for command in _dedupe(commands))
 
 
 def _task_id(task: Mapping[str, Any], index: int) -> str:
@@ -740,7 +661,7 @@ def _strings(value: Any) -> list[str]:
 
 
 def _normalized_path(value: str) -> str:
-    return value.strip().strip("`'\",;:()[]{}").rstrip(".").replace("\\", "/").strip("/")
+    return str(PurePosixPath(value.strip().strip("`'\",;:()[]{}").rstrip(".").replace("\\", "/").strip("/")))
 
 
 def _evidence_snippet(source_field: str, text: str) -> str:
@@ -779,15 +700,21 @@ def _dedupe(values: Iterable[_T]) -> list[_T]:
     return deduped
 
 
+DnsCutoverReadinessLevel = DnsCutoverReadinessRisk
+
 __all__ = [
     "DnsCutoverReadinessLevel",
+    "DnsCutoverReadinessRisk",
     "DnsCutoverSafeguard",
     "DnsCutoverSignal",
     "TaskDnsCutoverReadinessPlan",
     "TaskDnsCutoverReadinessRecord",
     "analyze_task_dns_cutover_readiness",
     "build_task_dns_cutover_readiness_plan",
+    "extract_task_dns_cutover_readiness",
+    "generate_task_dns_cutover_readiness",
     "summarize_task_dns_cutover_readiness",
     "task_dns_cutover_readiness_plan_to_dict",
+    "task_dns_cutover_readiness_plan_to_dicts",
     "task_dns_cutover_readiness_plan_to_markdown",
 ]
