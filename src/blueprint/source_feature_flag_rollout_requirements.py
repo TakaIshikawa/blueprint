@@ -1,137 +1,192 @@
-"""Extract source-level feature flag and rollout requirements from briefs."""
+"""Extract source-level feature flag rollout requirements from briefs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping, TypeVar
 
 from pydantic import ValidationError
 
 from blueprint.domain.models import ImplementationBrief, SourceBrief
 
 
-FeatureFlagRolloutRequirementType = Literal[
-    "feature_flag",
-    "staged_rollout",
-    "percentage_rollout",
-    "beta_access",
-    "cohort_targeting",
-    "kill_switch",
-    "gradual_release",
+FeatureFlagRolloutCategory = Literal[
+    "flag_ownership",
+    "audience_targeting",
+    "staged_rollout_percentages",
+    "kill_switch_behavior",
+    "experiment_variant_tracking",
+    "observability",
+    "rollback_criteria",
+    "cleanup_deprecation",
 ]
+FeatureFlagRolloutGapCategory = Literal["missing_flag_owner", "missing_rollback_criteria"]
 FeatureFlagRolloutConfidence = Literal["high", "medium", "low"]
+_T = TypeVar("_T")
 
-_REQUIREMENT_ORDER: tuple[FeatureFlagRolloutRequirementType, ...] = (
-    "feature_flag",
-    "staged_rollout",
-    "percentage_rollout",
-    "beta_access",
-    "cohort_targeting",
-    "kill_switch",
-    "gradual_release",
+_CATEGORY_ORDER: tuple[FeatureFlagRolloutCategory, ...] = (
+    "flag_ownership",
+    "audience_targeting",
+    "staged_rollout_percentages",
+    "kill_switch_behavior",
+    "experiment_variant_tracking",
+    "observability",
+    "rollback_criteria",
+    "cleanup_deprecation",
 )
-_CONFIDENCE_ORDER: dict[FeatureFlagRolloutConfidence, int] = {
-    "high": 0,
-    "medium": 1,
-    "low": 2,
+_GAP_ORDER: tuple[FeatureFlagRolloutGapCategory, ...] = (
+    "missing_flag_owner",
+    "missing_rollback_criteria",
+)
+_CONFIDENCE_ORDER: dict[FeatureFlagRolloutConfidence, int] = {"high": 0, "medium": 1, "low": 2}
+_OWNER_BY_CATEGORY: dict[FeatureFlagRolloutCategory, tuple[str, ...]] = {
+    "flag_ownership": ("product", "engineering"),
+    "audience_targeting": ("product", "data"),
+    "staged_rollout_percentages": ("product", "engineering"),
+    "kill_switch_behavior": ("engineering", "sre"),
+    "experiment_variant_tracking": ("product", "analytics"),
+    "observability": ("sre", "analytics"),
+    "rollback_criteria": ("engineering", "sre"),
+    "cleanup_deprecation": ("engineering", "product"),
 }
+_PLANNING_NOTES: dict[FeatureFlagRolloutCategory, tuple[str, ...]] = {
+    "flag_ownership": ("Assign flag owner, approving team, decision authority, and lifecycle accountability.",),
+    "audience_targeting": ("Define targeted cohorts, segments, tenants, environments, allowlists, and exclusions.",),
+    "staged_rollout_percentages": ("Specify rollout stages, percentage ramps, hold periods, and promotion gates.",),
+    "kill_switch_behavior": ("Define kill switch defaults, disable path, propagation expectations, and emergency access.",),
+    "experiment_variant_tracking": ("Track variants, exposure events, experiment assignment, and analytics dimensions.",),
+    "observability": ("Instrument metrics, alerts, dashboards, logs, and health checks for rollout monitoring.",),
+    "rollback_criteria": ("Document rollback triggers, thresholds, decision makers, and rollback execution steps.",),
+    "cleanup_deprecation": ("Schedule flag cleanup, deprecation criteria, stale flag removal, and code path deletion.",),
+}
+_GAP_MESSAGES: dict[FeatureFlagRolloutGapCategory, str] = {
+    "missing_flag_owner": "Specify the flag owner or accountable team before rollout planning.",
+    "missing_rollback_criteria": "Specify rollback criteria, thresholds, or revert triggers before rollout planning.",
+}
+
 _SPACE_RE = re.compile(r"\s+")
-_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)]|\[[ xX]\])\s+")
+_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_CHECKBOX_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[[ xX]\]\s+")
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _CLAUSE_SPLIT_RE = re.compile(r",\s+(?:and|but|or)\s+", re.I)
-_REQUIREMENT_LANGUAGE_RE = re.compile(
-    r"\b(?:must|shall|required|requires?|requirement|needs?|need to|should|ensure|"
-    r"support|allow|acceptance|done when|before launch|cannot ship|gate|gated|"
-    r"enable|disable|target|roll(?:\s|-)?out|release|launch|ramp)\b",
+_FEATURE_FLAG_CONTEXT_RE = re.compile(
+    r"\b(?:feature flags?|feature toggles?|release flags?|launch flags?|rollout flags?|"
+    r"flag rollout|staged rollout|gradual rollout|progressive rollout|percentage rollout|"
+    r"canary rollout|dark launch|targeted rollout|cohort rollout|experiment rollout|"
+    r"variants?|a/?b tests?|experiments?|exposure events?|kill switch|circuit breaker|"
+    r"roll back|rollback|revert|cleanup|deprecat|stale flags?)\b",
+    re.I,
+)
+_STRUCTURED_FIELD_RE = re.compile(
+    r"(?:feature[_ -]?flags?|feature[_ -]?toggles?|release[_ -]?flags?|rollout|staged|"
+    r"percentage|target|audience|cohort|segment|allowlist|variant|experiment|ab[_ -]?test|"
+    r"exposure|kill[_ -]?switch|rollback|revert|observability|monitor|metrics?|alerts?|"
+    r"cleanup|deprecat|stale|owner|requirements?|acceptance|criteria|source[_ -]?payload)",
+    re.I,
+)
+_REQUIREMENT_RE = re.compile(
+    r"\b(?:must|shall|required|requires?|requirements?|needs?|need to|should|ensure|"
+    r"support|allow|provide|enable|define|assign|own|owner|approve|target|segment|"
+    r"rollout|roll out|ramp|percentage|percent|enable|disable|kill switch|rollback|"
+    r"revert|monitor|alert|metric|dashboard|log|track|experiment|variant|exposure|"
+    r"cleanup|deprecat|remove|delete|acceptance|done when|before launch|cannot ship)\b",
     re.I,
 )
 _NEGATED_SCOPE_RE = re.compile(
-    r"\b(?:no|not|without)\b.{0,80}\b(?:feature[- ]?flags?|feature[- ]?toggles?|"
-    r"staged rollout|percentage rollout|beta|cohort|kill switch|gradual release)\b"
-    r".{0,80}\b(?:scope|required|needed|changes?)\b",
+    r"\b(?:no|not|without|out of scope|non[- ]?goal)\b.{0,140}"
+    r"\b(?:feature flags?|feature toggles?|release flags?|staged rollout|rollout controls?|"
+    r"kill switch|rollback|experiments?|variants?|flag cleanup|flag owner)\b"
+    r".{0,140}\b(?:required|needed|in scope|support|supported|work|planned|changes?|for this release)\b|"
+    r"\b(?:feature flags?|feature toggles?|release flags?|staged rollout|rollout controls?|"
+    r"kill switch|rollback|experiments?|variants?|flag cleanup|flag owner)\b"
+    r".{0,140}\b(?:out of scope|not required|not needed|no support|unsupported|no work|"
+    r"non[- ]?goal|no changes?|excluded)\b",
     re.I,
 )
-_ROLLOUT_SIGNAL_RE = re.compile(
-    r"\b(?:feature[- ]?flags?|feature[- ]?toggles?|flag gate|flag key|flag config|"
-    r"launchdarkly|split\.io|flipper|unleash|kill switch|killswitch|emergency off|"
-    r"circuit breaker|enable flag|disable flag|staged rollout|phased rollout|phased launch|staged enablement|"
-    r"gradual enablement|gradual release|gradual rollout|progressive delivery|"
-    r"canary|ramp(?:ing)?|percentage rollout|percent rollout|"
-    r"beta access|private beta|public beta|beta users?|early access|preview users?|"
-    r"allowlist|whitelist|cohorts?|segments?|audiences?|target users?|tenant targeting|"
-    r"account targeting|customer targeting|rollout rules?)\b|"
-    r"\b\d{1,3}\s*%\s*(?:of\s+)?(?:users|traffic|accounts|tenants|customers|requests)?\b",
+_NO_FEATURE_FLAGS_RE = re.compile(
+    r"\b(?:no feature flags?|feature flags? are out of scope|feature toggles? are out of scope|"
+    r"no staged rollout|rollout controls? are out of scope|no flag rollout work)\b",
     re.I,
 )
-_VALUE_RE = re.compile(
-    r"\b(?P<value>(?:\d{1,3}\s*%\s*(?:of\s+)?(?:users|traffic|accounts|tenants|customers|requests)?|"
-    r"(?:wave|phase)\s+\d+|"
-    r"(?:internal|staff|employee|dogfood|beta|pilot|canary)\s+(?:users?|customers?|accounts?|cohorts?)|"
-    r"(?:enterprise|paid|free|pro|premium|business|trial)\s+(?:customers?|accounts?|tenants?|plans?)|"
-    r"(?:EU|US|UK|APAC|EMEA|LATAM|Japan|Canada|Australia)\s+(?:users?|customers?|accounts?|tenants?)))\b",
+_UNRELATED_RE = re.compile(
+    r"\b(?:flag icon|flag emoji|country flag|red flag copy|feature list|rollout mat|"
+    r"stage lighting|percentage discount|variant sku|cleanup copy)\b",
     re.I,
 )
-_AUDIENCE_RE = re.compile(
-    r"\b(?:for|to|target(?!ing\b)|targeting(?!\s+required\b)|enable\s+for|available\s+to|allowlist(?:ed)?|"
-    r"whitelist(?:ed)?|cohort(?:s)?(?:\s+of)?|audience(?:s)?(?:\s+of)?)\s+"
-    r"(?P<audience>[A-Za-z0-9][A-Za-z0-9 &/_.+-]{1,90})",
-    re.I,
-)
-_AUDIENCE_STOP_RE = re.compile(
-    r"\b(?:first|initially|only|before|after|during|when|with|without|while|unless|"
-    r"using|via|who|that|where|because|from|until|and then|at|by|in)\b",
-    re.I,
-)
-_REQUIREMENT_PATTERNS: dict[FeatureFlagRolloutRequirementType, re.Pattern[str]] = {
-    "feature_flag": re.compile(
-        r"\b(?:feature[- ]?flags?|feature[- ]?toggles?|flag gate|flag key|flag config|"
-        r"launchdarkly|split\.io|flipper|unleash|enable flag|disable flag|"
-        r"roll out behind a flag|behind a flag)\b",
+_VALUE_PATTERNS: dict[FeatureFlagRolloutCategory, re.Pattern[str]] = {
+    "flag_ownership": re.compile(
+        r"\b(?:owner|owned by|accountable team|approver|approval|product owner|engineering owner|"
+        r"release manager|on[- ]?call|sre|product|engineering|data|analytics)\b",
         re.I,
     ),
-    "staged_rollout": re.compile(
-        r"\b(?:staged rollout|staged enablement|phased rollout|phased launch|"
-        r"phase\s+\d+|wave\s+\d+|waves?|internal first|staff first|dogfood|canary)\b",
+    "audience_targeting": re.compile(
+        r"\b(?:target|targeting|targeted|cohort|segment|audience|tenants?|workspace|organization|customer|beta users?|"
+        r"allowlist|blocklist|region|plan|environment|internal users?|staff|percentage of users?)\b",
         re.I,
     ),
-    "percentage_rollout": re.compile(
-        r"\b(?:\d{1,3}\s*%\s*(?:of\s+)?(?:users|traffic|accounts|tenants|customers|requests)?|"
-        r"percentage rollout|percent rollout|percentage ramp|flag ramp|ramp(?:ing)?\s+"
-        r"(?:from|to|up|users|traffic|accounts|tenants|customers))\b",
+    "staged_rollout_percentages": re.compile(
+        r"(?:\b\d+\s?%|\b\d+\s*percent|\b(?:percentage rollout|ramp|ramp up|staged rollout|"
+        r"gradual rollout|canary|phase|hold period|promotion gate)\b)",
         re.I,
     ),
-    "beta_access": re.compile(
-        r"\b(?:beta access|private beta|public beta|beta users?|beta customers?|"
-        r"early access|preview users?|limited preview)\b",
+    "kill_switch_behavior": re.compile(
+        r"\b(?:kill switch|circuit breaker|disable flag|turn off|shut off|emergency off|"
+        r"fail closed|fail open|default off|global disable|instant disable)\b",
         re.I,
     ),
-    "cohort_targeting": re.compile(
-        r"\b(?:cohorts?|segments?|audiences?|target users?|targeted users?|"
-        r"tenant targeting|account targeting|customer targeting|rollout rules?|"
-        r"allowlist|allowlisted|whitelist|whitelisted)\b",
+    "experiment_variant_tracking": re.compile(
+        r"\b(?:experiment|variant|a/?b test|split test|control group|treatment group|"
+        r"exposure event|assignment|conversion|analytics dimension)\b",
         re.I,
     ),
-    "kill_switch": re.compile(
-        r"\b(?:kill switch|killswitch|emergency off|circuit breaker|disable quickly|"
-        r"instant(?:ly)? disable|disable flag|turn off the flag|backout switch|"
-        r"abort rollout|pause rollout)\b",
+    "observability": re.compile(
+        r"\b(?:observability|monitor|monitoring|metric|metrics|alert|alerting|dashboard|"
+        r"logs?|health checks?|error rate|latency|conversion|slo|datadog|grafana)\b",
         re.I,
     ),
-    "gradual_release": re.compile(
-        r"\b(?:gradual release|gradual rollout|gradual enablement|progressive delivery|"
-        r"progressive rollout|slow rollout|limited rollout|ramp(?:ing)? rollout)\b",
+    "rollback_criteria": re.compile(
+        r"\b(?:rollback|roll back|revert|backout|abort|stop rollout|rollback criteria|"
+        r"rollback trigger|error threshold|latency threshold|conversion drop|decision maker)\b",
+        re.I,
+    ),
+    "cleanup_deprecation": re.compile(
+        r"\b(?:cleanup|clean up|deprecat(?:e|ion)|remove flag|delete flag|stale flag|"
+        r"flag debt|sunset|retire|code path removal|dead code)\b",
         re.I,
     ),
 }
-_PLANNING_NOTES: dict[FeatureFlagRolloutRequirementType, str] = {
-    "feature_flag": "Define flag key, defaults, ownership, evaluation path, and cleanup criteria.",
-    "staged_rollout": "Document rollout stages, promotion gates, owners, and stop conditions.",
-    "percentage_rollout": "Record ramp percentages, timing, guardrails, and metrics required before expansion.",
-    "beta_access": "Confirm beta eligibility, invite or removal criteria, support path, and feedback loop.",
-    "cohort_targeting": "Specify targeting attributes, allowlist ownership, exclusions, and validation cohorts.",
-    "kill_switch": "Define emergency disable behavior, authority, propagation time, and verification steps.",
-    "gradual_release": "Plan progressive exposure, monitoring checkpoints, and criteria for widening release.",
+_OWNER_DETAIL_RE = re.compile(
+    r"\b(?:owner|owned by|accountable team|approver|approval|product owner|engineering owner|"
+    r"release manager|decision maker|on[- ]?call)\b",
+    re.I,
+)
+_ROLLBACK_DETAIL_RE = re.compile(
+    r"\b(?:rollback|roll back|revert|backout|abort|stop rollout|trigger|threshold|criteria|"
+    r"error rate|latency|conversion drop|slo breach)\b",
+    re.I,
+)
+_ROLLOUT_CONTROL_RE = re.compile(
+    r"\b(?:feature flags?|feature toggles?|staged rollout|gradual rollout|progressive rollout|"
+    r"percentage rollout|ramp|kill switch|target(?:ing)?|cohort|variant|experiment)\b",
+    re.I,
+)
+_IGNORED_FIELDS = {
+    "created_at",
+    "updated_at",
+    "source_project",
+    "source_entity_type",
+    "source_links",
+    "generation_model",
+    "generation_tokens",
+    "generation_prompt",
+    "id",
+    "source_id",
+    "source_brief_id",
+    "status",
+    "created_by",
+    "updated_by",
 }
 _SCANNED_FIELDS: tuple[str, ...] = (
     "title",
@@ -148,66 +203,99 @@ _SCANNED_FIELDS: tuple[str, ...] = (
     "requirements",
     "constraints",
     "scope",
+    "non_goals",
+    "assumptions",
     "acceptance",
     "acceptance_criteria",
     "success_criteria",
     "definition_of_done",
     "validation_plan",
+    "architecture_notes",
+    "data_requirements",
+    "integration_points",
+    "risks",
     "release",
     "rollout",
-    "risks",
+    "feature_flags",
+    "feature_toggles",
+    "experimentation",
+    "analytics",
+    "observability",
+    "monitoring",
+    "operations",
+    "support",
     "metadata",
     "brief_metadata",
-    "implementation_notes",
     "source_payload",
 )
-_IGNORED_FIELDS = {
-    "id",
-    "source_brief_id",
-    "source_id",
-    "source_project",
-    "source_entity_type",
-    "created_at",
-    "updated_at",
-    "source_links",
-}
+_CATEGORY_PATTERNS = _VALUE_PATTERNS
 
 
 @dataclass(frozen=True, slots=True)
 class SourceFeatureFlagRolloutRequirement:
-    """One source-backed feature flag or rollout requirement."""
+    """One source-backed feature flag rollout requirement."""
 
-    source_brief_id: str | None
-    requirement_type: FeatureFlagRolloutRequirementType
-    rollout_value: str | None = None
-    target_audience: str | None = None
+    category: FeatureFlagRolloutCategory
     source_field: str = ""
     evidence: tuple[str, ...] = field(default_factory=tuple)
-    matched_terms: tuple[str, ...] = field(default_factory=tuple)
     confidence: FeatureFlagRolloutConfidence = "medium"
-    planning_note: str = ""
+    value: str = ""
+    suggested_owners: tuple[str, ...] = field(default_factory=tuple)
+    planning_notes: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def requirement_category(self) -> FeatureFlagRolloutCategory:
+        """Compatibility view for extractors that expose requirement_category."""
+        return self.category
+
+    @property
+    def concern(self) -> FeatureFlagRolloutCategory:
+        """Compatibility view for extractors that expose concern naming."""
+        return self.category
+
+    @property
+    def suggested_plan_impacts(self) -> tuple[str, ...]:
+        """Compatibility view matching adjacent source extractors."""
+        return self.planning_notes
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
         return {
-            "source_brief_id": self.source_brief_id,
-            "requirement_type": self.requirement_type,
-            "rollout_value": self.rollout_value,
-            "target_audience": self.target_audience,
+            "category": self.category,
             "source_field": self.source_field,
             "evidence": list(self.evidence),
-            "matched_terms": list(self.matched_terms),
             "confidence": self.confidence,
-            "planning_note": self.planning_note,
+            "value": self.value,
+            "suggested_owners": list(self.suggested_owners),
+            "planning_notes": list(self.planning_notes),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFeatureFlagRolloutEvidenceGap:
+    """One missing rollout detail that should be resolved before planning."""
+
+    category: FeatureFlagRolloutGapCategory
+    message: str
+    confidence: FeatureFlagRolloutConfidence = "medium"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible representation in stable key order."""
+        return {
+            "category": self.category,
+            "message": self.message,
+            "confidence": self.confidence,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class SourceFeatureFlagRolloutRequirementsReport:
-    """Source-level feature flag and rollout requirements report."""
+    """Source-level feature flag rollout requirements report."""
 
     source_id: str | None = None
+    title: str | None = None
     requirements: tuple[SourceFeatureFlagRolloutRequirement, ...] = field(default_factory=tuple)
+    evidence_gaps: tuple[SourceFeatureFlagRolloutEvidenceGap, ...] = field(default_factory=tuple)
     summary: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -220,13 +308,22 @@ class SourceFeatureFlagRolloutRequirementsReport:
         """Compatibility view matching reports that expose extracted rows as findings."""
         return self.requirements
 
+    @property
+    def gaps(self) -> tuple[SourceFeatureFlagRolloutEvidenceGap, ...]:
+        """Compatibility alias for evidence gaps."""
+        return self.evidence_gaps
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
         return {
             "source_id": self.source_id,
+            "title": self.title,
             "requirements": [requirement.to_dict() for requirement in self.requirements],
+            "evidence_gaps": [gap.to_dict() for gap in self.evidence_gaps],
             "summary": dict(self.summary),
             "records": [record.to_dict() for record in self.records],
+            "findings": [finding.to_dict() for finding in self.findings],
+            "gaps": [gap.to_dict() for gap in self.gaps],
         }
 
     def to_dicts(self) -> list[dict[str, Any]]:
@@ -238,7 +335,7 @@ class SourceFeatureFlagRolloutRequirementsReport:
         title = "# Source Feature Flag Rollout Requirements Report"
         if self.source_id:
             title = f"{title}: {self.source_id}"
-        type_counts = self.summary.get("requirement_type_counts", {})
+        category_counts = self.summary.get("category_counts", {})
         confidence_counts = self.summary.get("confidence_counts", {})
         lines = [
             title,
@@ -246,120 +343,91 @@ class SourceFeatureFlagRolloutRequirementsReport:
             "## Summary",
             "",
             f"- Requirements found: {self.summary.get('requirement_count', 0)}",
-            f"- Status: {self.summary.get('status', 'unknown')}",
-            "- Requirement type counts: "
-            + ", ".join(
-                f"{requirement_type} {type_counts.get(requirement_type, 0)}"
-                for requirement_type in _REQUIREMENT_ORDER
-            ),
+            f"- Evidence gaps: {self.summary.get('evidence_gap_count', 0)}",
+            "- Category counts: "
+            + ", ".join(f"{category} {category_counts.get(category, 0)}" for category in _CATEGORY_ORDER),
             "- Confidence counts: "
-            + ", ".join(
-                f"{level} {confidence_counts.get(level, 0)}" for level in _CONFIDENCE_ORDER
-            ),
+            + ", ".join(f"{level} {confidence_counts.get(level, 0)}" for level in _CONFIDENCE_ORDER),
         ]
-        if not self.requirements:
-            lines.extend(["", "No source feature flag rollout requirements were inferred."])
-            return "\n".join(lines)
-
-        lines.extend(
-            [
-                "",
-                "## Requirements",
-                "",
-                "| Source Brief | Type | Value | Audience | Confidence | Source Field | Evidence | Planning Note |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- |",
-            ]
-        )
-        for requirement in self.requirements:
-            lines.append(
-                "| "
-                f"{_markdown_cell(requirement.source_brief_id or '')} | "
-                f"{requirement.requirement_type} | "
-                f"{_markdown_cell(requirement.rollout_value or '')} | "
-                f"{_markdown_cell(requirement.target_audience or '')} | "
-                f"{requirement.confidence} | "
-                f"{_markdown_cell(requirement.source_field)} | "
-                f"{_markdown_cell('; '.join(requirement.evidence))} | "
-                f"{_markdown_cell(requirement.planning_note)} |"
+        if self.requirements:
+            lines.extend(
+                [
+                    "",
+                    "## Requirements",
+                    "",
+                    "| Category | Value | Confidence | Source Field | Owners | Evidence | Planning Notes |",
+                    "| --- | --- | --- | --- | --- | --- | --- |",
+                ]
             )
+            for requirement in self.requirements:
+                lines.append(
+                    "| "
+                    f"{requirement.category} | "
+                    f"{_markdown_cell(requirement.value)} | "
+                    f"{requirement.confidence} | "
+                    f"{_markdown_cell(requirement.source_field)} | "
+                    f"{_markdown_cell(', '.join(requirement.suggested_owners))} | "
+                    f"{_markdown_cell('; '.join(requirement.evidence))} | "
+                    f"{_markdown_cell('; '.join(requirement.planning_notes))} |"
+                )
+        else:
+            lines.extend(["", "No feature flag rollout requirements were found in the source brief."])
+        if self.evidence_gaps:
+            lines.extend(["", "## Evidence Gaps", "", "| Gap | Confidence | Message |", "| --- | --- | --- |"])
+            for gap in self.evidence_gaps:
+                lines.append(f"| {gap.category} | {gap.confidence} | {_markdown_cell(gap.message)} |")
         return "\n".join(lines)
 
 
 def build_source_feature_flag_rollout_requirements(
-    source: (
-        Mapping[str, Any]
-        | SourceBrief
-        | ImplementationBrief
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
-        | object
-    ),
+    source: str | Mapping[str, Any] | SourceBrief | ImplementationBrief | object,
 ) -> SourceFeatureFlagRolloutRequirementsReport:
-    """Extract source-level feature flag rollout requirement records from brief-shaped input."""
-    brief_payloads = _source_payloads(source)
-    requirements = tuple(_merge_candidates(_requirement_candidates(brief_payloads)))
-    source_ids = _dedupe(source_id for source_id, _ in brief_payloads if source_id)
+    """Build a feature flag rollout requirements report from brief-shaped input."""
+    source_id, payload = _source_payload(source)
+    candidates = [] if _has_global_no_scope(payload) else _requirement_candidates(payload)
+    requirements = tuple(_merge_candidates(candidates))
+    gaps = tuple(_evidence_gaps(requirements, candidates))
     return SourceFeatureFlagRolloutRequirementsReport(
-        source_id=source_ids[0] if len(source_ids) == 1 else None,
+        source_id=source_id,
+        title=_optional_text(payload.get("title")),
         requirements=requirements,
-        summary=_summary(requirements, len(brief_payloads)),
+        evidence_gaps=gaps,
+        summary=_summary(requirements, gaps),
     )
 
 
-def extract_source_feature_flag_rollout_requirements(
-    source: (
-        Mapping[str, Any]
-        | SourceBrief
-        | ImplementationBrief
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
-        | object
-    ),
-) -> SourceFeatureFlagRolloutRequirementsReport:
-    """Compatibility alias for building a feature flag rollout requirements report."""
-    return build_source_feature_flag_rollout_requirements(source)
-
-
 def generate_source_feature_flag_rollout_requirements(
-    source: (
-        Mapping[str, Any]
-        | SourceBrief
-        | ImplementationBrief
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
-        | object
-    ),
+    source: str | Mapping[str, Any] | SourceBrief | ImplementationBrief | object,
 ) -> SourceFeatureFlagRolloutRequirementsReport:
     """Compatibility helper for callers that use generate_* naming."""
     return build_source_feature_flag_rollout_requirements(source)
 
 
 def derive_source_feature_flag_rollout_requirements(
-    source: (
-        Mapping[str, Any]
-        | SourceBrief
-        | ImplementationBrief
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
-        | object
-    ),
+    source: str | Mapping[str, Any] | SourceBrief | ImplementationBrief | object,
 ) -> SourceFeatureFlagRolloutRequirementsReport:
     """Compatibility helper for callers that use derive_* naming."""
     return build_source_feature_flag_rollout_requirements(source)
 
 
+def extract_source_feature_flag_rollout_requirements(
+    source: str | Mapping[str, Any] | SourceBrief | ImplementationBrief | object,
+) -> tuple[SourceFeatureFlagRolloutRequirement, ...]:
+    """Return feature flag rollout requirement records extracted from brief-shaped input."""
+    return build_source_feature_flag_rollout_requirements(source).requirements
+
+
 def summarize_source_feature_flag_rollout_requirements(
     source_or_result: (
-        Mapping[str, Any]
+        str
+        | Mapping[str, Any]
         | SourceBrief
         | ImplementationBrief
         | SourceFeatureFlagRolloutRequirementsReport
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
         | object
     ),
 ) -> dict[str, Any]:
-    """Return deterministic counts for extracted feature flag rollout requirements."""
+    """Return the deterministic feature flag rollout requirements summary."""
     if isinstance(source_or_result, SourceFeatureFlagRolloutRequirementsReport):
         return dict(source_or_result.summary)
     return build_source_feature_flag_rollout_requirements(source_or_result).summary
@@ -376,13 +444,11 @@ source_feature_flag_rollout_requirements_to_dict.__test__ = False
 
 
 def source_feature_flag_rollout_requirements_to_dicts(
-    requirements: (
-        tuple[SourceFeatureFlagRolloutRequirement, ...]
-        | list[SourceFeatureFlagRolloutRequirement]
-        | SourceFeatureFlagRolloutRequirementsReport
-    ),
+    requirements: tuple[SourceFeatureFlagRolloutRequirement, ...]
+    | list[SourceFeatureFlagRolloutRequirement]
+    | SourceFeatureFlagRolloutRequirementsReport,
 ) -> list[dict[str, Any]]:
-    """Serialize feature flag rollout requirement records to dictionaries."""
+    """Serialize source feature flag rollout requirement records to dictionaries."""
     if isinstance(requirements, SourceFeatureFlagRolloutRequirementsReport):
         return requirements.to_dicts()
     return [requirement.to_dict() for requirement in requirements]
@@ -402,65 +468,49 @@ source_feature_flag_rollout_requirements_to_markdown.__test__ = False
 
 
 @dataclass(frozen=True, slots=True)
-class _Candidate:
-    source_brief_id: str | None
-    requirement_type: FeatureFlagRolloutRequirementType
-    rollout_value: str | None
-    target_audience: str | None
+class _Segment:
     source_field: str
-    evidence: str
-    matched_terms: tuple[str, ...]
+    text: str
+    section_context: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Candidate:
+    category: FeatureFlagRolloutCategory
     confidence: FeatureFlagRolloutConfidence
-
-
-def _source_payloads(
-    source: (
-        Mapping[str, Any]
-        | SourceBrief
-        | ImplementationBrief
-        | Iterable[Mapping[str, Any] | SourceBrief | ImplementationBrief]
-        | str
-        | object
-    ),
-) -> list[tuple[str | None, dict[str, Any]]]:
-    if isinstance(
-        source, (str, bytes, bytearray, Mapping, SourceBrief, ImplementationBrief)
-    ) or hasattr(source, "model_dump"):
-        return [_source_payload(source)]
-    if isinstance(source, Iterable):
-        return [_source_payload(item) for item in source]
-    return [_source_payload(source)]
+    evidence: str
+    source_field: str
+    value: str
 
 
 def _source_payload(
-    source: Mapping[str, Any] | SourceBrief | ImplementationBrief | str | object,
+    source: str | Mapping[str, Any] | SourceBrief | ImplementationBrief | object,
 ) -> tuple[str | None, dict[str, Any]]:
     if isinstance(source, str):
         return None, {"body": source}
+    if isinstance(source, (bytes, bytearray)):
+        return None, {}
     if isinstance(source, (SourceBrief, ImplementationBrief)):
-        payload = source.model_dump(mode="python")
-        return _source_id(payload), dict(payload)
+        payload = dict(source.model_dump(mode="python"))
+        return _brief_id(payload), payload
     if hasattr(source, "model_dump"):
         value = source.model_dump(mode="python")
         payload = dict(value) if isinstance(value, Mapping) else {}
-        return _source_id(payload), payload
+        return _brief_id(payload), payload
     if isinstance(source, Mapping):
         for model in (SourceBrief, ImplementationBrief):
             try:
-                value = model.model_validate(source).model_dump(mode="python")
-                payload = dict(value)
-                return _source_id(payload), payload
+                payload = dict(model.model_validate(source).model_dump(mode="python"))
+                return _brief_id(payload), payload
             except (TypeError, ValueError, ValidationError):
                 continue
         payload = dict(source)
-        return _source_id(payload), payload
-    if not isinstance(source, (bytes, bytearray)):
-        payload = _object_payload(source)
-        return _source_id(payload), payload
-    return None, {}
+        return _brief_id(payload), payload
+    payload = _object_payload(source)
+    return _brief_id(payload), payload
 
 
-def _source_id(payload: Mapping[str, Any]) -> str | None:
+def _brief_id(payload: Mapping[str, Any]) -> str | None:
     return (
         _optional_text(payload.get("id"))
         or _optional_text(payload.get("source_brief_id"))
@@ -468,320 +518,303 @@ def _source_id(payload: Mapping[str, Any]) -> str | None:
     )
 
 
-def _requirement_candidates(
-    brief_payloads: Iterable[tuple[str | None, Mapping[str, Any]]],
-) -> list[_Candidate]:
+def _requirement_candidates(payload: Mapping[str, Any]) -> list[_Candidate]:
     candidates: list[_Candidate] = []
-    for source_brief_id, payload in brief_payloads:
-        for source_field, segment in _candidate_segments(payload):
-            if not _is_rollout_requirement_signal(source_field, segment):
-                continue
-            requirement_types = _requirement_types(segment)
-            if not requirement_types:
-                continue
-            value = _rollout_value(segment)
-            audience = _target_audience(segment)
-            confidence = _confidence(source_field, segment, value, audience)
-            for requirement_type in requirement_types:
-                candidates.append(
-                    _Candidate(
-                        source_brief_id=source_brief_id,
-                        requirement_type=requirement_type,
-                        rollout_value=value,
-                        target_audience=audience,
-                        source_field=source_field,
-                        evidence=_evidence_snippet(source_field, segment),
-                        matched_terms=_matched_terms(requirement_type, segment),
-                        confidence=confidence,
-                    )
+    for segment in _candidate_segments(payload):
+        if not _is_requirement(segment):
+            continue
+        searchable = f"{_field_words(segment.source_field)} {segment.text}"
+        categories = [category for category in _CATEGORY_ORDER if _CATEGORY_PATTERNS[category].search(searchable)]
+        for category in _dedupe(categories):
+            candidates.append(
+                _Candidate(
+                    category=category,
+                    confidence=_confidence(segment),
+                    evidence=_evidence_snippet(segment.source_field, segment.text),
+                    source_field=segment.source_field,
+                    value=_extract_value(category, segment.text),
                 )
+            )
     return candidates
 
 
 def _merge_candidates(candidates: Iterable[_Candidate]) -> list[SourceFeatureFlagRolloutRequirement]:
-    grouped: dict[tuple[str | None, FeatureFlagRolloutRequirementType], list[_Candidate]] = {}
+    by_category: dict[FeatureFlagRolloutCategory, list[_Candidate]] = {}
     for candidate in candidates:
-        grouped.setdefault((candidate.source_brief_id, candidate.requirement_type), []).append(
-            candidate
-        )
+        by_category.setdefault(candidate.category, []).append(candidate)
 
     requirements: list[SourceFeatureFlagRolloutRequirement] = []
-    for (source_brief_id, requirement_type), items in grouped.items():
-        confidence = min(
-            (item.confidence for item in items), key=lambda item: _CONFIDENCE_ORDER[item]
+    for category in _CATEGORY_ORDER:
+        items = by_category.get(category, [])
+        if not items:
+            continue
+        best = min(
+            items,
+            key=lambda item: (
+                _CONFIDENCE_ORDER[item.confidence],
+                _field_category_rank(category, item.source_field),
+                item.source_field.casefold(),
+            ),
         )
-        source_field = sorted(
-            {item.source_field for item in items if item.source_field},
-            key=lambda item: item.casefold(),
-        )[0]
         requirements.append(
             SourceFeatureFlagRolloutRequirement(
-                source_brief_id=source_brief_id,
-                requirement_type=requirement_type,
-                rollout_value=_joined_details(item.rollout_value for item in items),
-                target_audience=_joined_details(item.target_audience for item in items),
-                source_field=source_field,
+                category=category,
+                source_field=best.source_field,
                 evidence=tuple(_dedupe_evidence(item.evidence for item in items))[:5],
-                matched_terms=tuple(
-                    _dedupe(
-                        term
-                        for item in items
-                        for term in item.matched_terms
-                        if term
-                    )
-                ),
-                confidence=confidence,
-                planning_note=_PLANNING_NOTES[requirement_type],
+                confidence=best.confidence,
+                value=_merge_values(item.value for item in items),
+                suggested_owners=_OWNER_BY_CATEGORY[category],
+                planning_notes=_PLANNING_NOTES[category],
             )
         )
-    return sorted(
-        requirements,
-        key=lambda requirement: (
-            _optional_text(requirement.source_brief_id) or "",
-            _REQUIREMENT_ORDER.index(requirement.requirement_type),
-            _CONFIDENCE_ORDER[requirement.confidence],
-            requirement.source_field.casefold(),
-            requirement.evidence,
-        ),
-    )
+    return requirements
 
 
-def _candidate_segments(payload: Mapping[str, Any]) -> list[tuple[str, str]]:
-    values: list[tuple[str, str]] = []
+def _evidence_gaps(
+    requirements: tuple[SourceFeatureFlagRolloutRequirement, ...],
+    candidates: list[_Candidate],
+) -> list[SourceFeatureFlagRolloutEvidenceGap]:
+    if not candidates:
+        return []
+    text = " ".join(candidate.evidence for candidate in candidates)
+    if not _ROLLOUT_CONTROL_RE.search(text):
+        return []
+    present = {requirement.category for requirement in requirements}
+    gaps: list[SourceFeatureFlagRolloutEvidenceGap] = []
+    if "flag_ownership" not in present and not _OWNER_DETAIL_RE.search(text):
+        gaps.append(
+            SourceFeatureFlagRolloutEvidenceGap(
+                category="missing_flag_owner",
+                message=_GAP_MESSAGES["missing_flag_owner"],
+                confidence="medium",
+            )
+        )
+    if "rollback_criteria" not in present and not _ROLLBACK_DETAIL_RE.search(text):
+        gaps.append(
+            SourceFeatureFlagRolloutEvidenceGap(
+                category="missing_rollback_criteria",
+                message=_GAP_MESSAGES["missing_rollback_criteria"],
+                confidence="medium",
+            )
+        )
+    return [gap for category in _GAP_ORDER for gap in gaps if gap.category == category]
+
+
+def _candidate_segments(payload: Mapping[str, Any]) -> list[_Segment]:
+    segments: list[_Segment] = []
     visited: set[str] = set()
     for field_name in _SCANNED_FIELDS:
         if field_name in payload:
-            _append_value(values, field_name, payload[field_name])
+            _append_value(segments, field_name, payload[field_name], False)
             visited.add(field_name)
     for key in sorted(payload, key=lambda item: str(item)):
-        if key not in visited and key not in _IGNORED_FIELDS:
-            _append_value(values, str(key), payload[key])
-    return [(field, segment) for field, segment in values if segment]
+        if key in visited or str(key) in _IGNORED_FIELDS:
+            continue
+        _append_value(segments, str(key), payload[key], False)
+    return segments
 
 
-def _append_value(values: list[tuple[str, str]], source_field: str, value: Any) -> None:
+def _append_value(
+    segments: list[_Segment],
+    source_field: str,
+    value: Any,
+    section_context: bool,
+) -> None:
+    field_context = section_context or bool(_STRUCTURED_FIELD_RE.search(_field_words(source_field)))
     if isinstance(value, Mapping):
         for key in sorted(value, key=lambda item: str(item)):
-            child = value[key]
+            if str(key) in _IGNORED_FIELDS:
+                continue
             child_field = f"{source_field}.{key}"
-            key_text = _clean_text(str(key).replace("_", " "))
-            if _ROLLOUT_SIGNAL_RE.search(key_text):
-                values.append((child_field, key_text))
-            _append_value(values, child_field, child)
+            key_text = _clean_text(str(key).replace("_", " ").replace("-", " "))
+            child_context = field_context or bool(
+                _STRUCTURED_FIELD_RE.search(key_text) or _FEATURE_FLAG_CONTEXT_RE.search(key_text)
+            )
+            _append_value(segments, child_field, value[key], child_context)
         return
     if isinstance(value, (list, tuple, set)):
         items = sorted(value, key=lambda item: str(item)) if isinstance(value, set) else value
         for index, item in enumerate(items):
-            _append_value(values, f"{source_field}[{index}]", item)
+            _append_value(segments, f"{source_field}[{index}]", item, field_context)
         return
     if text := _optional_text(value):
-        for segment in _segments(text):
-            values.append((source_field, segment))
+        raw_text = str(value) if isinstance(value, str) else text
+        for segment_text, segment_context in _segments(raw_text, field_context):
+            segments.append(_Segment(source_field, segment_text, segment_context))
 
 
-def _segments(value: str) -> list[str]:
-    segments: list[str] = []
-    for sentence in _SENTENCE_SPLIT_RE.split(value):
-        segments.extend(_CLAUSE_SPLIT_RE.split(sentence))
-    return [_clean_text(part) for part in segments if _clean_text(part)]
+def _segments(value: str, inherited_context: bool) -> list[tuple[str, bool]]:
+    segments: list[tuple[str, bool]] = []
+    section_context = inherited_context
+    for raw_line in value.splitlines() or [value]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading = _HEADING_RE.match(line)
+        if heading:
+            title = _clean_text(heading.group("title"))
+            section_context = inherited_context or bool(
+                _FEATURE_FLAG_CONTEXT_RE.search(title) or _STRUCTURED_FIELD_RE.search(title)
+            )
+            if title:
+                segments.append((title, section_context))
+            continue
+        cleaned = _clean_text(line)
+        if not cleaned:
+            continue
+        parts = [cleaned] if _BULLET_RE.match(line) or _CHECKBOX_RE.match(line) else _SENTENCE_SPLIT_RE.split(cleaned)
+        for part in parts:
+            clauses = (
+                [part]
+                if _NEGATED_SCOPE_RE.search(part) and _FEATURE_FLAG_CONTEXT_RE.search(part)
+                else _CLAUSE_SPLIT_RE.split(part)
+            )
+            for clause in clauses:
+                text = _clean_text(clause)
+                if text:
+                    segments.append((text, section_context))
+    return segments
 
 
-def _is_rollout_requirement_signal(source_field: str, text: str) -> bool:
-    if _NEGATED_SCOPE_RE.search(text):
+def _is_requirement(segment: _Segment) -> bool:
+    searchable = f"{_field_words(segment.source_field)} {segment.text}"
+    field_words = _field_words(segment.source_field)
+    if _NO_FEATURE_FLAGS_RE.search(searchable) or _NEGATED_SCOPE_RE.search(searchable):
         return False
-    if not _ROLLOUT_SIGNAL_RE.search(text):
+    if _UNRELATED_RE.search(searchable) and not _FEATURE_FLAG_CONTEXT_RE.search(searchable):
         return False
-    if source_field == "title" and not re.search(
-        r"\b(?:must|shall|required|requires?|need(?:s)? to|should|ensure|"
-        r"enable|disable|target|allowlist|whitelist|\d{1,3}\s*%)\b",
-        text,
-        re.I,
-    ):
+    if not (_FEATURE_FLAG_CONTEXT_RE.search(searchable) or _STRUCTURED_FIELD_RE.search(field_words)):
         return False
-    return True
-
-
-def _requirement_types(text: str) -> tuple[FeatureFlagRolloutRequirementType, ...]:
-    return tuple(
-        requirement_type
-        for requirement_type in _REQUIREMENT_ORDER
-        if _REQUIREMENT_PATTERNS[requirement_type].search(text)
+    if not any(pattern.search(searchable) for pattern in _CATEGORY_PATTERNS.values()):
+        return False
+    if _REQUIREMENT_RE.search(segment.text):
+        return True
+    if segment.section_context or _STRUCTURED_FIELD_RE.search(field_words):
+        return True
+    return bool(
+        _FEATURE_FLAG_CONTEXT_RE.search(segment.text)
+        and re.search(
+            r"\b(?:owned|targeted|ramped|enabled|disabled|rolled back|reverted|monitored|tracked|removed)\b",
+            segment.text,
+            re.I,
+        )
     )
 
 
-def _rollout_value(text: str) -> str | None:
-    if match := _VALUE_RE.search(text):
-        return _clean_text(match.group("value"))
-    return None
+def _has_global_no_scope(payload: Mapping[str, Any]) -> bool:
+    for segment in _candidate_segments(payload):
+        root_field = segment.source_field.split("[", 1)[0].split(".", 1)[0]
+        if root_field not in {"title", "summary", "body", "description", "scope", "non_goals", "constraints", "source_payload"}:
+            continue
+        searchable = f"{_field_words(segment.source_field)} {segment.text}"
+        if _NO_FEATURE_FLAGS_RE.search(searchable) or _NEGATED_SCOPE_RE.search(searchable):
+            return True
+    return False
 
 
-def _target_audience(text: str) -> str | None:
-    if match := _AUDIENCE_RE.search(text):
-        audience = _clean_text(match.group("audience"))
-        stop = _AUDIENCE_STOP_RE.search(audience)
-        if stop:
-            audience = audience[: stop.start()].strip()
-        audience = re.sub(r"[.;:]+$", "", audience).strip()
-        return audience or None
-    return None
+def _confidence(segment: _Segment) -> FeatureFlagRolloutConfidence:
+    searchable = f"{_field_words(segment.source_field)} {segment.text}"
+    score = 0
+    if _STRUCTURED_FIELD_RE.search(_field_words(segment.source_field)):
+        score += 1
+    if segment.section_context or _FEATURE_FLAG_CONTEXT_RE.search(searchable):
+        score += 1
+    if _REQUIREMENT_RE.search(segment.text):
+        score += 1
+    if any(pattern.search(searchable) for pattern in _CATEGORY_PATTERNS.values()):
+        score += 1
+    return "high" if score >= 4 else "medium" if score >= 2 else "low"
 
 
-def _matched_terms(
-    requirement_type: FeatureFlagRolloutRequirementType, text: str
-) -> tuple[str, ...]:
-    terms: list[str] = []
-    for match in _REQUIREMENT_PATTERNS[requirement_type].finditer(text):
-        if match.group(0):
-            terms.append(_clean_text(match.group(0)).casefold())
-    return tuple(_dedupe(terms))
-
-
-def _confidence(
-    source_field: str,
-    text: str,
-    value: str | None,
-    audience: str | None,
-) -> FeatureFlagRolloutConfidence:
-    normalized_field = source_field.replace("-", "_").casefold()
-    if _REQUIREMENT_LANGUAGE_RE.search(text) and (
-        value
-        or audience
-        or re.search(r"\b(?:kill switch|killswitch|emergency off|disable flag)\b", text, re.I)
-        or any(
-            marker in normalized_field
-            for marker in (
-                "acceptance",
-                "success_criteria",
-                "definition_of_done",
-                "requirement",
-                "constraint",
-                "rollout",
-            )
-        )
-    ):
-        return "high"
-    if (
-        value
-        or audience
-        or re.search(r"\b(?:must|shall|required|kill switch|feature[- ]?flag)\b", text, re.I)
-    ):
-        return "medium"
-    return "low"
+def _extract_value(category: FeatureFlagRolloutCategory, text: str) -> str:
+    if category == "staged_rollout_percentages":
+        percentages = _dedupe(_clean_text(match.group(0)) for match in re.finditer(r"\b\d+\s?%|\b\d+\s*percent", text, re.I))
+        if percentages:
+            return ", ".join(percentages[:3])
+    values = _dedupe(_clean_text(match.group(0)) for match in _VALUE_PATTERNS[category].finditer(text))
+    return ", ".join(values[:3])
 
 
 def _summary(
     requirements: tuple[SourceFeatureFlagRolloutRequirement, ...],
-    source_count: int,
+    gaps: tuple[SourceFeatureFlagRolloutEvidenceGap, ...],
 ) -> dict[str, Any]:
     return {
-        "source_count": source_count,
         "requirement_count": len(requirements),
-        "requirement_types": [requirement.requirement_type for requirement in requirements],
-        "requirement_type_counts": {
-            requirement_type: sum(
-                1
-                for requirement in requirements
-                if requirement.requirement_type == requirement_type
-            )
-            for requirement_type in _REQUIREMENT_ORDER
+        "category_counts": {
+            category: sum(1 for requirement in requirements if requirement.category == category)
+            for category in _CATEGORY_ORDER
         },
         "confidence_counts": {
-            confidence: sum(
-                1 for requirement in requirements if requirement.confidence == confidence
-            )
+            confidence: sum(1 for requirement in requirements if requirement.confidence == confidence)
             for confidence in _CONFIDENCE_ORDER
         },
-        "target_audiences": sorted(
-            {
-                requirement.target_audience
-                for requirement in requirements
-                if requirement.target_audience
-            },
-            key=str.casefold,
-        ),
-        "status": "ready_for_planning" if requirements else "no_feature_flag_rollout_language",
+        "categories": [requirement.category for requirement in requirements],
+        "evidence_gap_count": len(gaps),
+        "evidence_gaps": [gap.category for gap in gaps],
+        "status": _status(requirements, gaps),
     }
+
+
+def _status(
+    requirements: tuple[SourceFeatureFlagRolloutRequirement, ...],
+    gaps: tuple[SourceFeatureFlagRolloutEvidenceGap, ...],
+) -> str:
+    if not requirements:
+        return "no_feature_flag_rollout_requirements_found"
+    if gaps:
+        return "needs_feature_flag_rollout_detail"
+    return "ready_for_planning"
 
 
 def _object_payload(value: object) -> dict[str, Any]:
-    fields = (
-        "id",
-        "source_brief_id",
-        "source_id",
-        "title",
-        "domain",
-        "summary",
-        "body",
-        "description",
-        "problem",
-        "problem_statement",
-        "goal",
-        "goals",
-        "mvp_goal",
-        "context",
-        "workflow_context",
-        "requirements",
-        "constraints",
-        "scope",
-        "acceptance",
-        "acceptance_criteria",
-        "success_criteria",
-        "definition_of_done",
-        "validation_plan",
-        "release",
-        "rollout",
-        "risks",
-        "metadata",
-        "brief_metadata",
-        "implementation_notes",
-        "source_payload",
-    )
-    return {
-        field_name: getattr(value, field_name)
-        for field_name in fields
-        if hasattr(value, field_name)
+    fields = ("id", "source_brief_id", "source_id", *_SCANNED_FIELDS)
+    return {field_name: getattr(value, field_name) for field_name in fields if hasattr(value, field_name)}
+
+
+def _field_words(source_field: str) -> str:
+    return source_field.replace("_", " ").replace("-", " ").replace(".", " ").replace("/", " ")
+
+
+def _field_category_rank(category: FeatureFlagRolloutCategory, source_field: str) -> int:
+    field_words = _field_words(source_field).casefold()
+    markers: dict[FeatureFlagRolloutCategory, tuple[str, ...]] = {
+        "flag_ownership": ("owner", "approval", "accountable"),
+        "audience_targeting": ("target", "audience", "cohort", "segment"),
+        "staged_rollout_percentages": ("percentage", "stage", "rollout", "ramp"),
+        "kill_switch_behavior": ("kill", "disable", "emergency", "switch"),
+        "experiment_variant_tracking": ("experiment", "variant", "exposure", "analytics"),
+        "observability": ("observability", "monitor", "metric", "alert", "dashboard"),
+        "rollback_criteria": ("rollback", "revert", "threshold", "criteria"),
+        "cleanup_deprecation": ("cleanup", "deprecat", "stale", "remove"),
     }
+    return 0 if any(marker in field_words for marker in markers[category]) else 1
+
+
+def _clean_text(value: Any) -> str:
+    text = "" if value is None or isinstance(value, (bytes, bytearray)) else str(value)
+    text = _CHECKBOX_RE.sub("", text.strip())
+    text = _BULLET_RE.sub("", text)
+    text = re.sub(r"^#+\s*", "", text)
+    return _SPACE_RE.sub(" ", text).strip()
 
 
 def _optional_text(value: Any) -> str | None:
     if value is None or isinstance(value, (bytes, bytearray)):
         return None
-    text = _clean_text(str(value))
+    text = _clean_text(value)
     return text or None
 
 
-def _clean_text(value: str) -> str:
-    text = _BULLET_RE.sub("", value.strip())
-    return _SPACE_RE.sub(" ", text).strip()
-
-
 def _evidence_snippet(source_field: str, text: str) -> str:
-    value = _clean_text(text)
-    if len(value) > 200:
-        value = f"{value[:197].rstrip()}..."
-    return f"{source_field}: {value}"
+    cleaned = _clean_text(text)
+    if len(cleaned) > 180:
+        cleaned = f"{cleaned[:177].rstrip()}..."
+    return f"{source_field}: {cleaned}"
 
 
 def _markdown_cell(value: str) -> str:
     return _clean_text(value).replace("|", "\\|").replace("\n", " ")
-
-
-def _joined_details(values: Iterable[str | None]) -> str | None:
-    details = _dedupe(value for value in values if value)
-    return ", ".join(details) if details else None
-
-
-def _dedupe(values: Iterable[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        cleaned = _clean_text(value)
-        key = cleaned.casefold()
-        if not cleaned or key in seen:
-            continue
-        deduped.append(cleaned)
-        seen.add(key)
-    return deduped
 
 
 def _dedupe_evidence(values: Iterable[str]) -> list[str]:
@@ -796,13 +829,36 @@ def _dedupe_evidence(values: Iterable[str]) -> list[str]:
             continue
         deduped.append(value)
         seen.add(key)
-    return sorted(deduped, key=lambda item: item.casefold())
+    return deduped
+
+
+def _merge_values(values: Iterable[str]) -> str:
+    parts: list[str] = []
+    for value in values:
+        parts.extend(item.strip() for item in value.split(",") if item.strip())
+    return ", ".join(_dedupe(parts)[:3])
+
+
+def _dedupe(values: Iterable[_T]) -> list[_T]:
+    deduped: list[_T] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        key = str(value).casefold()
+        if key in seen:
+            continue
+        deduped.append(value)
+        seen.add(key)
+    return deduped
 
 
 __all__ = [
+    "FeatureFlagRolloutCategory",
     "FeatureFlagRolloutConfidence",
-    "FeatureFlagRolloutRequirementType",
+    "FeatureFlagRolloutGapCategory",
     "SourceFeatureFlagRolloutRequirement",
+    "SourceFeatureFlagRolloutEvidenceGap",
     "SourceFeatureFlagRolloutRequirementsReport",
     "build_source_feature_flag_rollout_requirements",
     "derive_source_feature_flag_rollout_requirements",
