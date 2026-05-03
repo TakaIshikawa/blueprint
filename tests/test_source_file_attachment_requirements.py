@@ -27,9 +27,14 @@ def test_structured_source_payload_extracts_attachment_requirement_types():
                     "size": "Uploaded files must be no larger than 10 MB.",
                     "count": "Users can attach up to 5 files per request.",
                     "scanning": "Every attachment requires virus scanning before it is stored.",
+                    "storage": "Uploaded attachments must be stored in a private S3 bucket.",
                     "preview": "Provide image preview thumbnails and PDF preview.",
+                    "access": "Attachment access controls require signed URLs for authorized users.",
+                    "progress": "Show upload progress with a progress bar and retry upload status.",
                     "download": "Admins must be able to download original attachments.",
+                    "metadata": "Capture original filename, MIME type, checksum, uploaded by, and file size metadata.",
                     "retention": "Temporary uploads are deleted after 30 days.",
+                    "deletion": "Deletion lifecycle must support soft delete before hard delete.",
                 }
             }
         )
@@ -43,17 +48,27 @@ def test_structured_source_payload_extracts_attachment_requirement_types():
         "max_file_size",
         "attachment_count",
         "virus_scanning",
+        "storage_location",
         "preview",
+        "access_control",
+        "upload_progress",
         "download",
+        "metadata_capture",
         "retention",
+        "deletion_lifecycle",
     } <= {record.requirement_type for record in result.records}
-    assert result.summary["requirement_count"] >= 7
+    assert result.summary["requirement_count"] >= 12
     assert result.summary["type_counts"]["virus_scanning"] >= 1
     assert result.summary["surface_counts"]["image_upload"] >= 1
     assert any("source_payload.file_uploads.scanning" in record.evidence for record in result.records)
     assert _record(result, "max_file_size").value == "10 mb"
     assert _record(result, "attachment_count").value == "5"
+    assert _record(result, "storage_location").value == "s3 bucket"
+    assert _record(result, "access_control").value == "signed urls"
+    assert _record(result, "upload_progress").value == "progress bar"
+    assert "checksum" in (_record(result, "metadata_capture").value or "")
     assert _record(result, "retention").value == "30 days"
+    assert _record(result, "deletion_lifecycle").value in {"30 days", "hard delete", "soft delete"}
 
 
 def test_markdown_string_and_implementation_brief_scanning_are_stable():
@@ -186,9 +201,14 @@ def test_deduplication_serialization_empty_and_invalid_inputs_are_stable():
             "max_file_size": 0,
             "attachment_count": 0,
             "virus_scanning": 0,
+            "storage_location": 0,
             "preview": 0,
+            "access_control": 0,
+            "upload_progress": 0,
             "download": 0,
+            "metadata_capture": 0,
             "retention": 0,
+            "deletion_lifecycle": 0,
         },
         "surface_counts": {
             "file_upload": 0,
@@ -202,6 +222,23 @@ def test_deduplication_serialization_empty_and_invalid_inputs_are_stable():
     assert "No source file attachment requirements were found." in empty.to_markdown()
     assert invalid.source_id is None
     assert invalid.records == ()
+
+
+def test_attachment_false_positive_filtering_ignores_general_documents_and_copy():
+    result = build_source_file_attachment_requirements(
+        _source(
+            title="Documentation updates",
+            summary="Documents should explain onboarding copy and export messaging.",
+            source_payload={
+                "metadata": {
+                    "status": "The design document is stored in the project folder.",
+                    "notes": "Document the access control decisions for reviewers.",
+                }
+            },
+        )
+    )
+
+    assert result.records == ()
 
 
 def _record(result, requirement_type):

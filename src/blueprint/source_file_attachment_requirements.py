@@ -16,9 +16,14 @@ SourceFileAttachmentRequirementType = Literal[
     "max_file_size",
     "attachment_count",
     "virus_scanning",
+    "storage_location",
     "preview",
+    "access_control",
+    "upload_progress",
     "download",
+    "metadata_capture",
     "retention",
+    "deletion_lifecycle",
 ]
 SourceFileAttachmentSurface = Literal[
     "file_upload",
@@ -34,9 +39,14 @@ _TYPE_ORDER: tuple[SourceFileAttachmentRequirementType, ...] = (
     "max_file_size",
     "attachment_count",
     "virus_scanning",
+    "storage_location",
     "preview",
+    "access_control",
+    "upload_progress",
     "download",
+    "metadata_capture",
     "retention",
+    "deletion_lifecycle",
 )
 _SURFACE_ORDER: tuple[SourceFileAttachmentSurface, ...] = (
     "file_upload",
@@ -58,7 +68,8 @@ _CLAUSE_SPLIT_RE = re.compile(r",\s+(?:and|but|or)\s+", re.I)
 _DIRECTIVE_RE = re.compile(
     r"\b(?:must|shall|required|requires?|requirement|needs?|need to|should|ensure|"
     r"support|allow|accept|reject|block|limit|maximum|max|minimum|min|only|cannot|"
-    r"before launch|done when|acceptance|validate|retain|delete|expire)\b",
+    r"before launch|done when|acceptance|validate|retain|delete|expire|store|encrypt|"
+    r"authorize|authenticate|permission|track|record|capture|extract)\b",
     re.I,
 )
 _ALLOWED_TYPE_DIRECTIVE_RE = re.compile(
@@ -68,14 +79,17 @@ _ALLOWED_TYPE_DIRECTIVE_RE = re.compile(
 )
 _ATTACHMENT_CONTEXT_RE = re.compile(
     r"\b(?:attachments?|attached files?|file uploads?|uploads?|uploaded files?|documents?|"
-    r"images?|photos?|pdfs?|spreadsheets?|csvs?|docs?|previews?|downloads?|virus|"
-    r"malware|av scan|retention|storage expiry|delete uploaded|remove uploaded)\b",
+    r"images?|photos?|pdfs?|spreadsheets?|csvs?|docs?|previews?|downloads?|exports?|virus|"
+    r"malware|av scan|retention|storage expiry|delete uploaded|remove uploaded|"
+    r"thumbnail|progress bar|upload progress|s3|gcs|blob storage|object storage|cdn|"
+    r"access control|permissions?|signed urls?|metadata|checksum|content type)\b",
     re.I,
 )
 _STRUCTURED_FIELD_RE = re.compile(
     r"(?:attachments?|file[-_ ]?uploads?|uploads?|files?|documents?|images?|media|"
-    r"preview|download|scan|virus|malware|retention|storage|requirements?|constraints?|"
-    r"acceptance|criteria|source_payload|metadata|security)",
+    r"preview|thumbnail|download|export|scan|virus|malware|retention|deletion|storage|"
+    r"access|permission|progress|metadata|requirements?|constraints?|acceptance|criteria|"
+    r"source_payload|security)",
     re.I,
 )
 _IGNORED_FIELDS = {
@@ -147,17 +161,47 @@ _TYPE_PATTERNS: dict[SourceFileAttachmentRequirementType, re.Pattern[str]] = {
         r"scan(?:ned)? for (?:viruses|malware)|quarantine)\b",
         re.I,
     ),
+    "storage_location": re.compile(
+        r"\b(?:storage location|stored in|store (?:uploads?|attachments?|files?)|object storage|"
+        r"blob storage|s3 bucket|gcs bucket|azure blob|private bucket|encrypted bucket|"
+        r"cdn storage|regional storage|data residency)\b",
+        re.I,
+    ),
     "preview": re.compile(r"\b(?:previews?|thumbnails?|inline view|render(?:ed)? preview|image preview|pdf preview)\b", re.I),
-    "download": re.compile(r"\b(?:download|downloads|downloadable|export original|save locally)\b", re.I),
+    "access_control": re.compile(
+        r"\b(?:access controls?|permissions?|authorized users?|authenticated users?|owner only|"
+        r"role[- ]?based access|rbac|acl|private attachments?|signed urls?|pre[- ]signed urls?|"
+        r"expiring links?|download permissions?|attachment visibility)\b",
+        re.I,
+    ),
+    "upload_progress": re.compile(
+        r"\b(?:upload progress|progress bar|progress indicator|upload percentage|percent uploaded|"
+        r"upload status|resumable upload|pause upload|resume upload|retry upload|upload retry)\b",
+        re.I,
+    ),
+    "download": re.compile(r"\b(?:download|downloads|downloadable|export original|export files?|save locally)\b", re.I),
+    "metadata_capture": re.compile(
+        r"\b(?:metadata capture|capture metadata|file metadata|attachment metadata|original filename|"
+        r"file name|filename|content type|mime type|mime|checksum|hash|sha256|file size|"
+        r"uploaded by|uploader|uploaded at|upload timestamp|image dimensions|exif)\b",
+        re.I,
+    ),
     "retention": re.compile(
         r"\b(?:retention|retain|retained|delete(?:d)? after|expire(?:s|d)? after|purge(?:d)? after|"
         r"remove(?:d)? after|storage expiry|keep for \d+)\b",
         re.I,
     ),
+    "deletion_lifecycle": re.compile(
+        r"\b(?:delete uploaded|delete attachments?|delete files?|deleted after|deletion lifecycle|"
+        r"remove uploaded|remove attachments?|removed after|purge uploaded|purge attachments?|"
+        r"purged after|hard delete|soft delete|trash|restore attachment|orphan cleanup|"
+        r"cleanup uploaded|delete on account closure|delete on request)\b",
+        re.I,
+    ),
 }
 _FILE_VALUE_RE = re.compile(
     r"(?:(?:\.[a-z0-9]{2,5})\b|\b(?:png|jpe?g|gif|webp|heic|pdf|docx?|xlsx?|csv|txt|zip|"
-    r"image files?|documents?|spreadsheets?)\b|[a-z0-9.+-]+/[a-z0-9.+-]+)",
+    r"image files?|spreadsheet files?)\b|[a-z0-9.+-]+/[a-z0-9.+-]+)",
     re.I,
 )
 _SIZE_VALUE_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:kb|mb|gb|kib|mib|gib)\b", re.I)
@@ -167,8 +211,33 @@ _COUNT_VALUE_RE = re.compile(
     re.I,
 )
 _RETENTION_VALUE_RE = re.compile(
-    r"\b(?:delete(?:d)? after|expire(?:s|d)? after|purge(?:d)? after|remove(?:d)? after|retain(?:ed)? for|keep for)\s+"
+    r"\b(?:expire(?:s|d)? after|retain(?:ed)? for|keep for|delete(?:d)? after|purge(?:d)? after|remove(?:d)? after)\s+"
     r"(?P<value>\d+\s+(?:hours?|days?|weeks?|months?|years?))\b",
+    re.I,
+)
+_STORAGE_VALUE_RE = re.compile(
+    r"\b(?:s3 bucket|gcs bucket|azure blob|blob storage|object storage|private bucket|"
+    r"encrypted bucket|cdn storage|regional storage|data residency|us|eu|uk)\b",
+    re.I,
+)
+_ACCESS_VALUE_RE = re.compile(
+    r"\b(?:role[- ]?based access|rbac|acl|owner only|authorized users?|authenticated users?|"
+    r"signed urls?|pre[- ]signed urls?|expiring links?|private attachments?)\b",
+    re.I,
+)
+_PROGRESS_VALUE_RE = re.compile(
+    r"\b(?:progress bar|progress indicator|upload percentage|percent uploaded|upload status|"
+    r"resumable upload|pause upload|resume upload|retry upload|upload retry)\b",
+    re.I,
+)
+_METADATA_VALUE_RE = re.compile(
+    r"\b(?:original filename|file name|filename|content type|mime type|mime|checksum|hash|"
+    r"sha256|file size|uploaded by|uploader|uploaded at|upload timestamp|image dimensions|exif)\b",
+    re.I,
+)
+_DELETION_VALUE_RE = re.compile(
+    r"\b(?:hard delete|soft delete|trash|restore attachment|orphan cleanup|cleanup uploaded|"
+    r"delete on account closure|delete on request)\b",
     re.I,
 )
 
@@ -630,6 +699,12 @@ def _requirement_types(segment: _Segment) -> tuple[SourceFileAttachmentRequireme
         return ()
     if "allowed_file_type" in types and not _allowed_file_type_signal(segment):
         types.remove("allowed_file_type")
+    if "storage_location" in types and not _storage_location_signal(segment):
+        types.remove("storage_location")
+    if "access_control" in types and not _access_control_signal(segment):
+        types.remove("access_control")
+    if "metadata_capture" in types and not _metadata_capture_signal(segment):
+        types.remove("metadata_capture")
     return tuple(_dedupe(types))
 
 
@@ -642,7 +717,18 @@ def _is_requirement(
         return True
     if _ATTACHMENT_CONTEXT_RE.search(segment.text) and _DIRECTIVE_RE.search(segment.text):
         return True
-    if any(requirement_type in {"virus_scanning", "preview", "download", "retention"} for requirement_type in requirement_types):
+    context_directive_types = {
+        "virus_scanning",
+        "storage_location",
+        "preview",
+        "access_control",
+        "upload_progress",
+        "download",
+        "metadata_capture",
+        "retention",
+        "deletion_lifecycle",
+    }
+    if any(requirement_type in context_directive_types for requirement_type in requirement_types):
         return bool(_ATTACHMENT_CONTEXT_RE.search(segment.text) or _DIRECTIVE_RE.search(segment.text))
     if any(requirement_type in {"max_file_size", "attachment_count"} for requirement_type in requirement_types):
         return bool(_ATTACHMENT_CONTEXT_RE.search(segment.text) or _DIRECTIVE_RE.search(segment.text))
@@ -678,6 +764,19 @@ def _value(requirement_type: SourceFileAttachmentRequirementType, text: str) -> 
     if requirement_type == "retention":
         match = _RETENTION_VALUE_RE.search(text)
         return _clean_text(match.group("value")).lower() if match else None
+    if requirement_type == "storage_location":
+        return _first_value(_STORAGE_VALUE_RE, text)
+    if requirement_type == "access_control":
+        return _first_value(_ACCESS_VALUE_RE, text)
+    if requirement_type == "upload_progress":
+        return _first_value(_PROGRESS_VALUE_RE, text)
+    if requirement_type == "metadata_capture":
+        values = _pattern_values(_METADATA_VALUE_RE, text)
+        return ", ".join(values) if values else None
+    if requirement_type == "deletion_lifecycle":
+        if match := _RETENTION_VALUE_RE.search(text):
+            return _clean_text(match.group("value")).lower()
+        return _first_value(_DELETION_VALUE_RE, text)
     return None
 
 
@@ -707,10 +806,48 @@ def _allowed_file_type_signal(segment: _Segment) -> bool:
     )
     if has_specific_type:
         return True
-    return bool(
-        _ALLOWED_TYPE_DIRECTIVE_RE.search(segment.text)
-        or _ALLOWED_TYPE_DIRECTIVE_RE.search(field_words)
-    ) and bool(values or _surface(segment) in {"image_upload", "document_upload"})
+    explicit_type_field = bool(_ALLOWED_TYPE_DIRECTIVE_RE.search(field_words))
+    upload_context = bool(re.search(r"\b(?:upload|uploads|attachments?|attached files?|file types?|mime types?|extensions?)\b", segment.text, re.I))
+    return bool(_ALLOWED_TYPE_DIRECTIVE_RE.search(segment.text) or explicit_type_field) and (
+        bool(values) or (upload_context and _surface(segment) == "image_upload")
+    )
+
+
+def _storage_location_signal(segment: _Segment) -> bool:
+    text = segment.text
+    field_words = _field_words(segment.source_field)
+    has_storage_target = bool(_STORAGE_VALUE_RE.search(text))
+    upload_context = bool(
+        re.search(r"\b(?:upload(?:ed|s)?|attachments?|attached files?|files?|images?)\b", text, re.I)
+        or re.search(r"\b(?:upload|attachments?|files?|images?|documents?|storage)\b", field_words, re.I)
+    )
+    return has_storage_target or (upload_context and bool(re.search(r"\bstor(?:e|ed|age)\b", text, re.I)))
+
+
+def _access_control_signal(segment: _Segment) -> bool:
+    text = segment.text
+    field_words = _field_words(segment.source_field)
+    upload_context = bool(
+        re.search(r"\b(?:upload(?:ed|s)?|attachments?|attached files?|files?|downloads?|images?)\b", text, re.I)
+        or re.search(r"\b(?:upload|attachments?|files?|documents?|images?|download|access)\b", field_words, re.I)
+    )
+    concrete_access = bool(_ACCESS_VALUE_RE.search(text))
+    return upload_context and (concrete_access or bool(re.search(r"\baccess controls?\b", text, re.I)))
+
+
+def _metadata_capture_signal(segment: _Segment) -> bool:
+    text = segment.text
+    field_words = _field_words(segment.source_field)
+    capture_context = bool(
+        re.search(r"\b(?:capture|record|store|extract|preserve|include)\b", text, re.I)
+        or re.search(r"\b(?:file metadata|attachment metadata|upload metadata|uploads metadata)\b", field_words, re.I)
+    )
+    upload_context = bool(
+        re.search(r"\b(?:upload(?:ed|s)?|attachments?|attached files?|files?|images?)\b", text, re.I)
+        or re.search(r"\b(?:upload|attachments?|files?|documents?|images?)\b", field_words, re.I)
+    )
+    # Bare "file size" often describes a size limit; metadata capture needs an explicit capture/storage context.
+    return upload_context and capture_context and bool(_METADATA_VALUE_RE.search(text))
 
 
 def _surface_key(candidate: _Candidate) -> SourceFileAttachmentSurface | None:
@@ -728,6 +865,16 @@ def _file_values(text: str) -> list[str]:
             continue
         values.append(token)
     return sorted(_dedupe(values), key=str.casefold)
+
+
+def _pattern_values(pattern: re.Pattern[str], text: str) -> list[str]:
+    return sorted(_dedupe(_clean_text(match.group(0)).casefold() for match in pattern.finditer(text)), key=str.casefold)
+
+
+def _first_value(pattern: re.Pattern[str], text: str) -> str | None:
+    if match := pattern.search(text):
+        return _clean_text(match.group(0)).casefold()
+    return None
 
 
 def _confidence(segment: _Segment) -> SourceFileAttachmentConfidence:
