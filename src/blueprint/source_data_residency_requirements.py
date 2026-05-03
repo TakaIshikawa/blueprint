@@ -16,9 +16,13 @@ SourceDataResidencyRequirementCategory = Literal[
     "us_only",
     "region_pinning",
     "cross_border_transfer",
+    "regional_failover",
     "data_localization",
     "tenant_region_routing",
+    "customer_selectable_region",
     "data_sovereignty",
+    "subprocessor_residency",
+    "residency_audit_evidence",
 ]
 SourceDataResidencyConfidence = Literal["high", "medium", "low"]
 _T = TypeVar("_T")
@@ -28,9 +32,13 @@ _CATEGORY_ORDER: tuple[SourceDataResidencyRequirementCategory, ...] = (
     "us_only",
     "region_pinning",
     "cross_border_transfer",
+    "regional_failover",
     "data_localization",
     "tenant_region_routing",
+    "customer_selectable_region",
     "data_sovereignty",
+    "subprocessor_residency",
+    "residency_audit_evidence",
 )
 _CONFIDENCE_ORDER: dict[SourceDataResidencyConfidence, int] = {
     "high": 0,
@@ -47,18 +55,23 @@ _RESIDENCY_CONTEXT_RE = re.compile(
     r"\b(?:data residency|residency|regional storage|region pinning|pinned region|"
     r"home region|tenant region|tenant[- ]region|data localization|data localisation|"
     r"localized storage|localised storage|cross[- ]border|data transfer|transfer impact|"
-    r"sovereign(?:ty)?|sovereign cloud|regional routing|geo[- ]routing|allowed regions?)\b",
+    r"regional failover|failover region|disaster recovery region|dr region|"
+    r"sovereign(?:ty)?|sovereign cloud|regional routing|geo[- ]routing|allowed regions?|"
+    r"customer[- ]selectable region|customer selected region|subprocessors?|"
+    r"residency evidence|residency audit|attestation|audit evidence)\b",
     re.I,
 )
 _STRUCTURED_FIELD_RE = re.compile(
     r"(?:residen(?:cy|t)|region|regional|geo|geograph|jurisdiction|locali[sz]ation|"
     r"sovereign|transfer|routing|tenant|compliance|privacy|data[-_ ]?requirements|"
+    r"subprocessor|processor|failover|disaster|dr|evidence|audit|attestation|"
     r"requirements?|constraints?|acceptance|metadata)",
     re.I,
 )
 _REQUIREMENT_RE = re.compile(
     r"\b(?:must|shall|required|requires?|requirement|needs?|need to|only|cannot|must not|"
     r"should|ensure|keep|kept|store|stored|stay|remain|reside|host|pin|pinned|route|"
+    r"failover|replicate|recover|select|choose|subprocessor|audit|evidence|attest|"
     r"before launch|compliance|policy|blocked|cannot ship)\b",
     re.I,
 )
@@ -68,12 +81,20 @@ _NEGATED_SCOPE_RE = re.compile(
     r"\b(?:in scope|required|needed|changes?|impact|requirements?)\b",
     re.I,
 )
+_NEGATED_RESIDENCY_LIST_RE = re.compile(
+    r"\b(?:no|not|without)\b.{0,160}\b(?:data residency|regional failover|cross[- ]border|"
+    r"transfer|subprocessors?|residency|locali[sz]ation|sovereign).{0,160}"
+    r"\b(?:required|needed|in scope|changes?|requirements?)\b",
+    re.I,
+)
 _REGION_RE = re.compile(
     r"\b(?:eu[-_ ]?west[-_ ]?\d+|eu[-_ ]?central[-_ ]?\d+|"
     r"us[-_ ]?east[-_ ]?\d+|us[-_ ]?west[-_ ]?\d+|ca[-_ ]?central[-_ ]?\d+|"
     r"ap[-_ ](?:southeast|northeast|south)[-_ ]?\d+|eu|europe|european union|eea|"
     r"gdpr|us|usa|united states|north america|uk|united kingdom|apac|asia[- ]?pacific|"
-    r"canada|ca|australia|au|germany|france|ireland|japan|singapore|india)\b",
+    r"canada|ca|australia|au|germany|france|ireland|japan|singapore|india|"
+    r"switzerland|ch|brazil|mexico|south korea|korea|china|uae|united arab emirates|"
+    r"saudi arabia)\b",
     re.I,
 )
 _SCOPE_RE = re.compile(
@@ -111,11 +132,18 @@ _CATEGORY_PATTERNS: dict[SourceDataResidencyRequirementCategory, re.Pattern[str]
         r"adequacy decision|international transfer)\b",
         re.I,
     ),
+    "regional_failover": re.compile(
+        r"\b(?:(?:regional|same[- ]region|in[- ]region|in country|same country|same jurisdiction)\s+failover|"
+        r"failover\s+(?:must|shall|should|needs?|requires?|only|within|inside|to|in).{0,80}\b(?:region|country|jurisdiction|eu|us|uk|canada|germany|france|japan|singapore|india)|"
+        r"(?:disaster recovery|dr|backup|replica|replication|warm standby|hot standby).{0,80}\b(?:same|resident|residency|region|country|jurisdiction)|"
+        r"(?:do not|must not|cannot|never)\s+fail\s*over\s+(?:outside|across|to another).{0,60}\b(?:region|country|jurisdiction|eu|us))\b",
+        re.I,
+    ),
     "data_localization": re.compile(
         r"\b(?:data locali[sz]ation|locali[sz]ed storage|local storage|in-country storage|"
         r"country[- ]specific storage|stored locally|kept locally|remain in country|"
-        r"(?:must\s+)?remain(?:s)? in (?:germany|france|canada|australia|india|japan|singapore)|"
-        r"stored in (?:germany|france|canada|australia|india|japan|singapore))\b",
+        r"(?:must\s+)?remain(?:s)? in (?:germany|france|canada|australia|india|japan|singapore|switzerland|brazil|china|uae|united arab emirates)|"
+        r"(?:host|hosted|hosting|store|stored|storage|process|processed|processing)\s+(?:only\s+)?in (?:germany|france|canada|australia|india|japan|singapore|switzerland|brazil|china|uae|united arab emirates))\b",
         re.I,
     ),
     "tenant_region_routing": re.compile(
@@ -125,10 +153,34 @@ _CATEGORY_PATTERNS: dict[SourceDataResidencyRequirementCategory, re.Pattern[str]
         r"region based routing|region-aware routing)\b",
         re.I,
     ),
+    "customer_selectable_region": re.compile(
+        r"\b(?:customer[- ]selectable region|customer selected region|customer chosen region|"
+        r"customers? can (?:select|choose|set).{0,80}\bregion|"
+        r"allow customers? to (?:select|choose|set) (?:their )?(?:hosting|storage|data|tenant )?region|"
+        r"tenant selected region|tenant chosen region|workspace selected region|"
+        r"region selector|selectable hosting regions?|bring your own region)\b",
+        re.I,
+    ),
     "data_sovereignty": re.compile(
         r"\b(?:data sovereignty|sovereign cloud|sovereign region|sovereign controls?|"
         r"sovereignty requirement|government cloud|public sector cloud|national cloud|"
         r"jurisdictional control)\b",
+        re.I,
+    ),
+    "subprocessor_residency": re.compile(
+        r"\b(?:subprocessors?|third[- ]party processors?|vendors?|processors?).{0,100}"
+        r"\b(?:resident|residency|region|regional|country|jurisdiction|eu[- ]only|us[- ]only|cross[- ]border|"
+        r"transfer|outside|inside|approved regions?|data location)|"
+        r"\b(?:resident|residency|regional|country|jurisdiction|approved regions?).{0,100}"
+        r"\b(?:subprocessors?|third[- ]party processors?|vendors?|processors?)\b",
+        re.I,
+    ),
+    "residency_audit_evidence": re.compile(
+        r"\b(?:residency|regional hosting|data location|data residency).{0,100}"
+        r"\b(?:audit evidence|evidence|attestation|audit logs?|reports?|proof|certificate|certification|"
+        r"customer audit|compliance report|soc 2|iso 27001)|"
+        r"\b(?:audit evidence|attestation|proof|compliance report|customer audit).{0,100}"
+        r"\b(?:residency|regional hosting|data location|region commitments?)\b",
         re.I,
     ),
 }
@@ -137,9 +189,13 @@ _PLANNING_NOTES: dict[SourceDataResidencyRequirementCategory, str] = {
     "us_only": "Preserve the US-only constraint when planning storage, processing, logs, backups, analytics, and subprocessors.",
     "region_pinning": "Carry the pinned or selected region into architecture, provisioning, migration, and validation tasks.",
     "cross_border_transfer": "Confirm allowed transfer paths, legal basis, subprocessors, and evidence before implementation planning.",
+    "regional_failover": "Keep failover, disaster recovery, replicas, and backup routing within allowed residency boundaries.",
     "data_localization": "Translate localization language into explicit storage, processing, backup, and export location controls.",
     "tenant_region_routing": "Plan tenant-region attribution, routing, failover, and operational diagnostics as source constraints.",
+    "customer_selectable_region": "Preserve customer-selected region choices in provisioning, routing, migration, support, and billing workflows.",
     "data_sovereignty": "Preserve sovereignty controls and jurisdictional ownership requirements in planning and vendor review.",
+    "subprocessor_residency": "Validate subprocessor and vendor data locations against residency, transfer, and disclosure commitments.",
+    "residency_audit_evidence": "Plan auditable evidence, reports, logs, or attestations proving residency commitments are met.",
 }
 _SCANNED_FIELDS: tuple[str, ...] = (
     "title",
@@ -509,7 +565,15 @@ def _segments(value: str, inherited_context: bool) -> list[tuple[str, bool]]:
             continue
         parts = [cleaned] if _BULLET_RE.match(line) or _CHECKBOX_RE.match(line) else _SENTENCE_SPLIT_RE.split(cleaned)
         for part in parts:
-            for clause in _CLAUSE_SPLIT_RE.split(part):
+            keep_whole_clause = (
+                bool(
+                    re.search(r"\bcustomers? can (?:select|choose|set)\b", part, re.I)
+                    and re.search(r"\bregion\b", part, re.I)
+                )
+                or bool(re.search(r"\b(?:no|not|without)\b", part, re.I) and _RESIDENCY_CONTEXT_RE.search(part))
+            )
+            clauses = [part] if keep_whole_clause else _CLAUSE_SPLIT_RE.split(part)
+            for clause in clauses:
                 text = _clean_text(clause)
                 if text:
                     segments.append((text, section_context))
@@ -517,7 +581,7 @@ def _segments(value: str, inherited_context: bool) -> list[tuple[str, bool]]:
 
 
 def _categories(segment: _Segment) -> tuple[SourceDataResidencyRequirementCategory, ...]:
-    if _NEGATED_SCOPE_RE.search(segment.text):
+    if _NEGATED_SCOPE_RE.search(segment.text) or _NEGATED_RESIDENCY_LIST_RE.search(segment.text):
         return ()
     searchable = f"{_field_words(segment.source_field)} {segment.text}"
     categories = [
