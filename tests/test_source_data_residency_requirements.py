@@ -25,9 +25,13 @@ def test_structured_source_payload_extracts_all_residency_categories():
                     "us": "US-only customers require support logs to stay within the United States.",
                     "pinning": "Analytics exports are pinned to eu-west-1 regional storage.",
                     "transfer": "Cross-border transfer outside the EU requires SCCs and transfer impact assessment.",
+                    "failover": "Regional failover must remain inside the EU residency boundary.",
                     "localization": "Payment data localization requires records to remain in Germany.",
                     "tenant_routing": "Route tenants to their tenant home region via regional endpoints.",
+                    "selectable": "Customers can choose their hosting region from EU, US, or Canada.",
                     "sovereignty": "Public sector accounts require sovereign cloud data sovereignty controls.",
+                    "subprocessors": "Subprocessors must process customer data only in approved residency regions.",
+                    "evidence": "Residency audit evidence must prove regional hosting commitments for customers.",
                 }
             }
         )
@@ -40,12 +44,18 @@ def test_structured_source_payload_extracts_all_residency_categories():
         "us_only",
         "region_pinning",
         "cross_border_transfer",
+        "regional_failover",
         "data_localization",
         "tenant_region_routing",
+        "customer_selectable_region",
         "data_sovereignty",
+        "subprocessor_residency",
+        "residency_audit_evidence",
     ]
-    assert result.summary["requirement_count"] == 7
+    assert result.summary["requirement_count"] == 11
     assert result.summary["category_counts"]["tenant_region_routing"] == 1
+    assert result.summary["category_counts"]["regional_failover"] == 1
+    assert result.summary["category_counts"]["subprocessor_residency"] == 1
     assert result.summary["confidence_counts"]["high"] >= 5
     assert "eu" in result.summary["region_signals"]
     assert "us" in result.summary["region_signals"]
@@ -68,6 +78,7 @@ def test_natural_language_markdown_and_string_scanning_are_stable():
         "eu_only",
         "cross_border_transfer",
         "tenant_region_routing",
+        "customer_selectable_region",
     ]
     assert result.source_id is None
     assert markdown == result.to_markdown()
@@ -83,6 +94,7 @@ def test_implementation_brief_model_and_explicit_fields_contribute_evidence():
             data_requirements="EU-only customer records cannot leave the EU.",
             risks=[
                 "Cross-border data transfer to subprocessors needs transfer impact assessment.",
+                "Regional failover replicas must remain inside the tenant residency region.",
                 "Sovereign cloud requirements apply to public sector tenants.",
             ],
             definition_of_done=[
@@ -99,6 +111,7 @@ def test_implementation_brief_model_and_explicit_fields_contribute_evidence():
         "eu_only",
         "region_pinning",
         "cross_border_transfer",
+        "regional_failover",
         "data_localization",
         "tenant_region_routing",
         "data_sovereignty",
@@ -177,9 +190,13 @@ def test_empty_invalid_object_and_deterministic_ordering():
             "us_only": 0,
             "region_pinning": 0,
             "cross_border_transfer": 0,
+            "regional_failover": 0,
             "data_localization": 0,
             "tenant_region_routing": 0,
+            "customer_selectable_region": 0,
             "data_sovereignty": 0,
+            "subprocessor_residency": 0,
+            "residency_audit_evidence": 0,
         },
         "confidence_counts": {"high": 0, "medium": 0, "low": 0},
         "categories": [],
@@ -190,6 +207,55 @@ def test_empty_invalid_object_and_deterministic_ordering():
     assert invalid.records == ()
     assert object_result.source_id == "object-residency"
     assert [record.category for record in object_result.records] == ["us_only", "tenant_region_routing"]
+
+
+def test_country_specific_customer_selectable_failover_subprocessors_and_evidence_are_separate():
+    result = build_source_data_residency_requirements(
+        _source(
+            source_payload={
+                "requirements": [
+                    "Country-specific hosting requires authentication records to be processed only in Switzerland.",
+                    "Customers can select EU, US, or Canada as their storage region during provisioning.",
+                    "Disaster recovery replicas and regional failover must stay in the same jurisdiction.",
+                    "Subprocessors must keep support logs in the customer's selected residency region.",
+                    "Provide residency audit evidence and attestation reports for enterprise renewals.",
+                ],
+            }
+        )
+    )
+    by_category = {record.category: record for record in result.records}
+
+    assert {
+        "data_localization",
+        "customer_selectable_region",
+        "regional_failover",
+        "subprocessor_residency",
+        "residency_audit_evidence",
+    } <= set(by_category)
+    assert by_category["data_localization"].data_scope == "authentication records"
+    assert "switzerland" in by_category["data_localization"].region_signals
+    assert {"eu", "us", "ca"} <= set(by_category["customer_selectable_region"].region_signals)
+    assert by_category["regional_failover"].evidence == (
+        "source_payload.requirements[2]: Disaster recovery replicas and regional failover must stay in the same jurisdiction.",
+    )
+    assert by_category["subprocessor_residency"].planning_note.startswith("Validate subprocessor")
+    assert by_category["residency_audit_evidence"].confidence == "high"
+
+
+def test_ambiguous_geographic_mentions_do_not_become_residency_requirements():
+    source = _source(
+        summary="Update the Germany, France, and Japan onboarding pages with regional testimonials.",
+        source_payload={
+            "notes": [
+                "The EU campaign needs translated screenshots.",
+                "No data residency, cross-border transfer, regional failover, or subprocessor changes are required.",
+            ],
+        },
+    )
+    source["title"] = "Germany launch copy"
+    result = build_source_data_residency_requirements(source)
+
+    assert result.records == ()
 
 
 def _source(*, source_id="source-residency", summary="Enterprise regional storage.", source_payload=None):
