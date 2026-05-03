@@ -1,8 +1,10 @@
 import copy
 import json
+from types import SimpleNamespace
 
 from blueprint.domain.models import ImplementationBrief, SourceBrief
 from blueprint.source_feature_flag_rollout_requirements import (
+    SourceFeatureFlagRolloutEvidenceGap,
     SourceFeatureFlagRolloutRequirement,
     SourceFeatureFlagRolloutRequirementsReport,
     build_source_feature_flag_rollout_requirements,
@@ -16,208 +18,247 @@ from blueprint.source_feature_flag_rollout_requirements import (
 )
 
 
-def test_extracts_explicit_feature_flag_requirements_with_source_evidence():
-    result = build_source_feature_flag_rollout_requirements(
-        _source_brief(
-            summary=(
-                "Checkout changes must ship behind a feature flag with flag key checkout_v2. "
-                "Acceptance requires LaunchDarkly ownership before launch."
-            ),
-            source_payload={
-                "requirements": [
-                    "Feature toggle must default off for existing tenants.",
-                ]
-            },
-        )
-    )
-
-    assert isinstance(result, SourceFeatureFlagRolloutRequirementsReport)
-    assert all(isinstance(record, SourceFeatureFlagRolloutRequirement) for record in result.records)
-    assert [record.requirement_type for record in result.records] == ["feature_flag"]
-    record = result.records[0]
-    assert record.source_brief_id == "source-rollout"
-    assert "feature flag" in record.matched_terms
-    assert any("summary: Checkout changes" in item for item in record.evidence)
-    assert any("source_payload.requirements[0]" in item for item in record.evidence)
-    assert record.confidence == "high"
-    assert result.summary["requirement_count"] == 1
-    assert result.summary["requirement_type_counts"]["feature_flag"] == 1
-    assert result.summary["status"] == "ready_for_planning"
-
-
-def test_extracts_percentage_staged_and_gradual_rollouts_in_deterministic_order():
+def test_structured_feature_flag_payload_extracts_categories_in_order():
     result = build_source_feature_flag_rollout_requirements(
         _source_brief(
             source_payload={
-                "rollout": [
-                    "Use a staged rollout: wave 1 internal users, wave 2 paid accounts.",
-                    "Ramp from 5% of traffic to 25% of traffic after guardrails pass.",
-                    "Gradual release should use progressive delivery checkpoints.",
-                ]
-            }
-        )
-    )
-
-    by_type = {record.requirement_type: record for record in result.records}
-
-    assert [record.requirement_type for record in result.records] == [
-        "staged_rollout",
-        "percentage_rollout",
-        "gradual_release",
-    ]
-    assert by_type["staged_rollout"].rollout_value == "wave 1"
-    assert by_type["percentage_rollout"].rollout_value == "5% of traffic"
-    assert by_type["gradual_release"].planning_note.startswith("Plan progressive exposure")
-    assert any(
-        "Gradual release should use progressive delivery" in item
-        for item in by_type["gradual_release"].evidence
-    )
-    assert result.summary["requirement_type_counts"]["percentage_rollout"] == 1
-
-
-def test_extracts_beta_access_and_cohort_targeting_language():
-    result = build_source_feature_flag_rollout_requirements(
-        _source_brief(
-            summary=(
-                "Private beta access should target beta customers first. "
-                "Rollout rules must allowlist enterprise accounts and exclude free-tier tenants."
-            ),
-            source_payload={
-                "metadata": {
-                    "targeting": "Cohort targeting required for preview users in APAC accounts.",
+                "feature_flags": {
+                    "ownership": "Flag ownership must assign a product owner and engineering owner for approval.",
+                    "targeting": "Audience targeting requires beta user cohort, tenant segment, and allowlist exclusions.",
+                    "percentages": "Staged rollout percentages should ramp 5%, 25%, 50%, and 100% with hold periods.",
+                    "kill_switch": "Kill switch behavior must support emergency off and global disable.",
+                    "variants": "Experiment variant tracking must record control group, treatment variant, and exposure events.",
+                    "observability": "Observability requires dashboards, metrics, alerts, logs, and health checks.",
+                    "rollback": "Rollback criteria require error threshold and conversion drop triggers before revert.",
+                    "cleanup": "Cleanup and deprecation must remove stale flags and delete dead code paths.",
                 }
             },
         )
     )
 
-    by_type = {record.requirement_type: record for record in result.records}
+    by_category = {record.category: record for record in result.records}
 
-    assert [record.requirement_type for record in result.records] == [
-        "beta_access",
-        "cohort_targeting",
+    assert isinstance(result, SourceFeatureFlagRolloutRequirementsReport)
+    assert all(isinstance(record, SourceFeatureFlagRolloutRequirement) for record in result.records)
+    assert result.gaps == ()
+    assert [record.category for record in result.records] == [
+        "flag_ownership",
+        "audience_targeting",
+        "staged_rollout_percentages",
+        "kill_switch_behavior",
+        "experiment_variant_tracking",
+        "observability",
+        "rollback_criteria",
+        "cleanup_deprecation",
     ]
-    assert by_type["beta_access"].target_audience.startswith("beta customers")
-    assert "allowlist" in by_type["cohort_targeting"].matched_terms
-    assert any("source_payload.metadata.targeting" in item for item in by_type["cohort_targeting"].evidence)
-    assert any("beta customers" in audience for audience in result.summary["target_audiences"])
+    assert by_category["flag_ownership"].value == "product owner, engineering owner, approval"
+    assert by_category["audience_targeting"].value == "Audience, targeting, beta user"
+    assert by_category["staged_rollout_percentages"].value == "5%, 25%, 50%"
+    assert by_category["kill_switch_behavior"].source_field == "source_payload.feature_flags.kill_switch"
+    assert by_category["observability"].suggested_owners == ("sre", "analytics")
+    assert by_category["rollback_criteria"].planning_notes[0].startswith("Document rollback triggers")
+    assert result.summary["requirement_count"] == 8
+    assert result.summary["evidence_gap_count"] == 0
+    assert result.summary["status"] == "ready_for_planning"
 
 
-def test_extracts_kill_switch_requirements_from_implementation_brief():
-    brief = ImplementationBrief.model_validate(
-        _implementation_brief(
-            scope=[
-                "Release must include a kill switch that can instantly disable the new pricing flow.",
-                "Definition of done: disable flag path is verified before widening rollout.",
-            ],
+def test_partial_rollout_brief_flags_missing_owner_and_rollback_criteria():
+    result = build_source_feature_flag_rollout_requirements(
+        _source_brief(
+            summary=(
+                "Checkout feature flag rollout must target beta tenants. "
+                "Staged rollout should ramp to 10% then 50%, with a kill switch and dashboard monitoring."
+            ),
         )
     )
 
-    result = extract_source_feature_flag_rollout_requirements(brief)
-    by_type = {record.requirement_type: record for record in result.records}
+    assert [record.category for record in result.records] == [
+        "audience_targeting",
+        "staged_rollout_percentages",
+        "kill_switch_behavior",
+        "observability",
+    ]
+    assert [gap.category for gap in result.evidence_gaps] == [
+        "missing_flag_owner",
+        "missing_rollback_criteria",
+    ]
+    assert all(isinstance(gap, SourceFeatureFlagRolloutEvidenceGap) for gap in result.evidence_gaps)
+    assert result.summary["status"] == "needs_feature_flag_rollout_detail"
+    assert result.summary["evidence_gap_count"] == 2
 
-    assert result.source_id == "impl-rollout"
-    assert "kill_switch" in by_type
-    assert "feature_flag" in by_type
-    assert by_type["kill_switch"].confidence == "high"
-    assert any("kill switch" in item for item in by_type["kill_switch"].evidence)
-    assert by_type["kill_switch"].planning_note.startswith("Define emergency disable")
+
+def test_implementation_brief_plain_text_and_object_inputs_are_supported_without_mutation():
+    implementation_payload = _implementation_brief(
+        scope=[
+            "Feature flag ownership requires product owner approval and engineering owner accountability.",
+            "Audience targeting should segment beta tenants and internal users.",
+        ],
+        definition_of_done=[
+            "Staged rollout ramps 5% to 25% with metrics and alerts on error rate.",
+            "Rollback criteria define latency threshold triggers and cleanup removes stale flags.",
+        ],
+    )
+    original = copy.deepcopy(implementation_payload)
+    implementation = ImplementationBrief.model_validate(implementation_payload)
+    text_result = build_source_feature_flag_rollout_requirements(
+        """
+# Feature flag rollout
+
+- Kill switch behavior must support emergency off for the release flag.
+- Experiment variant tracking records exposure events and treatment assignment.
+"""
+    )
+    object_result = build_source_feature_flag_rollout_requirements(
+        SimpleNamespace(
+            id="object-feature-flag",
+            rollout="Feature flag staged rollout must target allowlist cohort at 10% and monitor dashboards.",
+        )
+    )
+    implementation_result = generate_source_feature_flag_rollout_requirements(implementation)
+
+    assert implementation_payload == original
+    assert [record.category for record in text_result.records] == [
+        "kill_switch_behavior",
+        "experiment_variant_tracking",
+    ]
+    assert [record.category for record in object_result.records] == [
+        "audience_targeting",
+        "staged_rollout_percentages",
+        "observability",
+    ]
+    assert {
+        "flag_ownership",
+        "audience_targeting",
+        "staged_rollout_percentages",
+        "observability",
+        "rollback_criteria",
+        "cleanup_deprecation",
+    } <= {record.category for record in implementation_result.records}
+    assert implementation_result.source_id == "implementation-feature-flags"
+    assert implementation_result.title == "Feature flag rollout implementation"
 
 
-def test_aliases_serialization_markdown_and_no_source_mutation_are_stable():
+def test_sourcebrief_serialization_markdown_aliases_and_dict_helpers_are_stable():
     source = _source_brief(
-        source_id="rollout-model",
-        summary="Feature flag must target beta users for a gradual rollout.",
+        source_id="feature-flag-model",
+        summary="Feature flag rollout requires owner approval and rollback criteria.",
+        source_payload={
+            "requirements": [
+                "Feature flag owner must be product | engineering.",
+                "Feature flag owner must be product | engineering.",
+                "Rollback criteria must revert on error threshold and dashboards alert on health checks.",
+            ]
+        },
     )
     original = copy.deepcopy(source)
     model = SourceBrief.model_validate(source)
 
-    mapping_result = build_source_feature_flag_rollout_requirements(source)
-    generated = generate_source_feature_flag_rollout_requirements(model)
-    derived = derive_source_feature_flag_rollout_requirements(model)
+    result = build_source_feature_flag_rollout_requirements(source)
     extracted = extract_source_feature_flag_rollout_requirements(model)
-    payload = source_feature_flag_rollout_requirements_to_dict(generated)
-    markdown = source_feature_flag_rollout_requirements_to_markdown(generated)
+    derived = derive_source_feature_flag_rollout_requirements(model)
+    payload = source_feature_flag_rollout_requirements_to_dict(result)
+    markdown = source_feature_flag_rollout_requirements_to_markdown(result)
 
     assert source == original
-    assert mapping_result.to_dict() == generated.to_dict()
-    assert derived.to_dict() == generated.to_dict()
-    assert extracted.to_dict() == generated.to_dict()
+    assert extracted == result.requirements
+    assert derived.to_dict() == result.to_dict()
+    assert summarize_source_feature_flag_rollout_requirements(result) == result.summary
+    assert source_feature_flag_rollout_requirements_to_dicts(result) == payload["requirements"]
+    assert source_feature_flag_rollout_requirements_to_dicts(result.records) == payload["records"]
     assert json.loads(json.dumps(payload)) == payload
-    assert generated.records == generated.requirements
-    assert generated.findings == generated.requirements
-    assert source_feature_flag_rollout_requirements_to_dicts(generated) == payload["requirements"]
-    assert source_feature_flag_rollout_requirements_to_dicts(generated.records) == payload["records"]
-    assert summarize_source_feature_flag_rollout_requirements(generated) == generated.summary
-    assert list(payload) == ["source_id", "requirements", "summary", "records"]
+    assert result.records == result.requirements
+    assert result.findings == result.requirements
+    assert result.gaps == result.evidence_gaps
+    assert result.records[0].requirement_category == result.records[0].category
+    assert result.records[0].concern == result.records[0].category
+    assert result.records[0].suggested_plan_impacts == result.records[0].planning_notes
+    assert list(payload) == [
+        "source_id",
+        "title",
+        "requirements",
+        "evidence_gaps",
+        "summary",
+        "records",
+        "findings",
+        "gaps",
+    ]
     assert list(payload["requirements"][0]) == [
-        "source_brief_id",
-        "requirement_type",
-        "rollout_value",
-        "target_audience",
+        "category",
         "source_field",
         "evidence",
-        "matched_terms",
         "confidence",
-        "planning_note",
+        "value",
+        "suggested_owners",
+        "planning_notes",
     ]
-    assert markdown == generated.to_markdown()
-    assert markdown.startswith("# Source Feature Flag Rollout Requirements Report: rollout-model")
+    assert markdown.startswith("# Source Feature Flag Rollout Requirements Report: feature-flag-model")
+    assert "product \\| engineering" in markdown
 
 
-def test_no_match_for_unrelated_deployment_or_release_wording():
-    result = build_source_feature_flag_rollout_requirements(
+def test_unrelated_negated_invalid_and_repeated_inputs_are_stable_empty_reports():
+    class BriefLike:
+        id = "object-no-feature-flags"
+        summary = "Feature flags, staged rollout, kill switch, and rollback work are out of scope."
+
+    empty = build_source_feature_flag_rollout_requirements(
         _source_brief(
-            title="Release calendar",
-            summary=(
-                "Deploy the copy update during the normal release window. "
-                "Coordinate rollout notes with support after production deployment."
-            ),
-            source_payload={
-                "requirements": [
-                    "No feature flag rollout changes are required.",
-                    "Publish the release announcement after deploy completes.",
-                ]
-            },
+            source_id="empty-feature-flags",
+            title="Feature list copy",
+            summary="Update feature list copy, country flag icons, and percentage discount labels only.",
         )
     )
-    malformed = build_source_feature_flag_rollout_requirements(
-        {"source_payload": {"notes": object()}}
+    repeat = build_source_feature_flag_rollout_requirements(
+        _source_brief(
+            source_id="empty-feature-flags",
+            title="Feature list copy",
+            summary="Update feature list copy, country flag icons, and percentage discount labels only.",
+        )
     )
-    invalid = build_source_feature_flag_rollout_requirements(42)
+    negated = build_source_feature_flag_rollout_requirements(BriefLike())
+    no_scope = build_source_feature_flag_rollout_requirements(
+        _source_brief(summary="No feature flags or staged rollout support is required for this release.")
+    )
+    invalid = build_source_feature_flag_rollout_requirements(b"not text")
 
     expected_summary = {
-        "source_count": 1,
         "requirement_count": 0,
-        "requirement_types": [],
-        "requirement_type_counts": {
-            "feature_flag": 0,
-            "staged_rollout": 0,
-            "percentage_rollout": 0,
-            "beta_access": 0,
-            "cohort_targeting": 0,
-            "kill_switch": 0,
-            "gradual_release": 0,
+        "category_counts": {
+            "flag_ownership": 0,
+            "audience_targeting": 0,
+            "staged_rollout_percentages": 0,
+            "kill_switch_behavior": 0,
+            "experiment_variant_tracking": 0,
+            "observability": 0,
+            "rollback_criteria": 0,
+            "cleanup_deprecation": 0,
         },
         "confidence_counts": {"high": 0, "medium": 0, "low": 0},
-        "target_audiences": [],
-        "status": "no_feature_flag_rollout_language",
+        "categories": [],
+        "evidence_gap_count": 0,
+        "evidence_gaps": [],
+        "status": "no_feature_flag_rollout_requirements_found",
     }
-    assert result.records == ()
-    assert result.to_dicts() == []
-    assert result.summary == expected_summary
-    assert malformed.summary == expected_summary
+    assert empty.to_dict() == repeat.to_dict()
+    assert empty.source_id == "empty-feature-flags"
+    assert empty.requirements == ()
+    assert empty.evidence_gaps == ()
+    assert empty.to_dicts() == []
+    assert empty.summary == expected_summary
+    assert "No feature flag rollout requirements were found" in empty.to_markdown()
+    assert negated.requirements == ()
+    assert no_scope.requirements == ()
+    assert invalid.source_id is None
+    assert invalid.requirements == ()
     assert invalid.summary == expected_summary
-    assert "No source feature flag rollout requirements were inferred" in result.to_markdown()
 
 
 def _source_brief(
     *,
-    source_id="source-rollout",
+    source_id="source-feature-flags",
     title="Feature flag rollout requirements",
     domain="release",
-    summary="General rollout requirements.",
+    summary="General feature flag rollout requirements.",
     source_payload=None,
-    source_links=None,
 ):
     return {
         "id": source_id,
@@ -228,30 +269,24 @@ def _source_brief(
         "source_entity_type": "manual",
         "source_id": source_id,
         "source_payload": {} if source_payload is None else source_payload,
-        "source_links": {} if source_links is None else source_links,
+        "source_links": {},
         "created_at": None,
         "updated_at": None,
     }
 
 
-def _implementation_brief(
-    *,
-    source_id="impl-rollout",
-    title="Pricing rollout",
-    summary="Rollout implementation requirements.",
-    scope=None,
-):
+def _implementation_brief(*, scope=None, definition_of_done=None):
     return {
-        "id": source_id,
-        "source_brief_id": source_id,
-        "title": title,
-        "domain": "billing",
-        "target_user": None,
-        "buyer": None,
-        "workflow_context": None,
-        "problem_statement": summary,
-        "mvp_goal": "Release pricing safely.",
-        "product_surface": None,
+        "id": "implementation-feature-flags",
+        "source_brief_id": "source-feature-flags",
+        "title": "Feature flag rollout implementation",
+        "domain": "release",
+        "target_user": "release manager",
+        "buyer": "product",
+        "workflow_context": "Teams need feature flag rollout requirements before implementation planning.",
+        "problem_statement": "Feature flag rollout requirements need to be extracted early.",
+        "mvp_goal": "Plan feature flag ownership, rollout controls, and rollback criteria.",
+        "product_surface": "release controls",
         "scope": [] if scope is None else scope,
         "non_goals": [],
         "assumptions": [],
@@ -259,6 +294,12 @@ def _implementation_brief(
         "data_requirements": None,
         "integration_points": [],
         "risks": [],
-        "validation_plan": "Validate rollout controls.",
-        "definition_of_done": [],
+        "validation_plan": "Run feature flag rollout extractor tests.",
+        "definition_of_done": [] if definition_of_done is None else definition_of_done,
+        "status": "draft",
+        "created_at": None,
+        "updated_at": None,
+        "generation_model": None,
+        "generation_tokens": None,
+        "generation_prompt": None,
     }
