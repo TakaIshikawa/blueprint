@@ -1,9 +1,8 @@
-"""Build incident communication matrices for execution plans."""
+"""Build incident communication readiness matrices for execution plans."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
 import re
 from typing import Any, Iterable, Literal, Mapping, TypeVar
 
@@ -12,94 +11,84 @@ from pydantic import ValidationError
 from blueprint.domain.models import ExecutionPlan, ExecutionTask
 
 
-IncidentCommunicationAudience = Literal[
-    "customers",
-    "admins",
-    "support",
-    "customer_success",
-    "operations",
-    "engineering",
-    "data_governance",
-    "security",
-    "vendor_partner",
-    "executives",
+IncidentCommunicationComponent = Literal[
+    "customer_updates",
+    "internal_escalation",
+    "owner_assignment",
+    "severity_thresholds",
+    "communication_channels",
+    "follow_up_tasks",
+    "timing_sla_expectations",
 ]
-IncidentCommunicationRisk = Literal[
-    "reliability",
-    "data_integrity",
-    "migration",
-    "external_integration",
-    "customer_facing",
-]
-IncidentCommunicationPriority = Literal["high", "medium", "low"]
+IncidentCommunicationReadiness = Literal["ready", "partial", "missing"]
 _T = TypeVar("_T")
 
 _SPACE_RE = re.compile(r"\s+")
-_PRIORITY_ORDER: dict[IncidentCommunicationPriority, int] = {
-    "high": 0,
-    "medium": 1,
-    "low": 2,
+_COMPONENT_ORDER: tuple[IncidentCommunicationComponent, ...] = (
+    "customer_updates",
+    "internal_escalation",
+    "owner_assignment",
+    "severity_thresholds",
+    "communication_channels",
+    "follow_up_tasks",
+    "timing_sla_expectations",
+)
+_READINESS_ORDER: dict[IncidentCommunicationReadiness, int] = {
+    "missing": 0,
+    "partial": 1,
+    "ready": 2,
 }
-_AUDIENCE_ORDER: tuple[IncidentCommunicationAudience, ...] = (
-    "customers",
-    "admins",
-    "support",
-    "customer_success",
-    "operations",
-    "engineering",
-    "data_governance",
-    "security",
-    "vendor_partner",
-    "executives",
-)
-_RISK_ORDER: tuple[IncidentCommunicationRisk, ...] = (
-    "reliability",
-    "data_integrity",
-    "migration",
-    "external_integration",
-    "customer_facing",
-)
 
-_RELIABILITY_RE = re.compile(
-    r"\b(?:availability|downtime|outage|degradation|degraded|latency|timeout|"
-    r"error rate|slo|sla|queue|worker|background job|retry|dead letter|read[- ]only|"
-    r"service interruption|incident|rollback|kill switch|production risk)\b",
+_INCIDENT_RE = re.compile(
+    r"\b(?:incident|outage|degradation|degraded|downtime|service interruption|"
+    r"sev[ -]?[0-4]|severity|rollback|roll back|all clear|postmortem|post[- ]incident|"
+    r"status page|statuspage|customer update|customer comms?|internal escalation|"
+    r"war room|incident commander|on[- ]?call|pager|launch watch|sla|slo)\b",
     re.I,
 )
-_DATA_RE = re.compile(
-    r"\b(?:data integrity|data loss|corruption|delete|deletion|backfill|bulk update|"
-    r"reconcile|reconciliation|customer data|pii|personal data|schema|database|"
-    r"records?|export|import|dual write)\b",
+_PATH_RE = re.compile(
+    r"(?:^|/)(?:incidents?|runbooks?|ops|comms?|communications?|status|support)(?:/|$)",
     re.I,
 )
-_MIGRATION_RE = re.compile(
-    r"\b(?:migration|migrate|migrating|cutover|schema migration|database migration|"
-    r"legacy data|existing customers?|existing accounts?|backfill)\b",
-    re.I,
-)
-_INTEGRATION_RE = re.compile(
-    r"\b(?:external|third[- ]party|vendor|partner|integration|webhook|oauth|"
-    r"api provider|dependency|stripe|salesforce|slack|twilio|sendgrid|provider)\b",
-    re.I,
-)
-_CUSTOMER_RE = re.compile(
-    r"\b(?:customer[- ]facing|customer[- ]visible|user[- ]facing|user[- ]visible|"
-    r"customers?|end users?|admins?|billing|payment|checkout|notification|email|"
-    r"dashboard|ui|release notes?|status page)\b",
-    re.I,
-)
-_SUPPRESS_RE = re.compile(
-    r"\b(?:docs?|documentation|readme|copy|typo|formatting|comment-only|style-only|"
-    r"test fixture|mock data)\b",
-    re.I,
-)
-_PATH_PATTERNS: tuple[tuple[IncidentCommunicationRisk, re.Pattern[str]], ...] = (
-    ("reliability", re.compile(r"(?:^|/)(?:ops|alerts?|workers?|queues?|slo|runbooks?)(?:/|$)", re.I)),
-    ("data_integrity", re.compile(r"(?:^|/)(?:data|models?|db|database|schemas?)(?:/|$)|\.sql$", re.I)),
-    ("migration", re.compile(r"(?:^|/)(?:migrations?|backfills?)(?:/|$)|\.sql$", re.I)),
-    ("external_integration", re.compile(r"(?:^|/)(?:integrations?|webhooks?|clients?|providers?|oauth)(?:/|$)", re.I)),
-    ("customer_facing", re.compile(r"(?:^|/)(?:app|web|ui|frontend|pages?|routes?|billing|payments?)(?:/|$)", re.I)),
-)
+_COMPONENT_PATTERNS: dict[IncidentCommunicationComponent, re.Pattern[str]] = {
+    "customer_updates": re.compile(
+        r"\b(?:customer updates?|customer comms?|customer communication|notify customers?|"
+        r"status page|statuspage|public status|external update|customer email|in[- ]app banner|"
+        r"support portal|all clear)\b",
+        re.I,
+    ),
+    "internal_escalation": re.compile(
+        r"\b(?:internal escalation|escalation path|escalate to|war room|incident commander|"
+        r"on[- ]?call|pager|pagerduty|opsgenie|slack bridge|engineering escalation|"
+        r"support escalation)\b",
+        re.I,
+    ),
+    "owner_assignment": re.compile(
+        r"\b(?:owner|owners|dri|responsible|assignee|incident commander|comms lead|"
+        r"communications lead|support lead|on[- ]?call|team)\b",
+        re.I,
+    ),
+    "severity_thresholds": re.compile(
+        r"\b(?:sev[ -]?[0-4]|severity|threshold|trigger|declare an incident|incident declaration|"
+        r"error budget|slo|sla breach|availability below|latency above|error rate)\b",
+        re.I,
+    ),
+    "communication_channels": re.compile(
+        r"\b(?:channel|channels|slack|email|status page|statuspage|sms|pager|in[- ]app|"
+        r"support portal|zendesk|intercom|bridge|war room)\b",
+        re.I,
+    ),
+    "follow_up_tasks": re.compile(
+        r"\b(?:follow[- ]up|postmortem|post[- ]incident|retrospective|retro|action items?|"
+        r"corrective actions?|rca|root cause|lessons learned|ticket follow[- ]up)\b",
+        re.I,
+    ),
+    "timing_sla_expectations": re.compile(
+        r"\b(?:timing|cadence|sla|slo|within \d+|every \d+|minutes?|hours?|next update|"
+        r"update interval|response time|acknowledge|ack|t\+|by .*(?:minute|hour))\b",
+        re.I,
+    ),
+}
 _OWNER_KEYS = (
     "owner",
     "owners",
@@ -112,21 +101,30 @@ _OWNER_KEYS = (
     "on_call",
     "team",
 )
+_MISSING_REASON: dict[IncidentCommunicationComponent, str] = {
+    "customer_updates": "Missing customer-facing update plan, such as status page, customer email, in-app banner, or all-clear communication.",
+    "internal_escalation": "Missing internal escalation route for incident commander, on-call, support, or engineering response.",
+    "owner_assignment": "Missing named communication owner, DRI, incident commander, on-call owner, or responsible team.",
+    "severity_thresholds": "Missing severity thresholds or declaration triggers that decide when communication starts.",
+    "communication_channels": "Missing communication channels for internal and external incident updates.",
+    "follow_up_tasks": "Missing post-incident follow-up tasks such as postmortem, RCA, retro, or corrective action items.",
+    "timing_sla_expectations": "Missing timing or SLA expectations for first response, update cadence, or all-clear communication.",
+}
 
 
 @dataclass(frozen=True, slots=True)
 class PlanIncidentCommunicationRow:
-    """Audience-specific incident communication guidance for a risky task."""
+    """One task-level incident communication readiness row."""
 
     task_id: str
     title: str
-    audience: IncidentCommunicationAudience
-    risk_categories: tuple[IncidentCommunicationRisk, ...] = field(default_factory=tuple)
-    trigger_conditions: tuple[str, ...] = field(default_factory=tuple)
-    draft_message_topics: tuple[str, ...] = field(default_factory=tuple)
-    owner_suggestions: tuple[str, ...] = field(default_factory=tuple)
-    escalation_timing: str = ""
-    priority: IncidentCommunicationPriority = "medium"
+    required_components: tuple[IncidentCommunicationComponent, ...] = _COMPONENT_ORDER
+    present_components: tuple[IncidentCommunicationComponent, ...] = field(default_factory=tuple)
+    missing_components: tuple[IncidentCommunicationComponent, ...] = field(default_factory=tuple)
+    readiness_level: IncidentCommunicationReadiness = "missing"
+    gap_reasons: tuple[str, ...] = field(default_factory=tuple)
+    owner_hints: tuple[str, ...] = field(default_factory=tuple)
+    channel_hints: tuple[str, ...] = field(default_factory=tuple)
     evidence: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,20 +132,20 @@ class PlanIncidentCommunicationRow:
         return {
             "task_id": self.task_id,
             "title": self.title,
-            "audience": self.audience,
-            "risk_categories": list(self.risk_categories),
-            "trigger_conditions": list(self.trigger_conditions),
-            "draft_message_topics": list(self.draft_message_topics),
-            "owner_suggestions": list(self.owner_suggestions),
-            "escalation_timing": self.escalation_timing,
-            "priority": self.priority,
+            "required_components": list(self.required_components),
+            "present_components": list(self.present_components),
+            "missing_components": list(self.missing_components),
+            "readiness_level": self.readiness_level,
+            "gap_reasons": list(self.gap_reasons),
+            "owner_hints": list(self.owner_hints),
+            "channel_hints": list(self.channel_hints),
             "evidence": list(self.evidence),
         }
 
 
 @dataclass(frozen=True, slots=True)
 class PlanIncidentCommunicationMatrix:
-    """Plan-level incident communication matrix."""
+    """Plan-level incident communication readiness matrix."""
 
     plan_id: str | None = None
     rows: tuple[PlanIncidentCommunicationRow, ...] = field(default_factory=tuple)
@@ -164,6 +162,7 @@ class PlanIncidentCommunicationMatrix:
         return {
             "plan_id": self.plan_id,
             "rows": [row.to_dict() for row in self.rows],
+            "records": [row.to_dict() for row in self.records],
             "incident_task_ids": list(self.incident_task_ids),
             "summary": dict(self.summary),
         }
@@ -173,33 +172,34 @@ class PlanIncidentCommunicationMatrix:
         return [row.to_dict() for row in self.rows]
 
     def to_markdown(self) -> str:
-        """Render the incident communication matrix as deterministic Markdown."""
-        title = "# Plan Incident Communication Matrix"
+        """Render the incident communication readiness matrix as deterministic Markdown."""
+        title = "# Plan Incident Communication Readiness Matrix"
         if self.plan_id:
             title = f"{title}: {self.plan_id}"
-        priority_counts = self.summary.get("priority_counts", {})
+        readiness_counts = self.summary.get("readiness_counts", {})
         lines = [
             title,
             "",
             "## Summary",
             "",
             f"- Task count: {self.summary.get('task_count', 0)}",
-            f"- Incident task count: {self.summary.get('incident_task_count', 0)}",
-            f"- Communication row count: {self.summary.get('communication_row_count', 0)}",
-            "- Priority counts: "
-            + ", ".join(
-                f"{priority} {priority_counts.get(priority, 0)}" for priority in _PRIORITY_ORDER
-            ),
+            f"- Incident communication task count: {self.summary.get('incident_task_count', 0)}",
+            "- Readiness counts: "
+            + ", ".join(f"{level} {readiness_counts.get(level, 0)}" for level in _READINESS_ORDER),
+            f"- Gap count: {self.summary.get('gap_count', 0)}",
         ]
         if not self.rows:
-            lines.extend(["", "No incident communication rows were detected."])
+            lines.extend(["", "No incident communication readiness rows were inferred."])
             return "\n".join(lines)
 
         lines.extend(
             [
                 "",
-                "| Task | Title | Audience | Priority | Risks | Triggers | Topics | Owners | Timing | Evidence |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                (
+                    "| Task | Title | Readiness | Present Components | Missing Components | "
+                    "Owners | Channels | Gap Reasons | Evidence |"
+                ),
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for row in self.rows:
@@ -207,278 +207,194 @@ class PlanIncidentCommunicationMatrix:
                 "| "
                 f"`{_markdown_cell(row.task_id)}` | "
                 f"{_markdown_cell(row.title)} | "
-                f"{row.audience} | "
-                f"{row.priority} | "
-                f"{_markdown_cell('; '.join(row.risk_categories) or 'none')} | "
-                f"{_markdown_cell('; '.join(row.trigger_conditions) or 'none')} | "
-                f"{_markdown_cell('; '.join(row.draft_message_topics) or 'none')} | "
-                f"{_markdown_cell('; '.join(row.owner_suggestions) or 'none')} | "
-                f"{_markdown_cell(row.escalation_timing or 'none')} | "
+                f"{row.readiness_level} | "
+                f"{_markdown_cell(', '.join(row.present_components) or 'none')} | "
+                f"{_markdown_cell(', '.join(row.missing_components) or 'none')} | "
+                f"{_markdown_cell(', '.join(row.owner_hints) or 'none')} | "
+                f"{_markdown_cell(', '.join(row.channel_hints) or 'none')} | "
+                f"{_markdown_cell('; '.join(row.gap_reasons) or 'none')} | "
                 f"{_markdown_cell('; '.join(row.evidence) or 'none')} |"
             )
         return "\n".join(lines)
 
 
-def generate_plan_incident_communication_matrix(
-    source: Mapping[str, Any] | ExecutionPlan | object,
-) -> PlanIncidentCommunicationMatrix:
-    """Derive audience-specific incident communication rows from an execution plan."""
+def build_plan_incident_communication_matrix(source: Any) -> PlanIncidentCommunicationMatrix:
+    """Build task-level incident communication readiness for an execution plan."""
     plan = _plan_payload(source)
     tasks = _task_payloads(plan.get("tasks"))
-    rows: list[PlanIncidentCommunicationRow] = []
-
-    for index, task in enumerate(tasks, start=1):
-        rows.extend(_task_rows(task, index))
-
-    rows.sort(
-        key=lambda row: (
-            _PRIORITY_ORDER[row.priority],
-            row.task_id,
-            _AUDIENCE_ORDER.index(row.audience),
+    rows = tuple(
+        sorted(
+            (row for index, task in enumerate(tasks, start=1) if (row := _task_row(task, index))),
+            key=lambda row: (
+                _READINESS_ORDER[row.readiness_level],
+                -len(row.missing_components),
+                row.task_id,
+            ),
         )
     )
-    result = tuple(rows)
-    incident_task_ids = tuple(_dedupe(row.task_id for row in result))
     return PlanIncidentCommunicationMatrix(
         plan_id=_optional_text(plan.get("id")),
-        rows=result,
-        incident_task_ids=incident_task_ids,
-        summary={
-            "task_count": len(tasks),
-            "incident_task_count": len(incident_task_ids),
-            "communication_row_count": len(result),
-            "priority_counts": {
-                priority: sum(1 for row in result if row.priority == priority)
-                for priority in _PRIORITY_ORDER
-            },
-            "audience_counts": {
-                audience: sum(1 for row in result if row.audience == audience)
-                for audience in _AUDIENCE_ORDER
-            },
-            "risk_counts": {
-                risk: sum(1 for row in result if risk in row.risk_categories)
-                for risk in _RISK_ORDER
-            },
-        },
+        rows=rows,
+        incident_task_ids=tuple(row.task_id for row in rows),
+        summary=_summary(tasks, rows),
     )
 
 
-def build_plan_incident_communication_matrix(
-    source: Mapping[str, Any] | ExecutionPlan | object,
-) -> PlanIncidentCommunicationMatrix:
-    """Compatibility alias for generating incident communication matrices."""
-    return generate_plan_incident_communication_matrix(source)
+def generate_plan_incident_communication_matrix(source: Any) -> PlanIncidentCommunicationMatrix:
+    """Generate an incident communication readiness matrix from a plan-like source."""
+    return build_plan_incident_communication_matrix(source)
 
 
-def derive_plan_incident_communication_matrix(
-    source: Mapping[str, Any] | ExecutionPlan | PlanIncidentCommunicationMatrix | object,
-) -> PlanIncidentCommunicationMatrix:
-    """Return an existing matrix or generate one from a plan-shaped source."""
+def analyze_plan_incident_communication_matrix(source: Any) -> PlanIncidentCommunicationMatrix:
+    """Analyze an execution plan for incident communication readiness."""
+    return build_plan_incident_communication_matrix(source)
+
+
+def derive_plan_incident_communication_matrix(source: Any) -> PlanIncidentCommunicationMatrix:
+    """Return an existing matrix or derive one from a plan-like source."""
     if isinstance(source, PlanIncidentCommunicationMatrix):
         return source
-    return generate_plan_incident_communication_matrix(source)
+    return analyze_plan_incident_communication_matrix(source)
 
 
-def summarize_plan_incident_communication_matrix(
-    source: Mapping[str, Any] | ExecutionPlan | PlanIncidentCommunicationMatrix | object,
-) -> PlanIncidentCommunicationMatrix:
-    """Compatibility alias for incident communication summaries."""
+def summarize_plan_incident_communication_matrix(source: Any) -> PlanIncidentCommunicationMatrix:
+    """Compatibility alias for incident communication readiness summaries."""
     return derive_plan_incident_communication_matrix(source)
 
 
 def plan_incident_communication_matrix_to_dict(
     matrix: PlanIncidentCommunicationMatrix,
 ) -> dict[str, Any]:
-    """Serialize an incident communication matrix to a plain dictionary."""
+    """Serialize an incident communication readiness matrix to a plain dictionary."""
     return matrix.to_dict()
 
 
 plan_incident_communication_matrix_to_dict.__test__ = False
 
 
+def plan_incident_communication_matrix_to_dicts(
+    matrix: PlanIncidentCommunicationMatrix,
+) -> list[dict[str, Any]]:
+    """Serialize incident communication readiness rows to plain dictionaries."""
+    return matrix.to_dicts()
+
+
+plan_incident_communication_matrix_to_dicts.__test__ = False
+
+
 def plan_incident_communication_matrix_to_markdown(
     matrix: PlanIncidentCommunicationMatrix,
 ) -> str:
-    """Render an incident communication matrix as Markdown."""
+    """Render an incident communication readiness matrix as Markdown."""
     return matrix.to_markdown()
 
 
 plan_incident_communication_matrix_to_markdown.__test__ = False
 
 
-def _task_rows(task: Mapping[str, Any], index: int) -> list[PlanIncidentCommunicationRow]:
-    risks, evidence = _task_risks(task)
-    if not risks or _suppressed(task, risks):
-        return []
-
+def _task_row(task: Mapping[str, Any], index: int) -> PlanIncidentCommunicationRow | None:
     task_id = _optional_text(task.get("id")) or f"task-{index}"
     title = _optional_text(task.get("title")) or task_id
-    priority = _priority(task, risks)
-    owners = tuple(_dedupe([*_owner_hints(task), *_default_owners(risks)]))
-    audiences = _audiences(risks, priority)
-    return [
-        PlanIncidentCommunicationRow(
-            task_id=task_id,
-            title=title,
-            audience=audience,
-            risk_categories=risks,
-            trigger_conditions=_trigger_conditions(risks, audience),
-            draft_message_topics=_message_topics(risks, audience),
-            owner_suggestions=owners,
-            escalation_timing=_escalation_timing(priority, audience),
-            priority=priority,
-            evidence=evidence,
-        )
-        for audience in audiences
-    ]
+    present, evidence = _component_coverage(task)
+    incident_signals = _incident_signal_count(task, present)
+    if not present and not incident_signals:
+        return None
 
-
-def _task_risks(
-    task: Mapping[str, Any],
-) -> tuple[tuple[IncidentCommunicationRisk, ...], tuple[str, ...]]:
-    risks: list[IncidentCommunicationRisk] = []
-    evidence: list[str] = []
-
-    for path in _strings(task.get("files_or_modules") or task.get("files")):
-        normalized = _normalized_path(path)
-        path_text = _path_text(normalized)
-        matched = False
-        for risk, pattern in _PATH_PATTERNS:
-            if pattern.search(normalized) or pattern.search(path_text):
-                risks.append(risk)
-                matched = True
-        if matched:
-            evidence.append(f"files_or_modules: {path}")
-
-    for source_field, text in _candidate_texts(task):
-        before = len(risks)
-        _apply_text_risks(text, risks)
-        if len(risks) > before:
-            evidence.append(_evidence_snippet(source_field, text))
-
-    ordered = tuple(risk for risk in _RISK_ORDER if risk in set(risks))
-    return ordered, tuple(_dedupe(evidence))
-
-
-def _apply_text_risks(text: str, risks: list[IncidentCommunicationRisk]) -> None:
-    if _RELIABILITY_RE.search(text):
-        risks.append("reliability")
-    if _DATA_RE.search(text):
-        risks.append("data_integrity")
-    if _MIGRATION_RE.search(text):
-        risks.append("migration")
-    if _INTEGRATION_RE.search(text):
-        risks.append("external_integration")
-    if _CUSTOMER_RE.search(text):
-        risks.append("customer_facing")
-
-
-def _suppressed(task: Mapping[str, Any], risks: tuple[IncidentCommunicationRisk, ...]) -> bool:
-    text = " ".join(value for _, value in _candidate_texts(task))
-    paths = " ".join(_strings(task.get("files_or_modules") or task.get("files")))
-    if _SUPPRESS_RE.search(f"{text} {paths}") and str(task.get("risk_level", "")).casefold() == "low":
-        return True
-    return bool(_SUPPRESS_RE.search(f"{text} {paths}")) and not any(
-        risk in risks for risk in ("reliability", "data_integrity", "migration", "external_integration")
+    present_components = tuple(component for component in _COMPONENT_ORDER if component in present)
+    missing_components = tuple(
+        component for component in _COMPONENT_ORDER if component not in set(present_components)
+    )
+    gap_reasons = tuple(_MISSING_REASON[component] for component in missing_components)
+    return PlanIncidentCommunicationRow(
+        task_id=task_id,
+        title=title,
+        present_components=present_components,
+        missing_components=missing_components,
+        readiness_level=_readiness_level(present_components),
+        gap_reasons=gap_reasons,
+        owner_hints=tuple(
+            _dedupe([*_owner_hints(task), *_default_owner_hints(present_components)])
+        ),
+        channel_hints=tuple(
+            _dedupe([*_channel_hints(task), *_default_channel_hints(present_components)])
+        ),
+        evidence=evidence,
     )
 
 
-def _priority(
+def _component_coverage(
     task: Mapping[str, Any],
-    risks: tuple[IncidentCommunicationRisk, ...],
-) -> IncidentCommunicationPriority:
-    text = " ".join(value for _, value in _candidate_texts(task)).casefold()
-    if _optional_text(task.get("risk_level")) and "high" in str(task.get("risk_level")).casefold():
-        return "high"
-    if any(risk in risks for risk in ("reliability", "data_integrity", "migration")):
-        return "high"
-    if "customer_facing" in risks and "external_integration" in risks:
-        return "high"
-    if re.search(r"\b(?:critical|sev[ -]?[012]|outage|data loss|downtime)\b", text, re.I):
-        return "high"
-    return "medium"
+) -> tuple[set[IncidentCommunicationComponent], tuple[str, ...]]:
+    present: set[IncidentCommunicationComponent] = set()
+    evidence: list[str] = []
+    if _owner_hints(task):
+        present.add("owner_assignment")
+        evidence.append("metadata: owner hint")
+
+    for source_field, text in _candidate_texts(task):
+        matched: list[str] = []
+        for component, pattern in _COMPONENT_PATTERNS.items():
+            if pattern.search(text):
+                present.add(component)
+                matched.append(component)
+        if matched:
+            evidence.append(f"{_evidence_snippet(source_field, text)} ({', '.join(matched)})")
+
+    for path in _strings(task.get("files_or_modules") or task.get("files")):
+        if _PATH_RE.search(_normalized_path(path)):
+            evidence.append(f"files_or_modules: {path}")
+
+    return present, tuple(_dedupe(evidence))
 
 
-def _audiences(
-    risks: tuple[IncidentCommunicationRisk, ...],
-    priority: IncidentCommunicationPriority,
-) -> tuple[IncidentCommunicationAudience, ...]:
-    audiences: list[IncidentCommunicationAudience] = ["operations", "engineering", "support"]
-    if "customer_facing" in risks or priority == "high":
-        audiences.extend(["customers", "customer_success"])
-    if "data_integrity" in risks or "migration" in risks:
-        audiences.extend(["admins", "data_governance"])
-    if "external_integration" in risks:
-        audiences.extend(["vendor_partner", "security"])
-    if priority == "high":
-        audiences.append("executives")
-    return tuple(audience for audience in _AUDIENCE_ORDER if audience in set(audiences))
+def _incident_signal_count(
+    task: Mapping[str, Any],
+    present: set[IncidentCommunicationComponent],
+) -> int:
+    count = len(present)
+    for _, text in _candidate_texts(task):
+        if _INCIDENT_RE.search(text):
+            count += 1
+    for path in _strings(task.get("files_or_modules") or task.get("files")):
+        if _PATH_RE.search(_normalized_path(path)):
+            count += 1
+    return count
 
 
-def _trigger_conditions(
-    risks: tuple[IncidentCommunicationRisk, ...],
-    audience: IncidentCommunicationAudience,
-) -> tuple[str, ...]:
-    triggers: list[str] = []
-    if "reliability" in risks:
-        triggers.append("Notify if availability, latency, queue health, or error rates breach launch guardrails.")
-    if "data_integrity" in risks:
-        triggers.append("Notify if validation finds missing, duplicated, corrupted, or unreconciled records.")
-    if "migration" in risks:
-        triggers.append("Notify if migration progress stalls, rollback starts, or cutover verification fails.")
-    if "external_integration" in risks:
-        triggers.append("Notify if provider errors, webhook failures, auth failures, or dependency latency spike.")
-    if "customer_facing" in risks or audience in {"customers", "admins", "customer_success", "support"}:
-        triggers.append("Notify if customers see degraded behavior, incorrect UI state, or support volume spikes.")
-    return tuple(_dedupe(triggers))
+def _readiness_level(
+    present_components: tuple[IncidentCommunicationComponent, ...],
+) -> IncidentCommunicationReadiness:
+    if len(present_components) == len(_COMPONENT_ORDER):
+        return "ready"
+    if present_components:
+        return "partial"
+    return "missing"
 
 
-def _message_topics(
-    risks: tuple[IncidentCommunicationRisk, ...],
-    audience: IncidentCommunicationAudience,
-) -> tuple[str, ...]:
-    topics: list[str] = []
-    if audience in {"customers", "admins"}:
-        topics.extend(["customer impact", "current workaround", "next update timing"])
-    if audience in {"support", "customer_success"}:
-        topics.extend(["known symptoms", "ticket triage guidance", "customer-safe status summary"])
-    if audience in {"operations", "engineering"}:
-        topics.extend(["incident scope", "rollback or mitigation status", "owner and handoff"])
-    if audience == "data_governance" or "data_integrity" in risks:
-        topics.append("data validation and reconciliation status")
-    if audience in {"vendor_partner", "security"} or "external_integration" in risks:
-        topics.append("provider escalation status and auth/security impact")
-    if audience == "executives":
-        topics.extend(["business impact", "customer exposure", "ETA and decision needs"])
-    if "migration" in risks:
-        topics.append("migration phase and rollback readiness")
-    return tuple(_dedupe(topics))
-
-
-def _escalation_timing(
-    priority: IncidentCommunicationPriority,
-    audience: IncidentCommunicationAudience,
-) -> str:
-    if audience in {"customers", "admins"}:
-        return "Within 30 minutes of confirmed customer impact, then every 60 minutes until stable."
-    if priority == "high":
-        return "Immediately on incident declaration, then at every mitigation or rollback checkpoint."
-    return "During launch watch if guardrails breach or support volume materially increases."
-
-
-def _default_owners(
-    risks: tuple[IncidentCommunicationRisk, ...],
-) -> tuple[str, ...]:
-    owners: list[str] = ["incident commander", "engineering owner"]
-    if "reliability" in risks:
-        owners.append("on-call owner")
-    if "data_integrity" in risks or "migration" in risks:
-        owners.extend(["database owner", "data governance owner"])
-    if "external_integration" in risks:
-        owners.extend(["integration owner", "vendor escalation owner"])
-    if "customer_facing" in risks:
-        owners.extend(["support lead", "customer success owner"])
-    return tuple(_dedupe(owners))
+def _summary(
+    tasks: list[dict[str, Any]],
+    rows: tuple[PlanIncidentCommunicationRow, ...],
+) -> dict[str, Any]:
+    return {
+        "task_count": len(tasks),
+        "incident_task_count": len(rows),
+        "ready_task_count": sum(1 for row in rows if row.readiness_level == "ready"),
+        "partial_task_count": sum(1 for row in rows if row.readiness_level == "partial"),
+        "missing_task_count": sum(1 for row in rows if row.readiness_level == "missing"),
+        "gap_count": sum(len(row.missing_components) for row in rows),
+        "readiness_counts": {
+            readiness: sum(1 for row in rows if row.readiness_level == readiness)
+            for readiness in _READINESS_ORDER
+        },
+        "component_coverage_counts": {
+            component: sum(1 for row in rows if component in row.present_components)
+            for component in _COMPONENT_ORDER
+        },
+        "missing_component_counts": {
+            component: sum(1 for row in rows if component in row.missing_components)
+            for component in _COMPONENT_ORDER
+        },
+    }
 
 
 def _owner_hints(task: Mapping[str, Any]) -> list[str]:
@@ -487,29 +403,54 @@ def _owner_hints(task: Mapping[str, Any]) -> list[str]:
         hints.extend(_strings(task.get(key)))
     metadata = task.get("metadata")
     if isinstance(metadata, Mapping):
-        hints.extend(_metadata_key_values(metadata, _OWNER_KEYS))
+        for key, value in _walk_metadata(metadata):
+            normalized = key.casefold().replace("-", "_").replace(" ", "_")
+            if normalized in _OWNER_KEYS:
+                hints.extend(_strings(value))
     return hints
 
 
-def _metadata_key_values(metadata: Mapping[str, Any], keys: tuple[str, ...]) -> list[str]:
-    values: list[str] = []
-    wanted = {key.casefold() for key in keys}
-    for key, value in _walk_metadata(metadata):
-        normalized = key.casefold().replace("-", "_").replace(" ", "_")
-        if normalized in wanted:
-            values.extend(_strings(value))
-    return values
+def _default_owner_hints(
+    present_components: tuple[IncidentCommunicationComponent, ...],
+) -> tuple[str, ...]:
+    if "internal_escalation" in present_components:
+        return ("incident commander", "on-call owner")
+    if "customer_updates" in present_components:
+        return ("communications lead",)
+    return ()
 
 
-def _walk_metadata(value: Mapping[str, Any]) -> list[tuple[str, Any]]:
-    pairs: list[tuple[str, Any]] = []
-    for key in sorted(value, key=lambda item: str(item)):
-        key_text = str(key)
-        child = value[key]
-        pairs.append((key_text, child))
-        if isinstance(child, Mapping):
-            pairs.extend(_walk_metadata(child))
-    return pairs
+def _channel_hints(task: Mapping[str, Any]) -> list[str]:
+    hints: list[str] = []
+    text = " ".join(value for _, value in _candidate_texts(task)).casefold()
+    channel_terms = (
+        ("status page", "status page"),
+        ("statuspage", "status page"),
+        ("slack", "Slack"),
+        ("email", "email"),
+        ("in-app", "in-app"),
+        ("in app", "in-app"),
+        ("support portal", "support portal"),
+        ("zendesk", "Zendesk"),
+        ("intercom", "Intercom"),
+        ("pager", "pager"),
+        ("sms", "SMS"),
+    )
+    for token, label in channel_terms:
+        if token in text:
+            hints.append(label)
+    return hints
+
+
+def _default_channel_hints(
+    present_components: tuple[IncidentCommunicationComponent, ...],
+) -> tuple[str, ...]:
+    hints: list[str] = []
+    if "customer_updates" in present_components:
+        hints.append("status page")
+    if "internal_escalation" in present_components:
+        hints.append("Slack")
+    return tuple(hints)
 
 
 def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -527,7 +468,14 @@ def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
     ):
         if text := _optional_text(task.get(field_name)):
             texts.append((field_name, text))
-    for field_name in ("acceptance_criteria", "depends_on", "dependencies", "tags", "labels", "notes"):
+    for field_name in (
+        "acceptance_criteria",
+        "depends_on",
+        "dependencies",
+        "tags",
+        "labels",
+        "notes",
+    ):
         for index, text in enumerate(_strings(task.get(field_name))):
             texts.append((f"{field_name}[{index}]", text))
     for path in _strings(task.get("files_or_modules") or task.get("files")):
@@ -540,7 +488,7 @@ def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
     return texts
 
 
-def _plan_payload(plan: Mapping[str, Any] | ExecutionPlan | object) -> dict[str, Any]:
+def _plan_payload(plan: Any) -> dict[str, Any]:
     if isinstance(plan, ExecutionPlan):
         return dict(plan.model_dump(mode="python"))
     if hasattr(plan, "model_dump"):
@@ -591,12 +539,19 @@ def _strings(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def _walk_metadata(value: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    pairs: list[tuple[str, Any]] = []
+    for key in sorted(value, key=lambda item: str(item)):
+        key_text = str(key)
+        child = value[key]
+        pairs.append((key_text, child))
+        if isinstance(child, Mapping):
+            pairs.extend(_walk_metadata(child))
+    return pairs
+
+
 def _normalized_path(value: str) -> str:
     return value.replace("\\", "/").casefold()
-
-
-def _path_text(path: str) -> str:
-    return " ".join(part.replace("_", " ").replace("-", " ") for part in PurePosixPath(path).parts)
 
 
 def _evidence_snippet(source_field: str, text: str) -> str:
@@ -633,15 +588,16 @@ def _dedupe(values: Iterable[_T]) -> list[_T]:
 
 
 __all__ = [
-    "IncidentCommunicationAudience",
-    "IncidentCommunicationPriority",
-    "IncidentCommunicationRisk",
+    "IncidentCommunicationComponent",
+    "IncidentCommunicationReadiness",
     "PlanIncidentCommunicationMatrix",
     "PlanIncidentCommunicationRow",
+    "analyze_plan_incident_communication_matrix",
     "build_plan_incident_communication_matrix",
     "derive_plan_incident_communication_matrix",
     "generate_plan_incident_communication_matrix",
     "plan_incident_communication_matrix_to_dict",
+    "plan_incident_communication_matrix_to_dicts",
     "plan_incident_communication_matrix_to_markdown",
     "summarize_plan_incident_communication_matrix",
 ]
