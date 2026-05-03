@@ -1,4 +1,3 @@
-import copy
 import json
 
 from blueprint.domain.models import ExecutionPlan
@@ -9,24 +8,30 @@ from blueprint.plan_incident_communication_matrix import (
     derive_plan_incident_communication_matrix,
     generate_plan_incident_communication_matrix,
     plan_incident_communication_matrix_to_dict,
+    plan_incident_communication_matrix_to_dicts,
     plan_incident_communication_matrix_to_markdown,
     summarize_plan_incident_communication_matrix,
 )
 
 
-def test_data_migration_risk_creates_audience_specific_high_priority_rows():
+def test_complete_incident_communication_coverage_is_ready():
     result = generate_plan_incident_communication_matrix(
         _plan(
             [
                 _task(
-                    "task-migration",
-                    title="Run customer account data migration",
+                    "task-comms",
+                    title="Prepare incident communication plan",
                     description=(
-                        "Backfill existing customer records during cutover and halt on "
-                        "data integrity validation failures."
+                        "Define Sev 1 and Sev 2 severity thresholds, customer updates through "
+                        "status page and email, internal escalation through Slack war room and "
+                        "PagerDuty, and timing SLA of first update within 15 minutes then every "
+                        "30 minutes."
                     ),
-                    files_or_modules=["db/migrations/20260502_accounts.sql"],
-                    metadata={"owner": "Data Platform"},
+                    acceptance_criteria=[
+                        "Incident commander and communications DRI are assigned.",
+                        "Post-incident follow-up includes postmortem, RCA, and corrective action items.",
+                    ],
+                    metadata={"owner": "Incident Response"},
                 )
             ]
         )
@@ -34,136 +39,68 @@ def test_data_migration_risk_creates_audience_specific_high_priority_rows():
 
     assert isinstance(result, PlanIncidentCommunicationMatrix)
     assert result.plan_id == "plan-incidents"
-    assert result.incident_task_ids == ("task-migration",)
+    assert result.incident_task_ids == ("task-comms",)
     assert all(isinstance(row, PlanIncidentCommunicationRow) for row in result.rows)
 
-    by_audience = {row.audience: row for row in result.rows}
-    assert set(by_audience) == {
-        "customers",
-        "admins",
-        "support",
-        "customer_success",
-        "operations",
-        "engineering",
-        "data_governance",
-        "executives",
-    }
-    data_row = by_audience["data_governance"]
-    assert data_row.priority == "high"
-    assert data_row.risk_categories == ("data_integrity", "migration", "customer_facing")
-    assert "Data Platform" in data_row.owner_suggestions
-    assert "database owner" in data_row.owner_suggestions
-    assert any("validation finds missing" in trigger for trigger in data_row.trigger_conditions)
-    assert "data validation and reconciliation status" in data_row.draft_message_topics
-    assert "files_or_modules: db/migrations/20260502_accounts.sql" in data_row.evidence
+    row = result.rows[0]
+    assert row.readiness_level == "ready"
+    assert row.present_components == (
+        "customer_updates",
+        "internal_escalation",
+        "owner_assignment",
+        "severity_thresholds",
+        "communication_channels",
+        "follow_up_tasks",
+        "timing_sla_expectations",
+    )
+    assert row.missing_components == ()
+    assert row.gap_reasons == ()
+    assert "Incident Response" in row.owner_hints
+    assert "status page" in row.channel_hints
+    assert result.summary["ready_task_count"] == 1
+    assert result.summary["gap_count"] == 0
 
 
-def test_external_integration_customer_risk_includes_vendor_security_and_customer_rows():
+def test_missing_customer_communication_reports_gap_reason():
     result = build_plan_incident_communication_matrix(
         _plan(
             [
                 _task(
-                    "task-webhook",
-                    title="Launch customer-facing payment provider webhook",
+                    "task-internal",
+                    title="Draft production incident escalation runbook",
                     description=(
-                        "Enable external Stripe webhook integration for checkout and "
-                        "notify if provider auth failures or dependency latency spike."
+                        "Set Sev 1 incident declaration thresholds, on-call escalation, Slack war "
+                        "room channel, incident commander owner, and update cadence every 20 minutes."
                     ),
-                    files_or_modules=["src/integrations/stripe_webhook.py"],
-                    metadata={"dri": "Payments Integrations"},
+                    files_or_modules=["docs/runbooks/incident-escalation.md"],
+                    acceptance_criteria=["Schedule postmortem and action items after resolution."],
+                    metadata={"dri": "SRE"},
                 )
             ]
         )
     )
 
-    by_audience = {row.audience: row for row in result.rows}
-    assert by_audience["customers"].priority == "high"
-    assert by_audience["vendor_partner"].risk_categories == (
-        "reliability",
-        "external_integration",
-        "customer_facing",
-    )
-    assert "vendor escalation owner" in by_audience["vendor_partner"].owner_suggestions
-    assert "security" in by_audience
-    assert "provider escalation status and auth/security impact" in by_audience[
-        "security"
-    ].draft_message_topics
-    assert any("provider errors" in trigger for trigger in by_audience["vendor_partner"].trigger_conditions)
-    assert result.summary["communication_row_count"] == len(result.rows)
-    assert result.summary["audience_counts"]["vendor_partner"] == 1
+    row = result.rows[0]
+    assert row.readiness_level == "partial"
+    assert "customer_updates" in row.missing_components
+    assert any("customer-facing update plan" in reason for reason in row.gap_reasons)
+    assert "internal_escalation" in row.present_components
+    assert "communication_channels" in row.present_components
+    assert result.summary["missing_component_counts"]["customer_updates"] == 1
+    assert result.summary["component_coverage_counts"]["internal_escalation"] == 1
 
 
-def test_low_risk_documentation_task_returns_empty_matrix_and_no_mutation():
+def test_partial_internal_only_plan_identifies_multiple_missing_readiness_items():
     plan = _plan(
         [
             _task(
-                "task-docs",
-                title="Update incident response README wording",
-                description="Documentation-only copy edit for the runbook introduction.",
-                files_or_modules=["docs/incident-response-readme.md"],
-                risk_level="low",
+                "task-partial",
+                title="Create internal incident bridge",
+                description="Create an internal escalation path and Slack war room for outage response.",
+                metadata={"owner": "Operations"},
             )
         ],
-        plan_id="plan-docs",
-    )
-    original = copy.deepcopy(plan)
-
-    result = generate_plan_incident_communication_matrix(plan)
-
-    assert plan == original
-    assert result.rows == ()
-    assert result.records == ()
-    assert result.incident_task_ids == ()
-    assert result.summary == {
-        "task_count": 1,
-        "incident_task_count": 0,
-        "communication_row_count": 0,
-        "priority_counts": {"high": 0, "medium": 0, "low": 0},
-        "audience_counts": {
-            "customers": 0,
-            "admins": 0,
-            "support": 0,
-            "customer_success": 0,
-            "operations": 0,
-            "engineering": 0,
-            "data_governance": 0,
-            "security": 0,
-            "vendor_partner": 0,
-            "executives": 0,
-        },
-        "risk_counts": {
-            "reliability": 0,
-            "data_integrity": 0,
-            "migration": 0,
-            "external_integration": 0,
-            "customer_facing": 0,
-        },
-    }
-    assert result.to_markdown() == (
-        "# Plan Incident Communication Matrix: plan-docs\n"
-        "\n"
-        "## Summary\n"
-        "\n"
-        "- Task count: 1\n"
-        "- Incident task count: 0\n"
-        "- Communication row count: 0\n"
-        "- Priority counts: high 0, medium 0, low 0\n"
-        "\n"
-        "No incident communication rows were detected."
-    )
-
-
-def test_serialization_markdown_aliases_and_model_input_are_stable():
-    plan = _plan(
-        [
-            _task(
-                "task-pipe",
-                title="Customer | API degradation launch watch",
-                description="Customer-facing external API integration can degrade during launch.",
-                acceptance_criteria=["On-call owner validates rollback status."],
-            )
-        ],
-        plan_id="plan-model",
+        plan_id="plan-partial",
     )
     model = ExecutionPlan.model_validate(plan)
 
@@ -174,26 +111,29 @@ def test_serialization_markdown_aliases_and_model_input_are_stable():
     markdown = plan_incident_communication_matrix_to_markdown(result)
 
     assert derived is result
-    assert summarized.to_dicts() == generate_plan_incident_communication_matrix(plan).to_dicts()
+    assert summarized.to_dicts() == result.to_dicts()
+    assert plan_incident_communication_matrix_to_dicts(result) == result.to_dicts()
     assert json.loads(json.dumps(payload)) == payload
-    assert result.to_dicts() == payload["rows"]
+    assert list(payload) == ["plan_id", "rows", "records", "incident_task_ids", "summary"]
+    assert payload["rows"] == payload["records"]
+
+    row = result.rows[0]
+    assert row.readiness_level == "partial"
+    assert row.present_components == (
+        "internal_escalation",
+        "owner_assignment",
+        "communication_channels",
+    )
+    assert row.missing_components == (
+        "customer_updates",
+        "severity_thresholds",
+        "follow_up_tasks",
+        "timing_sla_expectations",
+    )
+    assert len(row.gap_reasons) == 4
     assert result.records == result.rows
-    assert list(payload) == ["plan_id", "rows", "incident_task_ids", "summary"]
-    assert list(payload["rows"][0]) == [
-        "task_id",
-        "title",
-        "audience",
-        "risk_categories",
-        "trigger_conditions",
-        "draft_message_topics",
-        "owner_suggestions",
-        "escalation_timing",
-        "priority",
-        "evidence",
-    ]
-    assert markdown == result.to_markdown()
-    assert "Customer \\| API degradation launch watch" in markdown
-    assert build_plan_incident_communication_matrix(plan).summary == result.summary
+    assert result.summary["partial_task_count"] == 1
+    assert "Plan Incident Communication Readiness Matrix: plan-partial" in markdown
 
 
 def _plan(tasks, *, plan_id="plan-incidents", metadata=None):
