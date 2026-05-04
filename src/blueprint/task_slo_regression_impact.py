@@ -529,15 +529,7 @@ def _candidate_texts(task: Mapping[str, Any]) -> list[tuple[str, str]]:
     return texts
 
 
-def _source_payload(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> tuple[str | None, tuple[tuple[str, str], ...], list[dict[str, Any]]]:
+def _source_payload(source: Any) -> tuple[str | None, tuple[tuple[str, str], ...], list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):
         return None, (), [source.model_dump(mode="python")]
     if isinstance(source, ExecutionPlan):
@@ -557,7 +549,7 @@ def _source_payload(
         return _optional_text(plan.get("id")), _plan_context(plan), _task_payloads(plan.get("tasks"))
 
     try:
-        iterator = iter(source)  # type: ignore[arg-type]
+        iterator = iter(source)
     except TypeError:
         return None, (), []
     tasks: list[dict[str, Any]] = []
