@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 import re
-from typing import Any, Iterable, Literal, Mapping, TypeVar
+from typing import Any, Iterable, Literal, Mapping, TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -471,7 +471,7 @@ def _metadata_signals(metadata: Mapping[str, Any]) -> tuple[ConsentReadinessSign
             normalized = _normalized_key(value)
             alias = _ALIASES.get(normalized, normalized)
             if alias in _SIGNAL_ORDER:
-                signals.add(alias)  # type: ignore[arg-type]
+                signals.add(cast(ConsentReadinessSignal, alias))
     return tuple(signal for signal in _SIGNAL_ORDER if signal in signals)
 
 
@@ -482,7 +482,7 @@ def _metadata_safeguards(metadata: Mapping[str, Any]) -> tuple[ConsentReadinessS
             normalized = _normalized_key(value)
             alias = _ALIASES.get(normalized, normalized)
             if alias in _SAFEGUARD_ORDER:
-                safeguards.add(alias)  # type: ignore[arg-type]
+                safeguards.add(cast(ConsentReadinessSafeguard, alias))
             safeguards.update(_safeguards_from_text(value))
     return tuple(safeguard for safeguard in _SAFEGUARD_ORDER if safeguard in safeguards)
 
@@ -592,7 +592,7 @@ def _source_payload(
         return _optional_text(payload.get("id")), _task_payloads(payload.get("tasks"))
 
     try:
-        iterator = iter(source)  # type: ignore[arg-type]
+        iterator = iter(cast(Iterable[object], source))
     except TypeError:
         return None, []
 
