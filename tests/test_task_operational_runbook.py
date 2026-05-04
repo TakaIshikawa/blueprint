@@ -328,7 +328,7 @@ def test_markdown_and_invalid_empty_inputs_are_deterministic():
     )
     empty = build_task_operational_runbook_plan({"id": "plan-empty", "tasks": []})
     invalid = build_task_operational_runbook_plan({"id": "plan-invalid", "tasks": "nope"})
-    none_source = build_task_operational_runbook_plan(None)  # type: ignore[arg-type]
+    none_source = build_task_operational_runbook_plan(None)
 
     markdown = task_operational_runbook_plan_to_markdown(result)
 

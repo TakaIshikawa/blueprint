@@ -177,6 +177,7 @@ def build_task_backwards_compatibility_plan(
         | ExecutionPlan
         | ExecutionTask
         | Iterable[Mapping[str, Any] | ExecutionTask]
+        | None
     ),
 ) -> TaskBackwardsCompatibilityPlan:
     """Recommend backwards compatibility checks for interface- or data-facing tasks."""
@@ -451,6 +452,7 @@ def _source_payload(
         | ExecutionPlan
         | ExecutionTask
         | Iterable[Mapping[str, Any] | ExecutionTask]
+        | None
     ),
 ) -> tuple[str | None, list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):

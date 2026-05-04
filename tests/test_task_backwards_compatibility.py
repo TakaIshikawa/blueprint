@@ -215,7 +215,7 @@ def test_markdown_output_summarizes_task_severity_rationale_and_checks():
 def test_invalid_and_empty_plan_handling():
     empty = build_task_backwards_compatibility_plan({"id": "plan-empty", "tasks": []})
     invalid = build_task_backwards_compatibility_plan({"id": "plan-invalid", "tasks": "nope"})
-    none_source = build_task_backwards_compatibility_plan(None)  # type: ignore[arg-type]
+    none_source = build_task_backwards_compatibility_plan(None)
 
     assert empty.to_markdown() == "\n".join(
         [

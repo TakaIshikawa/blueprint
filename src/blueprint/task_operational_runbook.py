@@ -217,6 +217,7 @@ def build_task_operational_runbook_plan(
         | ExecutionPlan
         | ExecutionTask
         | Iterable[Mapping[str, Any] | ExecutionTask | Any]
+        | None
     ),
 ) -> TaskOperationalRunbookPlan:
     """Build operational runbook requirements for production-affecting tasks."""
@@ -527,6 +528,7 @@ def _source_payload(
         | ExecutionPlan
         | ExecutionTask
         | Iterable[Mapping[str, Any] | ExecutionTask | Any]
+        | None
     ),
 ) -> tuple[str | None, list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):
