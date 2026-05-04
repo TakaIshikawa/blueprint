@@ -186,14 +186,7 @@ class TaskDataPrivacyImpactPlan:
         return "\n".join(lines)
 
 
-def build_task_data_privacy_impact_plan(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | Any]
-    ),
-) -> TaskDataPrivacyImpactPlan:
+def build_task_data_privacy_impact_plan(source: Any) -> TaskDataPrivacyImpactPlan:
     """Assess tasks for privacy-sensitive data handling and required safeguards."""
     plan_id, tasks = _source_payload(source)
     impacts = tuple(
@@ -494,14 +487,7 @@ def _rationale(
     return f"Task touches privacy-sensitive data handling category or workflow: {rendered}."
 
 
-def _source_payload(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | Any]
-    ),
-) -> tuple[str | None, list[dict[str, Any]]]:
+def _source_payload(source: Any) -> tuple[str | None, list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):
         return None, [source.model_dump(mode="python")]
     if isinstance(source, ExecutionPlan):

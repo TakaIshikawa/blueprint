@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 import re
-from typing import Any, Iterable, Literal, Mapping, TypeVar
+from typing import Any, Iterable, Literal, Mapping, TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -477,7 +477,7 @@ def _metadata_signals(metadata: Mapping[str, Any]) -> tuple[PaginationSignal, ..
             }
             normalized = aliases.get(normalized, normalized)
             if normalized in _SIGNAL_ORDER:
-                signals.append(normalized)  # type: ignore[arg-type]
+                signals.append(cast(PaginationSignal, normalized))
     return tuple(_dedupe(signals))
 
 
@@ -587,15 +587,7 @@ def _impact_level(
     return "low"
 
 
-def _source_payload(
-    source: (
-        Mapping[str, Any]
-        | ExecutionPlan
-        | ExecutionTask
-        | Iterable[Mapping[str, Any] | ExecutionTask | object]
-        | object
-    ),
-) -> tuple[str | None, list[dict[str, Any]]]:
+def _source_payload(source: Any) -> tuple[str | None, list[dict[str, Any]]]:
     if isinstance(source, ExecutionTask):
         return None, [source.model_dump(mode="python")]
     if isinstance(source, ExecutionPlan):
@@ -612,7 +604,7 @@ def _source_payload(
         return _optional_text(payload.get("id")), _task_payloads(payload.get("tasks"))
 
     try:
-        iterator = iter(source)  # type: ignore[arg-type]
+        iterator = iter(source)
     except TypeError:
         return None, []
 

@@ -250,7 +250,7 @@ def test_markdown_and_invalid_empty_inputs_are_deterministic():
     )
     empty = build_task_data_privacy_impact_plan({"id": "plan-empty", "tasks": []})
     invalid = build_task_data_privacy_impact_plan({"id": "plan-invalid", "tasks": "nope"})
-    none_source = build_task_data_privacy_impact_plan(None)  # type: ignore[arg-type]
+    none_source = build_task_data_privacy_impact_plan(None)
 
     markdown = task_data_privacy_impact_plan_to_markdown(result)
 
