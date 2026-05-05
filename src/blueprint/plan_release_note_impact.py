@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Literal, Mapping, TypeVar
+from typing import Any, Iterable, Literal, Mapping, TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -344,8 +344,10 @@ def _severity(
     internal_only: bool,
 ) -> ReleaseNoteImpactSeverity:
     explicit = _metadata_value(metadata, "release_note_severity", "severity", "impact_severity")
-    if explicit and explicit.lower() in _SEVERITY_ORDER:
-        return explicit.lower()  # type: ignore[return-value]
+    if explicit:
+        lowered = explicit.lower()
+        if lowered in _SEVERITY_ORDER:
+            return cast(ReleaseNoteImpactSeverity, lowered)
 
     risk = (_optional_text(task.get("risk_level")) or "").lower()
     if category == "breaking_change":
@@ -370,8 +372,10 @@ def _audience(
     internal_only: bool,
 ) -> ReleaseNoteAudience:
     explicit = _metadata_value(metadata, "release_note_audience", "audience", "target_audience")
-    if explicit and explicit.lower() in {"customers", "admins", "developers", "support", "internal", "docs"}:
-        return explicit.lower()  # type: ignore[return-value]
+    if explicit:
+        lowered = explicit.lower()
+        if lowered in {"customers", "admins", "developers", "support", "internal", "docs"}:
+            return cast(ReleaseNoteAudience, lowered)
     if internal_only or category == "operational_internal":
         return "internal"
     if category == "documentation_only":
