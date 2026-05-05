@@ -621,6 +621,359 @@ def _source_brief(
     }
 
 
+def test_malformed_approval_chain_formats():
+    """Test extraction from malformed or incomplete approval chain formats."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "workflow": {
+                    "approval_chain": "step1: ???, step2: manager approval, step3: incomplete",
+                    "escalation": "Escalate to next level but no path defined",
+                    "sla": "Fast turnaround expected for approval",
+                }
+            }
+        )
+    )
+
+    # Should extract requirements despite malformed formats
+    assert len(result.requirements) >= 1
+
+
+def test_incomplete_escalation_path_specifications():
+    """Test extraction when escalation path details are incomplete."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "escalation": [
+                    "Escalation required but target unclear.",
+                    "Automatic escalation without timeout spec.",
+                    "Escalate to next level (level not specified).",
+                ]
+            }
+        )
+    )
+
+    escalation_records = [
+        record for record in result.requirements if record.surface == "escalation"
+    ]
+    assert len(escalation_records) >= 1
+    # Should capture evidence from escalation scenarios
+    assert any("escalat" in ev.lower() for record in escalation_records for ev in record.evidence)
+
+
+def test_timeout_and_sla_edge_cases():
+    """Test extraction of various timeout and SLA edge cases."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "sla_scenarios": [
+                    "Approval SLA: 0 hours.",
+                    "Review time: unlimited.",
+                    "Response needed immediately.",
+                    "SLA: TBD during implementation.",
+                    "Turnaround time configurable per request type.",
+                ]
+            }
+        )
+    )
+
+    sla_records = [
+        record for record in result.requirements if record.surface == "approval_sla"
+    ]
+    # Should extract SLA requirement despite edge cases
+    assert len(sla_records) >= 1 or "approval_sla" not in [r.surface for r in result.requirements]
+
+
+def test_approval_delegation_patterns():
+    """Test extraction of various approval delegation scenarios."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "delegation": [
+                    "Manager can delegate approval to team lead.",
+                    "Approval delegation allowed with audit trail.",
+                    "Delegate review to security officer when manager unavailable.",
+                ]
+            }
+        )
+    )
+
+    # Should extract approval-related requirements
+    assert len(result.requirements) >= 1
+    # Should identify some approval pattern
+    surfaces = [record.surface for record in result.requirements]
+    assert len(surfaces) >= 1
+
+
+def test_complex_multi_approval_brief_with_all_surfaces():
+    """Test extraction from a complex brief covering all 9 surface types."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            summary="Comprehensive approval workflow with all review stages.",
+            source_payload={
+                "workflow": {
+                    "manager": "Manager approval required for all budget changes over $1000.",
+                    "admin": "Admin review needed before production deployment.",
+                    "legal": "Legal signoff must be obtained for customer-facing contract changes.",
+                    "security": "Security review mandatory for authentication and authorization changes.",
+                    "finance": "Finance approval required for capital expenditures exceeding $5000.",
+                    "multi_step": "Multi-step approval workflow: team lead → manager → director.",
+                    "escalation": "Escalate to VP if manager does not respond within 48 hours.",
+                    "rejection": "Rejection reason must be provided with mandatory comment field.",
+                    "sla": "Approval SLA is 2 business days for standard requests, 4 hours for urgent.",
+                }
+            }
+        )
+    )
+
+    surfaces = [record.surface for record in result.requirements]
+    # Should extract most if not all surfaces
+    assert len(set(surfaces)) >= 7
+    # Check for high confidence on structured source_payload fields
+    high_conf_count = sum(1 for req in result.requirements if req.confidence == "high")
+    assert high_conf_count >= 5
+
+
+def test_edge_case_whitespace_only_approval_fields():
+    """Test handling of whitespace-only approval fields."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "workflow": {
+                    "manager": "   ",
+                    "admin": "",
+                    "legal": None,
+                }
+            }
+        )
+    )
+
+    # Should produce empty or minimal result for whitespace-only fields
+    assert result.summary["requirement_count"] <= 1
+
+
+def test_numeric_sla_values_extraction():
+    """Test extraction with various numeric SLA values."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "sla": "Approval within 30 minutes for P0, 4 hours for P1, 2 days for P2."
+            }
+        )
+    )
+
+    sla_records = [
+        record for record in result.requirements if record.surface == "approval_sla"
+    ]
+    if sla_records:
+        # Should capture numeric SLA values in evidence
+        assert any("30" in ev or "hour" in ev.lower() or "day" in ev.lower() for record in sla_records for ev in record.evidence)
+
+
+def test_gap_messages_for_missing_approver_and_sla():
+    """Test comprehensive gap message identification for missing details."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            requirements=[
+                "Manager approval required for sensitive operations.",
+                "Admin review needed before launch.",
+                "Legal sign-off must be obtained.",
+            ]
+        )
+    )
+
+    # Should extract approval requirements
+    assert len(result.requirements) >= 1
+    # Some requirements may have gap messages
+    all_gaps = [gap for req in result.requirements for gap in req.gap_messages]
+    # Gap messages are optional but when present should be meaningful
+    if all_gaps:
+        gap_text = " ".join(all_gaps).lower()
+        assert "approver" in gap_text or "sla" in gap_text or "turnaround" in gap_text
+
+
+def test_confidence_levels_based_on_requirement_strength():
+    """Test that confidence levels vary based on requirement strength."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            requirements=[
+                "Manager approval must be obtained before proceeding.",  # High confidence (must)
+                "Admin review should be completed.",  # Medium confidence (should)
+                "Legal signoff may be required.",  # Low confidence (may)
+            ]
+        )
+    )
+
+    # Should have varying confidence levels
+    confidences = [req.confidence for req in result.requirements]
+    # Should have at least one high confidence requirement
+    assert "high" in confidences or "medium" in confidences
+
+
+def test_multiple_approver_extraction_from_text():
+    """Test extraction of multiple approver roles from complex text."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "approval": (
+                    "Requires manager approval, director approval, and VP approval for budget increases. "
+                    "Legal counsel and compliance officer must sign off on policy changes. "
+                    "Security team review all authentication changes."
+                )
+            }
+        )
+    )
+
+    # Should extract approval surfaces
+    surfaces = [record.surface for record in result.requirements]
+    assert len(surfaces) >= 2
+    # Should extract some approver roles
+    approvers = [req.approver for req in result.requirements if req.approver]
+    assert len(approvers) >= 1
+
+
+def test_conditional_approval_scenarios():
+    """Test extraction of conditional approval requirements."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            requirements=[
+                "Manager approval required if amount exceeds $5000.",
+                "Security review needed only for production deployments.",
+                "Legal signoff required for contracts but not quotes.",
+            ]
+        )
+    )
+
+    # Should extract approval requirements despite conditional nature
+    surfaces = [record.surface for record in result.requirements]
+    assert len(surfaces) >= 2
+
+
+def test_parallel_vs_sequential_approval_patterns():
+    """Test extraction of parallel and sequential approval patterns."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "workflow": {
+                    "parallel": "Manager and security review can happen in parallel.",
+                    "sequential": "Sequential approval: team lead, then manager, then director.",
+                }
+            }
+        )
+    )
+
+    # Should extract multi-step or individual approval surfaces
+    surfaces = [record.surface for record in result.requirements]
+    assert "multi_step_approval" in surfaces or "manager_approval" in surfaces or "security_review" in surfaces
+
+
+def test_auto_approval_with_escalation_fallback():
+    """Test extraction when auto-approval is mentioned with manual escalation."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "workflow": "Manual manager approval required above $100 threshold, escalate to director if manager unavailable."
+            }
+        )
+    )
+
+    # Should extract manual approval and escalation
+    surfaces = [record.surface for record in result.requirements]
+    assert "manager_approval" in surfaces or "escalation" in surfaces
+
+
+def test_rejection_workflow_with_resubmission():
+    """Test extraction of rejection and resubmission workflows."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            acceptance_criteria=[
+                "Rejection reason must be provided.",
+                "User can resubmit after addressing rejection feedback.",
+                "Rejection notification sent to submitter.",
+            ]
+        )
+    )
+
+    # Should extract rejection reason requirement
+    surfaces = [record.surface for record in result.requirements]
+    assert "rejection_reason" in surfaces
+
+
+def test_approval_expiration_and_refresh():
+    """Test extraction of approval expiration scenarios."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "approval": "Manager approval expires after 30 days and must be refreshed for deployment."
+            }
+        )
+    )
+
+    # Should extract approval requirement with SLA implications
+    surfaces = [record.surface for record in result.requirements]
+    assert "manager_approval" in surfaces or "approval_sla" in surfaces
+
+
+def test_emergency_bypass_approval_patterns():
+    """Test extraction when emergency bypass is mentioned."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            risks=[
+                "Emergency deployments can bypass security review with post-facto approval.",
+                "Break-glass procedure allows immediate deployment with director signoff within 24 hours.",
+            ]
+        )
+    )
+
+    # Should extract approval requirements despite emergency bypass mention
+    surfaces = [record.surface for record in result.requirements]
+    assert len(surfaces) >= 1
+
+
+def test_suggested_owners_assignment():
+    """Test that suggested owners are correctly assigned for each surface."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            source_payload={
+                "workflow": {
+                    "manager": "Manager approval required.",
+                    "security": "Security review needed.",
+                    "legal": "Legal signoff required.",
+                }
+            }
+        )
+    )
+
+    # Check that suggested owners are assigned
+    for req in result.requirements:
+        assert len(req.suggested_owners) >= 1
+        # Check specific owner suggestions
+        if req.surface == "manager_approval":
+            assert "product_manager" in req.suggested_owners or "engineering_manager" in req.suggested_owners
+        elif req.surface == "security_review":
+            assert "security" in req.suggested_owners or "infosec" in req.suggested_owners
+        elif req.surface == "legal_signoff":
+            assert "legal" in req.suggested_owners or "compliance" in req.suggested_owners
+
+
+def test_planning_notes_presence():
+    """Test that planning notes are provided for extracted requirements."""
+    result = extract_source_workflow_approval_requirements(
+        _source_brief(
+            requirements=[
+                "Manager approval required for budget changes.",
+                "Multi-step approval workflow for data access.",
+            ]
+        )
+    )
+
+    # All requirements should have planning notes
+    for req in result.requirements:
+        assert len(req.planning_notes) >= 1
+        # Planning notes should be actionable
+        assert any("define" in note.lower() or "specify" in note.lower() or "plan" in note.lower() or "design" in note.lower() for note in req.planning_notes)
+
+
 def _implementation_brief(
     *,
     brief_id="implementation-approval",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Iterable, Literal, Mapping, TypeVar
+from typing import Any, Iterable, Literal, Mapping, TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -508,7 +508,8 @@ def _source_payload(
         return _optional_text(payload.get("id")), _task_payloads(payload.get("tasks"))
 
     try:
-        iterator = iter(source)  # type: ignore[arg-type]
+        # Type narrowing: source is an iterable at this point
+        iterator = iter(cast(Iterable[object], source))
     except TypeError:
         return None, []
 
