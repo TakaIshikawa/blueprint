@@ -371,6 +371,470 @@ def _plan(tasks):
     }
 
 
+def test_malformed_task_inputs_with_missing_fields():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                {"title": "Task without ID"},
+                {"id": "task-minimal"},
+            ]
+        )
+    )
+
+    assert result.summary["task_count"] == 2
+    assert len(result.runbooks) == 2
+
+
+def test_boundary_conditions_empty_and_whitespace_fields():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-empty",
+                    title="",
+                    description="",
+                    files_or_modules=[""],
+                    acceptance_criteria=[""],
+                ),
+                _task(
+                    "task-whitespace",
+                    title="   ",
+                    description="   \n\t  ",
+                    files_or_modules=["  ", "\t\n"],
+                ),
+            ]
+        )
+    )
+
+    assert result.summary["task_count"] == 2
+    for runbook in result.runbooks:
+        assert runbook.requirement_status == "no_runbook_needed"
+
+
+def test_complex_multi_signal_deployment_scenario():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-complex",
+                    title="Multi-phase production deployment",
+                    description=(
+                        "Deploy database migration, feature flag rollout, queue backfill, "
+                        "cron job update, external service integration, alert configuration, "
+                        "with on-call support and comprehensive rollback plan."
+                    ),
+                    files_or_modules=[
+                        "db/migrations/202605_complex.sql",
+                        "src/feature_flags/rollout.py",
+                        "src/backfills/data_backfill.py",
+                        "src/queues/processor.py",
+                        "src/cron/scheduled_tasks.py",
+                        "src/integrations/external_api.py",
+                        "ops/alerts/monitoring.yml",
+                    ],
+                    acceptance_criteria=[
+                        "Rollback procedure rehearsed.",
+                        "On-call engineer assigned.",
+                        "Incident response plan documented.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert len(runbook.operational_signals) >= 5
+    assert "migration" in runbook.operational_signals
+    assert "deploy" in runbook.operational_signals
+    assert "feature_flag" in runbook.operational_signals
+    assert "backfill" in runbook.operational_signals
+    assert "queue" in runbook.operational_signals
+    assert "cron_job" in runbook.operational_signals
+    assert "external_service" in runbook.operational_signals
+    assert len(runbook.sections.pre_checks) > 0
+    assert len(runbook.sections.execution_steps) > 0
+    assert len(runbook.sections.monitoring) > 0
+    assert len(runbook.sections.rollback) > 0
+    assert len(runbook.sections.escalation) > 0
+    assert len(runbook.sections.post_checks) > 0
+
+
+def test_incident_response_with_multiple_alert_channels():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-incident",
+                    title="Update incident response alert routing",
+                    description=(
+                        "Configure multi-channel alert routing for SEV-1 incidents with "
+                        "on-call escalation, paging integration, and incident commander handoff."
+                    ),
+                    files_or_modules=["ops/alerts/incident_routing.yml"],
+                    metadata={
+                        "runbook": {
+                            "channel": "incident-response",
+                            "escalation_policy": "immediate",
+                        }
+                    },
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "incident_response" in runbook.operational_signals
+    assert "alert" in runbook.operational_signals
+    assert "on_call" in runbook.operational_signals
+    assert any("escalation" in step.lower() for step in runbook.sections.escalation)
+
+
+def test_gradual_rollout_with_canary_deployment():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-canary",
+                    title="Canary deployment with gradual feature flag rollout",
+                    description=(
+                        "Deploy to 1% canary hosts, monitor metrics, then gradually increase "
+                        "feature flag exposure with rollback capability at each stage."
+                    ),
+                    files_or_modules=[
+                        "deploy/canary.yml",
+                        "src/feature_flags/gradual_rollout.py",
+                    ],
+                    acceptance_criteria=[
+                        "Canary deployment monitored for 1 hour before expansion.",
+                        "Rollback tested in pre-production.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "deploy" in runbook.operational_signals
+    assert "feature_flag" in runbook.operational_signals
+    assert "rollback" in runbook.operational_signals
+
+
+def test_database_backfill_with_idempotency_checks():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-backfill",
+                    title="Idempotent historical data backfill",
+                    description=(
+                        "Run resumable backfill of 10M records with batching, checkpointing, "
+                        "and idempotency guarantees for safe retry."
+                    ),
+                    files_or_modules=["src/backfills/historical_data.py"],
+                    acceptance_criteria=[
+                        "Backfill progress checkpointed every 10k records.",
+                        "Idempotency verified with duplicate run test.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "backfill" in runbook.operational_signals
+    assert any("batch" in step.lower() for step in runbook.sections.execution_steps)
+    assert any("idempot" in step.lower() for step in runbook.sections.pre_checks)
+
+
+def test_queue_worker_with_dead_letter_handling():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-queue-dlq",
+                    title="Update queue worker with dead letter handling",
+                    description=(
+                        "Add retry logic and dead letter queue routing for failed messages "
+                        "with monitoring on queue depth and processing latency."
+                    ),
+                    files_or_modules=["src/queues/worker_retry.py"],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "queue" in runbook.operational_signals
+    assert any("queue depth" in mon.lower() for mon in runbook.sections.monitoring)
+
+
+def test_cron_job_schedule_change_with_overlap_prevention():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-cron",
+                    title="Update nightly cron schedule with overlap prevention",
+                    description=(
+                        "Change cron schedule from hourly to every 30 minutes with locking "
+                        "to prevent overlapping runs."
+                    ),
+                    files_or_modules=["src/cron/nightly_jobs.py"],
+                    acceptance_criteria=["Scheduler registered new run time."],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "cron_job" in runbook.operational_signals
+    assert any("scheduler" in check.lower() for check in runbook.sections.post_checks)
+
+
+def test_external_service_integration_with_timeout_handling():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-external",
+                    title="Integrate external payment service with timeout handling",
+                    description=(
+                        "Add payment gateway integration with circuit breaker, timeout "
+                        "configuration, and fallback to cached credentials on errors."
+                    ),
+                    files_or_modules=["src/integrations/payment_gateway.py"],
+                    acceptance_criteria=["Timeout and circuit breaker tested."],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "external_service" in runbook.operational_signals
+    assert any("timeout" in check.lower() for check in runbook.sections.pre_checks)
+
+
+def test_rollback_procedure_with_data_consistency_validation():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-rollback",
+                    title="Deploy with comprehensive rollback validation",
+                    description=(
+                        "Production deployment with tested rollback procedure including "
+                        "data consistency checks and service health validation."
+                    ),
+                    files_or_modules=["deploy/production.yml"],
+                    acceptance_criteria=[
+                        "Rollback steps documented with expected duration.",
+                        "Data consistency validated post-rollback.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert "deploy" in runbook.operational_signals
+    assert "rollback" in runbook.operational_signals
+    assert len(runbook.sections.rollback) > 0
+
+
+def test_metadata_driven_runbook_requirements():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-metadata",
+                    title="Task with metadata runbook signals",
+                    description="Standard feature deployment.",
+                    files_or_modules=["src/feature.py"],
+                    metadata={
+                        "runbook": {
+                            "notes": "Deploy with caution and monitor carefully",
+                        }
+                    },
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.task_id == "task-metadata"
+    evidence_with_metadata = [e for e in runbook.evidence if "metadata" in e]
+    assert len(evidence_with_metadata) > 0
+
+
+def test_sorting_runbook_required_before_no_runbook():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-copy",
+                    title="Update UI copy",
+                    files_or_modules=["src/ui/text.py"],
+                ),
+                _task(
+                    "task-deploy",
+                    title="Production deployment",
+                    files_or_modules=["deploy/prod.yml"],
+                ),
+                _task(
+                    "task-docs",
+                    title="Update documentation",
+                    files_or_modules=["docs/readme.md"],
+                ),
+            ]
+        )
+    )
+
+    runbook_required = [r.task_id for r in result.runbooks if r.runbook_required]
+    no_runbook = [r.task_id for r in result.runbooks if not r.runbook_required]
+
+    assert "task-deploy" in runbook_required
+    assert "task-copy" in no_runbook
+    assert "task-docs" in no_runbook
+
+
+def test_special_characters_in_runbook_fields():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-special",
+                    title="Deploy with <special> & \"quoted\" characters",
+                    description=(
+                        "Production deploy with unicode: \u00e9\u00f1\u00fc and symbols: #$%^&*"
+                    ),
+                    files_or_modules=["deploy/prod-\u00e9.yml"],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+    markdown = task_operational_runbook_plan_to_markdown(result)
+
+    assert runbook.task_id == "task-special"
+    assert "task-special" in markdown
+
+
+def test_very_long_descriptions_and_file_lists():
+    long_description = " ".join(
+        [
+            "Deploy migration backfill queue cron external service alert rollback "
+            "on-call incident response feature flag monitoring escalation"
+        ]
+        * 15
+    )
+    many_files = [f"deploy/service_{i}.yml" for i in range(50)]
+
+    result = build_task_operational_runbook_plan(
+        _plan([_task("task-long", description=long_description, files_or_modules=many_files)])
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    assert len(runbook.operational_signals) > 0
+
+
+def test_serialization_preserves_all_runbook_fields():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-serialize",
+                    title="Production migration",
+                    description="Database migration with rollback.",
+                    files_or_modules=["db/migrations/001.sql"],
+                )
+            ]
+        )
+    )
+
+    payload = task_operational_runbook_plan_to_dict(result)
+    json_payload = json.loads(json.dumps(payload))
+
+    assert payload == json_payload
+    assert payload == result.to_dict()
+    assert result.to_dicts() == payload["runbooks"]
+    assert all(
+        "sections" in runbook and isinstance(runbook["sections"], dict)
+        for runbook in payload["runbooks"]
+    )
+
+
+def test_edge_case_file_paths_for_signal_detection():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-paths",
+                    title="Deploy with various path formats",
+                    files_or_modules=[
+                        "/absolute/deploy/service.yml",
+                        "./relative/migration.sql",
+                        "../parent/backfill.py",
+                        "deploy.yml",
+                        "path\\with\\backslashes\\deploy.yml",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert len(runbook.operational_signals) > 0
+
+
+def test_acceptance_criteria_with_operational_keywords():
+    result = build_task_operational_runbook_plan(
+        _plan(
+            [
+                _task(
+                    "task-ac",
+                    title="Feature deployment",
+                    description="Deploy new feature to production.",
+                    files_or_modules=["src/feature.py"],
+                    acceptance_criteria=[
+                        "Pre-deployment checks completed.",
+                        "Rollback procedure documented and tested.",
+                        "Monitoring alerts configured for error rates.",
+                        "On-call engineer assigned and briefed.",
+                        "Post-deployment verification steps executed.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    runbook = result.runbooks[0]
+
+    assert runbook.runbook_required is True
+    ac_evidence = [e for e in runbook.evidence if "acceptance_criteria" in e]
+    assert len(ac_evidence) > 0
+
+
 def _task(
     task_id,
     *,
