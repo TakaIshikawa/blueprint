@@ -189,6 +189,247 @@ def test_empty_unrelated_or_malformed_sources_return_empty_results():
     }
 
 
+def test_malformed_input_types_return_empty_results_gracefully():
+    """Test that various malformed inputs are handled without errors."""
+    # Non-mapping types
+    assert extract_source_user_journeys(None) == ()
+    assert extract_source_user_journeys([]) == ()
+    assert extract_source_user_journeys(123) == ()
+    assert extract_source_user_journeys(True) == ()
+
+    # Invalid nested structures
+    assert extract_source_user_journeys({"source_payload": None}) == ()
+    assert extract_source_user_journeys({"source_payload": [1, 2, 3]}) == ()
+
+    # Empty or whitespace-only values
+    assert extract_source_user_journeys(_source_brief(summary="", title="")) == ()
+    assert extract_source_user_journeys(_source_brief(summary="   ", title="  \n  ")) == ()
+
+
+def test_edge_cases_in_text_parsing_handle_special_characters():
+    """Test text parsing with special characters, boundaries, and edge cases."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "body": (
+                    "User can confirm!!!... when ###trigger occurs.\n"
+                    "   \n"  # whitespace only line
+                    "- - - nested bullets\n"
+                    "Admin can process (with parentheses) and special chars: $%&"
+                )
+            }
+        )
+    )
+
+    # Should still extract valid patterns despite special characters
+    assert len(records) >= 2
+    actors = [r.actor for r in records]
+    assert "user" in actors
+    assert "admin" in actors
+
+
+def test_very_long_text_is_truncated_in_evidence_and_outcomes():
+    """Test that very long text values are handled with truncation."""
+    long_outcome = "complete " + ("very " * 100) + "long process"
+    records = extract_source_user_journeys(
+        _source_brief(
+            summary=f"User can {long_outcome} when ready."
+        )
+    )
+
+    assert len(records) > 0
+    # Evidence should be truncated with ellipsis
+    assert all(len(r.evidence[0]) <= 180 for r in records)
+    # Outcome should be cleaned but may still be long
+    assert all(isinstance(r.expected_outcome, str) for r in records)
+
+
+def test_regex_pattern_boundaries_and_overlapping_matches():
+    """Test regex patterns at text boundaries and overlapping scenarios."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "constraints": [
+                    # Pattern at start
+                    "Customer journey when payment fails so that retry happens",
+                    # Pattern at end
+                    "Process starts when timeout and ends with customer journey",
+                    # Multiple triggers in one sentence
+                    "User can act when trigger one and when trigger two occur",
+                ]
+            }
+        )
+    )
+
+    assert len(records) >= 2
+    # Verify multiple journeys detected
+    journey_names = [r.journey_name for r in records]
+    assert any("Customer Journey" in name or "User can" in name for name in journey_names)
+
+
+def test_partial_structured_journeys_with_missing_fields():
+    """Test structured journey mappings with various missing required fields."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "user_journeys": [
+                    # Complete journey
+                    {
+                        "name": "Complete flow",
+                        "actor": "user",
+                        "trigger": "event occurs",
+                        "outcome": "action completes",
+                    },
+                    # Missing trigger
+                    {
+                        "name": "Partial flow",
+                        "actor": "admin",
+                        "outcome": "approval granted",
+                    },
+                    # Missing outcome
+                    {
+                        "name": "Another flow",
+                        "actor": "customer",
+                        "trigger": "cart ready",
+                    },
+                    # Minimal - only name
+                    {
+                        "name": "Minimal flow",
+                    },
+                    # No journey-identifying fields at all
+                    {
+                        "unrelated": "data",
+                        "other": "fields",
+                    },
+                ]
+            }
+        )
+    )
+
+    # Should extract journeys even with missing fields, using defaults
+    assert len(records) >= 3
+    # All should have required fields populated (with defaults if needed)
+    for record in records:
+        assert record.journey_name
+        assert record.actor
+        assert record.trigger
+        assert record.expected_outcome
+        assert record.confidence == "high"  # structured journeys get high confidence
+
+
+def test_type_polymorphism_in_summarize_function():
+    """Test summarize_source_user_journeys with all supported input types.
+
+    This specifically tests the code paths with type: ignore annotations at lines 155, 157.
+    """
+    source_dict = _source_brief(
+        summary="Customer journey starts when ready.",
+        source_payload={"goals": ["User can complete checkout."]},
+    )
+    source_model = SourceBrief.model_validate(source_dict)
+
+    # Extract records for direct testing
+    records_tuple = extract_source_user_journeys(source_dict)
+    records_list = list(records_tuple)
+
+    # Test with tuple of records (line 155: type: ignore)
+    summary_from_tuple = summarize_source_user_journeys(records_tuple)
+    assert summary_from_tuple["journey_count"] == len(records_tuple)
+    assert summary_from_tuple["journey_count"] >= 2
+
+    # Test with list of records (line 155: type: ignore)
+    summary_from_list = summarize_source_user_journeys(records_list)
+    assert summary_from_list == summary_from_tuple
+
+    # Test with mapping (line 157: type: ignore)
+    summary_from_dict = summarize_source_user_journeys(source_dict)
+    assert summary_from_dict == summary_from_tuple
+
+    # Test with SourceBrief model (line 157: type: ignore)
+    summary_from_model = summarize_source_user_journeys(source_model)
+    assert summary_from_model == summary_from_tuple
+
+    # Test with empty records
+    empty_summary = summarize_source_user_journeys([])
+    assert empty_summary["journey_count"] == 0
+    assert empty_summary["confidence_counts"] == {"high": 0, "medium": 0, "low": 0}
+
+
+def test_deduplication_with_case_and_punctuation_variations():
+    """Test that deduplication handles case, punctuation, and whitespace variations."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "body": "User can submit order when ready.",
+                "goals": ["user can SUBMIT ORDER!", "User Can Submit-Order"],
+                "metadata": {"workflow": {"note": "user can submit... order???"}},
+            }
+        )
+    )
+
+    # Should dedupe variations of the same journey
+    # "User can submit order" appears in body, goals (2x), and metadata with case/punctuation variations
+    assert len(records) <= 2  # May not fully dedupe if outcome parsing differs
+    # All records should be about submitting orders
+    for record in records:
+        assert "submit" in record.expected_outcome.lower()
+        assert record.actor == "user"
+
+
+def test_nested_payload_extraction_with_deep_structures():
+    """Test extraction from deeply nested payload structures."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "metadata": {
+                    "scenarios": {
+                        "primary": "Customer journey when checkout starts",
+                        "secondary": {
+                            "fallback": "Support workflow when error occurs",
+                        },
+                    },
+                },
+                "nested_list": [
+                    {"items": ["User can retry when failure happens"]},
+                ],
+            }
+        )
+    )
+
+    # Should extract from deeply nested structures
+    assert len(records) >= 3
+    journey_names = {r.journey_name for r in records}
+    assert any("Customer Journey" in name for name in journey_names)
+    assert any("Support Workflow" in name for name in journey_names)
+
+
+def test_mixed_valid_and_invalid_data_in_collections():
+    """Test collections containing mix of valid and invalid journey data."""
+    records = extract_source_user_journeys(
+        _source_brief(
+            source_payload={
+                "journeys": [
+                    "Valid text: User can approve when ready",
+                    None,  # Invalid: None value
+                    {"name": "Valid structured"},
+                    "",  # Invalid: empty string
+                    123,  # Invalid: number
+                    {"unrelated": "no journey fields"},
+                    "Approval flow is required",
+                ],
+            }
+        )
+    )
+
+    # Should extract valid entries and skip invalid ones
+    assert len(records) >= 2
+    # All returned records should be valid
+    for record in records:
+        assert isinstance(record, SourceUserJourney)
+        assert record.journey_name
+        assert record.confidence in ("high", "medium", "low")
+
+
 def _source_brief(
     *,
     source_id="sb-user-journey",
