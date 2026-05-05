@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from pydantic import ValidationError
 
@@ -152,9 +152,11 @@ def summarize_source_user_journeys(
 ) -> dict[str, Any]:
     """Return deterministic counts for extracted user journey signals."""
     if _looks_like_records(records_or_source):
-        records = tuple(records_or_source)  # type: ignore[arg-type]
+        # Type narrowing: if _looks_like_records returns True, it's a sequence of SourceUserJourney
+        records = cast(tuple[SourceUserJourney, ...], tuple(records_or_source))
     else:
-        records = extract_source_user_journeys(records_or_source)  # type: ignore[arg-type]
+        # Type narrowing: otherwise it's a Mapping or SourceBrief
+        records = extract_source_user_journeys(cast(Mapping[str, Any] | SourceBrief, records_or_source))
     return {
         "journey_count": len(records),
         "confidence_counts": {
