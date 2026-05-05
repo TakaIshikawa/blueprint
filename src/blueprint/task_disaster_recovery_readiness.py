@@ -84,7 +84,9 @@ class DisasterRecoveryReadiness:
         }
 
 
-def analyze_disaster_recovery_readiness(change_brief: Mapping[str, Any]) -> DisasterRecoveryReadiness:
+def analyze_disaster_recovery_readiness(
+    change_brief: Mapping[str, Any] | str | list[Any] | None,
+) -> DisasterRecoveryReadiness:
     """
     Analyze disaster recovery readiness from a change brief.
 

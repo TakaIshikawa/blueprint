@@ -209,7 +209,7 @@ def test_incomplete_backup_strategy():
 
 def test_invalid_change_brief_non_mapping():
     """Test with invalid input (non-mapping type)."""
-    result = analyze_disaster_recovery_readiness("not a mapping")  # type: ignore
+    result = analyze_disaster_recovery_readiness("not a mapping")
 
     assert isinstance(result, DisasterRecoveryReadiness)
     assert result.backup_strategy_defined is False
@@ -218,7 +218,7 @@ def test_invalid_change_brief_non_mapping():
 
 def test_invalid_change_brief_none():
     """Test with None input."""
-    result = analyze_disaster_recovery_readiness(None)  # type: ignore
+    result = analyze_disaster_recovery_readiness(None)
 
     assert isinstance(result, DisasterRecoveryReadiness)
     assert result.backup_strategy_defined is False
@@ -226,7 +226,7 @@ def test_invalid_change_brief_none():
 
 def test_invalid_change_brief_list():
     """Test with list input instead of mapping."""
-    result = analyze_disaster_recovery_readiness([{"key": "value"}])  # type: ignore
+    result = analyze_disaster_recovery_readiness([{"key": "value"}])
 
     assert isinstance(result, DisasterRecoveryReadiness)
     assert result.backup_strategy_defined is False
@@ -413,7 +413,7 @@ def test_dataclass_immutability():
     readiness = DisasterRecoveryReadiness(backup_strategy_defined=True)
 
     with pytest.raises(AttributeError):
-        readiness.backup_strategy_defined = False  # type: ignore
+        setattr(readiness, "backup_strategy_defined", False)
 
 
 def test_dr_drill_terminology():
