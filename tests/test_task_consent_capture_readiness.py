@@ -303,6 +303,456 @@ def _plan(tasks, plan_id="plan-consent"):
     }
 
 
+def test_malformed_inputs_with_missing_fields():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                {
+                    "id": "task-minimal",
+                    "title": "Task with minimal fields",
+                    "description": "Minimal task.",
+                },
+            ]
+        )
+    )
+
+    assert result.summary["task_count"] == 1
+
+
+def test_boundary_conditions_empty_and_whitespace():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-empty",
+                    title="",
+                    description="",
+                    files_or_modules=[""],
+                    acceptance_criteria=[""],
+                ),
+                _task(
+                    "task-whitespace",
+                    title="   ",
+                    description="   \n\t  ",
+                ),
+            ]
+        )
+    )
+
+    assert result.summary["task_count"] == 2
+
+
+def test_complex_consent_flow_with_multiple_signals():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-complex",
+                    title="Full consent lifecycle implementation",
+                    description=(
+                        "Implement user-facing consent capture form with explicit opt-in, "
+                        "store consent records with timestamps and policy versions, "
+                        "enable withdrawal mechanisms with immediate propagation, "
+                        "maintain comprehensive audit trail, support GDPR and CCPA compliance, "
+                        "propagate consent changes to downstream marketing systems."
+                    ),
+                    files_or_modules=[
+                        "src/ui/consent_form.tsx",
+                        "src/models/consent_record.py",
+                        "src/api/consent_withdrawal.py",
+                        "src/audit/consent_events.py",
+                        "src/workers/consent_propagation.py",
+                    ],
+                    acceptance_criteria=[
+                        "Explicit consent UI with no pre-checked boxes.",
+                        "Consent timestamp stores policy version.",
+                        "Withdrawal path accessible and tested.",
+                        "Audit trail captures all consent events.",
+                        "GDPR and CCPA compliance verified.",
+                        "Downstream propagation working.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert record.impact_level == "high"
+    assert len(record.matched_signals) >= 4
+    assert "user_facing_capture" in record.matched_signals
+    assert "consent_storage" in record.matched_signals
+    assert "withdrawal_path" in record.matched_signals
+    assert "auditability" in record.matched_signals
+    assert "downstream_propagation" in record.matched_signals
+    assert len(record.present_safeguards) > 0
+
+
+def test_gdpr_and_ccpa_compliance_requirements():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-gdpr",
+                    title="GDPR compliance for consent capture",
+                    description=(
+                        "Implement GDPR-compliant consent capture with explicit opt-in, "
+                        "right to withdraw, and data portability support."
+                    ),
+                    acceptance_criteria=[
+                        "GDPR Article 7 consent requirements met.",
+                        "Right to withdraw consent implemented.",
+                    ],
+                ),
+                _task(
+                    "task-ccpa",
+                    title="CCPA compliance for data collection",
+                    description=(
+                        "Add CCPA-compliant opt-out mechanisms and privacy notice "
+                        "for California residents."
+                    ),
+                    acceptance_criteria=["CCPA opt-out link added to privacy policy."],
+                ),
+            ]
+        )
+    )
+
+    assert result.summary["task_count"] == 2
+    gdpr_record = _record(result, "task-gdpr")
+    ccpa_record = _record(result, "task-ccpa")
+
+    assert gdpr_record.impact_level in ("high", "medium")
+    assert ccpa_record.impact_level in ("high", "medium", "low")
+
+
+def test_withdrawal_mechanism_with_immediate_effect():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-withdrawal",
+                    title="Implement consent withdrawal with immediate effect",
+                    description=(
+                        "Add user-facing withdrawal UI, immediately revoke consent, "
+                        "propagate withdrawal to all downstream systems."
+                    ),
+                    files_or_modules=[
+                        "src/ui/consent_withdrawal.tsx",
+                        "src/api/revoke_consent.py",
+                        "src/workers/withdrawal_propagation.py",
+                    ],
+                    acceptance_criteria=[
+                        "Withdrawal path is user-accessible.",
+                        "Withdrawal takes immediate effect.",
+                        "Downstream systems notified of withdrawal.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert record.impact_level in ("high", "medium")
+    assert "withdrawal_path" in record.matched_signals
+    assert "withdrawal_path" not in record.missing_safeguards
+
+
+def test_audit_trail_for_consent_changes():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-audit",
+                    title="Comprehensive audit trail for consent events",
+                    description=(
+                        "Log all consent capture, changes, and withdrawals with "
+                        "timestamps, user IDs, and policy versions for compliance."
+                    ),
+                    files_or_modules=["src/audit/consent_audit_log.py"],
+                    acceptance_criteria=[
+                        "Audit trail captures consent lifecycle events.",
+                        "Audit logs immutable and tamper-evident.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert "auditability" in record.matched_signals
+    assert "audit_trail" not in record.missing_safeguards
+
+
+def test_cross_jurisdiction_consent_handling():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-jurisdiction",
+                    title="Multi-jurisdiction consent handling",
+                    description=(
+                        "Support consent requirements across GDPR (EU), CCPA (California), "
+                        "LGPD (Brazil), and PIPEDA (Canada) with jurisdiction-specific flows."
+                    ),
+                    files_or_modules=["src/consent/jurisdiction_routing.py"],
+                    acceptance_criteria=[
+                        "Jurisdiction detected from user location.",
+                        "Appropriate consent flow shown per jurisdiction.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert record.impact_level in ("high", "medium", "low")
+
+
+def test_consent_version_tracking_and_migration():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-versioning",
+                    title="Consent policy versioning and migration",
+                    description=(
+                        "Track consent policy versions, require re-consent on policy updates, "
+                        "migrate existing consent records to new policy version."
+                    ),
+                    files_or_modules=["src/models/consent_policy_version.py"],
+                    acceptance_criteria=[
+                        "Consent timestamp stores policy version.",
+                        "Re-consent required after policy update.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert record.impact_level in ("high", "medium")
+    assert "consent_storage" in record.matched_signals
+
+
+def test_downstream_propagation_with_retry_logic():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-propagation",
+                    title="Reliable downstream consent propagation",
+                    description=(
+                        "Propagate consent changes to CRM, marketing platform, analytics, "
+                        "with retry logic and dead-letter queue for failed propagations."
+                    ),
+                    files_or_modules=["src/workers/consent_propagation_worker.py"],
+                    acceptance_criteria=["Downstream propagation tested with failures."],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert "downstream_propagation" in record.matched_signals
+
+
+def test_pre_checked_consent_detection():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-prechecked",
+                    title="Remove pre-checked consent boxes",
+                    description=(
+                        "Update signup form to ensure consent checkboxes are not pre-checked "
+                        "per GDPR explicit consent requirements."
+                    ),
+                    acceptance_criteria=["No pre-checked consent boxes in UI."],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert record.impact_level in ("high", "medium", "low")
+
+
+def test_metadata_safeguards_override():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-meta",
+                    title="Task with metadata safeguards",
+                    description="Consent capture with metadata-specified safeguards.",
+                    metadata={
+                        "consent_safeguards": [
+                            "explicit_consent_ui",
+                            "withdrawal_path",
+                            "audit_trail",
+                        ],
+                    },
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert len(record.present_safeguards) >= 3
+    assert "explicit_consent_ui" in record.present_safeguards
+    assert "withdrawal_path" in record.present_safeguards
+    assert "audit_trail" in record.present_safeguards
+
+
+def test_sorting_by_impact_level_then_task_id():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-z-high",
+                    title="High impact Z",
+                    description="User-facing consent capture.",
+                ),
+                _task(
+                    "task-a-high",
+                    title="High impact A",
+                    description="Explicit consent UI implementation.",
+                ),
+                _task(
+                    "task-m-medium",
+                    title="Medium impact M",
+                    description="Store consent preferences.",
+                ),
+                _task(
+                    "task-b-low",
+                    title="Low impact B",
+                    description="Audit trail logging.",
+                ),
+            ]
+        )
+    )
+
+    task_ids = [r.task_id for r in result.records]
+    impact_levels = [r.impact_level for r in result.records]
+
+    high_tasks = [tid for tid, level in zip(task_ids, impact_levels) if level == "high"]
+    assert high_tasks == sorted(high_tasks)
+
+
+def test_special_characters_in_fields():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-special",
+                    title="Consent with <special> & \"quoted\" characters",
+                    description="Unicode: \u00e9\u00f1\u00fc and symbols: #$%^&*",
+                )
+            ]
+        )
+    )
+
+    markdown = task_consent_capture_readiness_plan_to_markdown(result)
+    assert "task-special" in markdown
+
+
+def test_very_long_descriptions_and_file_lists():
+    long_description = " ".join(
+        ["consent capture withdrawal audit GDPR CCPA explicit opt-in timestamp"] * 20
+    )
+    many_files = [f"src/consent/module_{i}.py" for i in range(50)]
+
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-long",
+                    title="Long task",
+                    description=long_description,
+                    files_or_modules=many_files,
+                )
+            ]
+        )
+    )
+
+    assert len(result.records) == 1
+
+
+def test_serialization_round_trip():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-serialize",
+                    title="Consent capture",
+                    description="User-facing consent capture.",
+                )
+            ]
+        )
+    )
+
+    payload = task_consent_capture_readiness_plan_to_dict(result)
+    json_payload = json.loads(json.dumps(payload))
+
+    assert payload == json_payload
+    assert payload == result.to_dict()
+    assert task_consent_capture_readiness_plan_to_dicts(result) == payload["records"]
+
+
+def test_edge_case_file_paths():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-paths",
+                    title="Consent with various paths",
+                    description="Test path detection.",
+                    files_or_modules=[
+                        "/absolute/consent/form.tsx",
+                        "./relative/consent.py",
+                        "../parent/withdrawal.py",
+                        "consent_model.py",
+                    ],
+                )
+            ]
+        )
+    )
+
+    assert len(result.records) == 1
+
+
+def test_acceptance_criteria_with_consent_keywords():
+    result = build_task_consent_capture_readiness_plan(
+        _plan(
+            [
+                _task(
+                    "task-ac",
+                    title="Feature with consent ACs",
+                    description="Standard feature.",
+                    acceptance_criteria=[
+                        "Explicit consent obtained from users.",
+                        "Withdrawal mechanism tested.",
+                        "Audit trail verified.",
+                        "GDPR compliance checked.",
+                    ],
+                )
+            ]
+        )
+    )
+
+    record = result.records[0]
+
+    assert len(record.matched_signals) > 0
+    assert len(record.evidence) > 0
+
+
 def _task(
     task_id,
     *,
