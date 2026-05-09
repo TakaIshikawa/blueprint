@@ -87,8 +87,8 @@ def test_plan_create_dry_run_prompt_warns_for_missing_rules_file(tmp_path, monke
 
     assert result.exit_code == 0, result.output
     assert "Follow repository conventions." in result.output
-    combined_output = result.output + getattr(result, "stderr", "")
-    assert "Warning: planning rules file not found, skipping: missing-rules.md" in combined_output
+    # stderr is mixed into output by default in CliRunner
+    assert "Warning: planning rules file not found, skipping: missing-rules.md" in result.output
     assert store.list_execution_plans(limit=10) == []
 
 
