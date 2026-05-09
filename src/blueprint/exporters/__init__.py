@@ -53,6 +53,7 @@ from blueprint.exporters.release_notes import ReleaseNotesExporter
 from blueprint.exporters.relay_yaml import RelayYamlExporter
 from blueprint.exporters.risk_register import RiskRegisterExporter
 from blueprint.exporters.sarif_audit import SarifAuditExporter
+from blueprint.exporters.slack import SlackExporter
 from blueprint.exporters.slack_digest import SlackDigestExporter
 from blueprint.exporters.smoothie import SmoothieExporter
 from blueprint.exporters.source_brief import SourceBriefExporter
@@ -486,6 +487,7 @@ __all__ = [
     "RelayYamlExporter",
     "RiskRegisterExporter",
     "SarifAuditExporter",
+    "SlackExporter",
     "SlackDigestExporter",
     "SmoothieExporter",
     "SourceBriefExporter",
