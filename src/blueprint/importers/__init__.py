@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from blueprint.importers.gitlab_importer import GitLabImporter
     from blueprint.importers.csv_backlog_importer import CsvBacklogImporter
     from blueprint.importers.execution_event_jsonl_importer import ExecutionEventJsonlImporter
+    from blueprint.importers.jira import JiraImporter
+    from blueprint.importers.linear import LinearImporter
     from blueprint.importers.manual_importer import ManualBriefImporter
     from blueprint.importers.meeting_notes_importer import MeetingNotesImporter
     from blueprint.importers.notion_advanced import NotionAdvancedImporter
@@ -28,6 +30,8 @@ _EXPORTS = {
     "GitLabImporter": "blueprint.importers.gitlab_importer",
     "CsvBacklogImporter": "blueprint.importers.csv_backlog_importer",
     "ExecutionEventJsonlImporter": "blueprint.importers.execution_event_jsonl_importer",
+    "JiraImporter": "blueprint.importers.jira",
+    "LinearImporter": "blueprint.importers.linear",
     "ManualBriefImporter": "blueprint.importers.manual_importer",
     "MeetingNotesImporter": "blueprint.importers.meeting_notes_importer",
     "NotionAdvancedImporter": "blueprint.importers.notion_advanced",
@@ -56,6 +60,8 @@ __all__ = [
     "GitLabImporter",
     "CsvBacklogImporter",
     "ExecutionEventJsonlImporter",
+    "JiraImporter",
+    "LinearImporter",
     "ManualBriefImporter",
     "MeetingNotesImporter",
     "NotionAdvancedImporter",
