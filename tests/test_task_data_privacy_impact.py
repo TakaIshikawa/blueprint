@@ -1,318 +1,717 @@
-import copy
-import json
-from dataclasses import dataclass
+"""Tests for data privacy impact analyzer."""
 
-from blueprint.domain.models import ExecutionPlan, ExecutionTask
+import pytest
+
 from blueprint.task_data_privacy_impact import (
-    TaskDataPrivacyImpactPlan,
-    build_task_data_privacy_impact_plan,
-    recommend_task_data_privacy_impacts,
-    task_data_privacy_impact_plan_to_dict,
-    task_data_privacy_impact_plan_to_markdown,
+    DataPrivacyImpact,
+    analyze_data_privacy_impact,
 )
 
 
-def test_privacy_sensitive_task_classifies_categories_safeguards_and_questions():
-    result = build_task_data_privacy_impact_plan(
-        _plan(
-            [
-                _task(
-                    "task-privacy",
-                    title="Export user profile PII to vendor webhook",
-                    description=(
-                        "Add CSV export for email addresses, full name, and user profile "
-                        "fields shared with a third-party analytics processor."
-                    ),
-                    files_or_modules=[
-                        "src/users/profiles/exporter.py",
-                        "src/integrations/vendors/profile_webhook.py",
-                    ],
-                    acceptance_criteria=["Privacy review signs off outbound fields."],
-                )
-            ]
-        )
-    )
+def test_empty_task_data_returns_all_false():
+    """Empty task data should return all fields as False."""
+    result = analyze_data_privacy_impact({})
 
-    impact = result.task_impacts[0]
-
-    assert impact.task_id == "task-privacy"
-    assert impact.impact_level == "high"
-    assert impact.data_categories == (
-        "pii",
-        "analytics",
-        "user_profiles",
-        "exports",
-        "third_party_sharing",
-    )
-    assert "Classify PII fields and apply data minimization before implementation." in (
-        impact.required_safeguards
-    )
-    assert "Confirm the third party is approved for the data categories being shared." in (
-        impact.required_safeguards
-    )
-    assert "Which exact personal data fields are collected, stored, displayed, or transformed?" in (
-        impact.follow_up_questions
-    )
-    assert "What third party receives the data and under which processing agreement?" in (
-        impact.follow_up_questions
-    )
-    assert result.privacy_task_ids == ("task-privacy",)
-    assert result.no_impact_task_ids == ()
-    assert result.summary["category_counts"]["pii"] == 1
+    assert isinstance(result, DataPrivacyImpact)
+    assert result.pii_collection_identified is False
+    assert result.data_sharing_detected is False
+    assert result.consent_requirements_present is False
+    assert result.retention_policy_defined is False
+    assert result.cross_border_transfers_flagged is False
+    assert result.gdpr_compliance_addressed is False
+    assert result.ccpa_compliance_addressed is False
+    assert result.data_minimization_practiced is False
+    assert result.right_to_deletion_implemented is False
+    assert result.breach_notification_planned is False
+    assert result.children_data_handled is False
+    assert result.sensitive_categories_processed is False
+    assert result.anonymization_applied is False
+    assert result.pseudonymization_applied is False
 
 
-def test_low_risk_task_returns_explicit_no_impact_result():
-    result = build_task_data_privacy_impact_plan(
-        _plan(
-            [
-                _task(
-                    "task-copy",
-                    title="Update dashboard empty state",
-                    description="Clarify copy and spacing for a static admin dashboard panel.",
-                    files_or_modules=["src/ui/empty_state.py"],
-                )
-            ]
-        )
-    )
-
-    impact = result.task_impacts[0]
-
-    assert impact.task_id == "task-copy"
-    assert impact.impact_level == "low"
-    assert impact.data_categories == ()
-    assert impact.required_safeguards == ()
-    assert impact.follow_up_questions == ()
-    assert impact.rationale == "No privacy-sensitive data handling signals detected."
-    assert impact.evidence == ()
-    assert result.privacy_task_ids == ()
-    assert result.no_impact_task_ids == ("task-copy",)
-    assert result.summary == {
-        "task_count": 1,
-        "privacy_task_count": 0,
-        "no_impact_task_count": 1,
-        "high_impact_count": 0,
-        "medium_impact_count": 0,
-        "low_impact_count": 1,
-        "category_counts": {
-            "pii": 0,
-            "phi": 0,
-            "credentials": 0,
-            "logs": 0,
-            "analytics": 0,
-            "user_profiles": 0,
-            "exports": 0,
-            "retention": 0,
-            "deletion": 0,
-            "consent": 0,
-            "third_party_sharing": 0,
-        },
-    }
-
-
-def test_mixed_task_shapes_are_supported_without_database_access():
-    dict_task = _task(
-        "task-retention",
-        title="Add retention purge for account deletion",
-        description="Purge user data after account deletion and apply TTL retention rules.",
-        files_or_modules=["src/privacy/deletion/account_purge.py"],
-    )
-    model_task = ExecutionTask.model_validate(
-        _task(
-            "task-secret",
-            title="Rotate OAuth refresh token storage",
-            description="Move credentials into secret storage and prevent token logging.",
-            files_or_modules=["src/auth/oauth_tokens.py"],
-        )
-    )
-    object_task = TaskLike(
-        id="task-consent",
-        title="Add analytics consent gate",
-        description="Check opt-in consent before emitting product analytics events.",
-        files_or_modules=["src/analytics/consent_events.py"],
-        acceptance_criteria=["Consent state is respected."],
-    )
-
-    result = recommend_task_data_privacy_impacts([dict_task, model_task, object_task])
-
-    assert isinstance(result, TaskDataPrivacyImpactPlan)
-    assert result.plan_id is None
-    assert result.privacy_task_ids == ("task-retention", "task-secret", "task-consent")
-    assert [impact.task_id for impact in result.task_impacts] == [
-        "task-retention",
-        "task-secret",
-        "task-consent",
-    ]
-    assert _impact(result, "task-retention").data_categories == ("pii", "retention", "deletion")
-    assert _impact(result, "task-secret").impact_level == "high"
-    assert _impact(result, "task-secret").data_categories == ("credentials", "logs")
-    assert _impact(result, "task-consent").data_categories == (
-        "analytics",
-        "consent",
-    )
-
-
-def test_execution_plan_input_serializes_without_mutation():
-    plan = _plan(
-        [
-            _task(
-                "task-health",
-                title="Add patient PHI audit logs",
-                description="Record audit events when medical records are viewed.",
-                files_or_modules=["src/health/patients/audit_log.py"],
-                metadata={"data": {"classification": "PHI"}},
-            )
-        ]
-    )
-    original = copy.deepcopy(plan)
-
-    result = build_task_data_privacy_impact_plan(ExecutionPlan.model_validate(plan))
-    payload = task_data_privacy_impact_plan_to_dict(result)
-
-    assert plan == original
-    assert payload == result.to_dict()
-    assert result.to_dicts() == payload["task_impacts"]
-    assert list(payload) == [
-        "plan_id",
-        "task_impacts",
-        "privacy_task_ids",
-        "no_impact_task_ids",
-        "summary",
-    ]
-    assert list(payload["task_impacts"][0]) == [
-        "task_id",
-        "title",
-        "impact_level",
-        "data_categories",
-        "required_safeguards",
-        "follow_up_questions",
-        "rationale",
-        "evidence",
-    ]
-    assert json.loads(json.dumps(payload)) == payload
-
-
-def test_category_safeguard_question_and_evidence_ordering_is_stable():
-    result = build_task_data_privacy_impact_plan(
-        _plan(
-            [
-                _task(
-                    "task-order",
-                    title="Share credentials, consent, PII, deletion, and retention data",
-                    description=(
-                        "Delete personal data, retain audit logs, send api key credentials "
-                        "to an external API, and honor opt-out consent."
-                    ),
-                    files_or_modules=[
-                        "src/vendors/processor.py",
-                        "src/privacy/retention.py",
-                        "src/auth/secrets.py",
-                    ],
-                    metadata={
-                        "z": {"signals": {"third": "third-party sharing"}},
-                        "a": {"signals": {"analytics": "analytics tracking"}},
-                    },
-                )
-            ]
-        )
-    )
-
-    impact = result.task_impacts[0]
-
-    assert impact.data_categories == (
-        "pii",
-        "credentials",
-        "logs",
-        "analytics",
-        "retention",
-        "deletion",
-        "consent",
-        "third_party_sharing",
-    )
-    assert impact.required_safeguards == tuple(dict.fromkeys(impact.required_safeguards))
-    assert impact.follow_up_questions == tuple(dict.fromkeys(impact.follow_up_questions))
-    assert impact.evidence == tuple(dict.fromkeys(impact.evidence))
-    assert impact.evidence[0] == "title: Share credentials, consent, PII, deletion, and retention data"
-    assert result.summary["high_impact_count"] == 1
-
-
-def test_markdown_and_invalid_empty_inputs_are_deterministic():
-    result = build_task_data_privacy_impact_plan(
-        _plan(
-            [
-                _task(
-                    "task-export",
-                    title="Export customer email addresses",
-                    description="Add a report download with PII fields.",
-                    files_or_modules=["src/reports/customer_export.py"],
-                )
-            ]
-        )
-    )
-    empty = build_task_data_privacy_impact_plan({"id": "plan-empty", "tasks": []})
-    invalid = build_task_data_privacy_impact_plan({"id": "plan-invalid", "tasks": "nope"})
-    none_source = build_task_data_privacy_impact_plan(None)
-
-    markdown = task_data_privacy_impact_plan_to_markdown(result)
-
-    assert markdown == result.to_markdown()
-    assert markdown.startswith("# Task Data Privacy Impact Plan: plan-privacy")
-    assert "| `task-export` | high | pii, exports |" in markdown
-    assert empty.to_markdown() == "\n".join(
-        [
-            "# Task Data Privacy Impact Plan: plan-empty",
-            "",
-            "No tasks were available for privacy impact assessment.",
-        ]
-    )
-    assert invalid.summary["task_count"] == 0
-    assert invalid.task_impacts == ()
-    assert none_source.summary["task_count"] == 0
-    assert none_source.task_impacts == ()
-
-
-@dataclass(frozen=True)
-class TaskLike:
-    id: str
-    title: str
-    description: str
-    files_or_modules: list[str]
-    acceptance_criteria: list[str]
-
-
-def _impact(result, task_id):
-    return next(impact for impact in result.task_impacts if impact.task_id == task_id)
-
-
-def _plan(tasks):
-    return {
-        "id": "plan-privacy",
-        "implementation_brief_id": "brief-privacy",
-        "milestones": [],
-        "tasks": tasks,
-    }
-
-
-def _task(
-    task_id,
-    *,
-    title=None,
-    description=None,
-    files_or_modules=None,
-    acceptance_criteria=None,
-    metadata=None,
-    tags=None,
-):
+def test_pii_collection_detected():
+    """Detect PII collection in task data."""
     task = {
-        "id": task_id,
-        "title": title or task_id,
-        "description": description or f"Implement {task_id}.",
-        "depends_on": [],
-        "files_or_modules": files_or_modules or [],
-        "acceptance_criteria": acceptance_criteria if acceptance_criteria is not None else ["Done"],
-        "status": "pending",
+        "title": "Implement user registration",
+        "description": "Collect PII including name, email, and phone number from users",
     }
-    if metadata is not None:
-        task["metadata"] = metadata
-    if tags is not None:
-        task["tags"] = tags
-    return task
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.data_sharing_detected is False
+
+
+def test_data_sharing_detected():
+    """Detect data sharing in task data."""
+    task = {
+        "description": "Share user data with third party analytics provider",
+        "acceptance_criteria": ["Third-party integration enabled"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.data_sharing_detected is True
+    assert result.pii_collection_identified is False
+
+
+def test_consent_requirements_detected():
+    """Detect consent requirements in task data."""
+    task = {
+        "title": "Add consent mechanism",
+        "description": "Implement user consent flow with opt-in for marketing emails",
+        "acceptance_criteria": ["Consent banner displayed", "User preferences saved"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.consent_requirements_present is True
+    assert result.pii_collection_identified is False
+
+
+def test_retention_policy_detected():
+    """Detect retention policy in task data."""
+    task = {
+        "description": "Define data retention policy with automatic deletion after 90 days",
+        "acceptance_criteria": ["Retention schedule documented"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.retention_policy_defined is True
+    assert result.pii_collection_identified is False
+
+
+def test_cross_border_transfers_detected():
+    """Detect cross-border transfers in task data."""
+    task = {
+        "description": "Enable international data transfer with standard contractual clauses",
+        "acceptance_criteria": ["Cross-border transfer compliance verified"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.cross_border_transfers_flagged is True
+    assert result.pii_collection_identified is False
+
+
+def test_gdpr_compliance_detected():
+    """Detect GDPR compliance in task data."""
+    task = {
+        "title": "GDPR compliance implementation",
+        "description": "Ensure GDPR compliance with privacy by design principles",
+        "acceptance_criteria": ["GDPR requirements met", "Data protection impact assessment completed"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.gdpr_compliance_addressed is True
+    assert result.pii_collection_identified is False
+
+
+def test_ccpa_compliance_detected():
+    """Detect CCPA compliance in task data."""
+    task = {
+        "description": "Implement CCPA compliance with do not sell option",
+        "acceptance_criteria": ["CCPA compliant", "Consumer privacy rights honored"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.ccpa_compliance_addressed is True
+    assert result.pii_collection_identified is False
+
+
+def test_data_minimization_detected():
+    """Detect data minimization in task data."""
+    task = {
+        "description": "Apply data minimization principles to collect PII with minimal data collection",
+        "acceptance_criteria": ["Only necessary data collected"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.data_minimization_practiced is True
+    assert result.pii_collection_identified is True
+
+
+def test_right_to_deletion_detected():
+    """Detect right to deletion in task data."""
+    task = {
+        "title": "Implement right to deletion",
+        "description": "Allow users to request data deletion and erasure",
+        "acceptance_criteria": ["User data removal implemented", "Deletion request flow tested"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.right_to_deletion_implemented is True
+    assert result.pii_collection_identified is False
+
+
+def test_breach_notification_detected():
+    """Detect breach notification in task data."""
+    task = {
+        "description": "Establish breach notification protocol for security incidents",
+        "acceptance_criteria": ["Incident response plan documented"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.breach_notification_planned is True
+    assert result.pii_collection_identified is False
+
+
+def test_children_data_detected():
+    """Detect children's data handling in task data."""
+    task = {
+        "title": "Add parental consent",
+        "description": "Implement COPPA compliance for children's data with age verification",
+        "acceptance_criteria": ["Parental consent obtained for users under 13"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.children_data_handled is True
+    assert result.pii_collection_identified is False
+
+
+def test_sensitive_categories_detected():
+    """Detect sensitive data categories in task data."""
+    task = {
+        "description": "Process health data and medical records for patient portal",
+        "acceptance_criteria": ["Sensitive personal data protected"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.sensitive_categories_processed is True
+    assert result.pii_collection_identified is False
+
+
+def test_anonymization_detected():
+    """Detect anonymization in task data."""
+    task = {
+        "description": "Anonymize user data by removing personal identifiers",
+        "acceptance_criteria": ["Data anonymization applied", "De-identification tested"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.anonymization_applied is True
+    assert result.pii_collection_identified is False
+
+
+def test_pseudonymization_detected():
+    """Detect pseudonymization in task data."""
+    task = {
+        "description": "Apply pseudonymization to tokenize user identifiers",
+        "acceptance_criteria": ["Hashed identifiers used"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pseudonymization_applied is True
+    assert result.pii_collection_identified is False
+
+
+def test_comprehensive_privacy_all_detected():
+    """Test comprehensive privacy with all aspects present."""
+    task = {
+        "title": "Complete privacy-compliant user management system",
+        "description": (
+            "Build user management with PII collection and data sharing to third parties. "
+            "Implement user consent mechanism with opt-in and data retention policy. "
+            "Handle cross-border data transfers with GDPR and CCPA compliance. "
+            "Apply data minimization and support right to deletion. "
+            "Establish breach notification protocol. Handle children's data with parental consent. "
+            "Process sensitive health data with anonymization and hashed identifiers for pseudonymization."
+        ),
+        "acceptance_criteria": [
+            "PII collection documented",
+            "Third-party data sharing compliant",
+            "User consent obtained",
+            "Retention policy defined",
+            "Cross-border transfers compliant",
+            "GDPR requirements met",
+            "CCPA compliance verified",
+            "Data minimization applied",
+            "Right to deletion implemented",
+            "Breach notification protocol established",
+            "Parental consent for children under 13",
+            "Sensitive categories protected",
+            "Anonymization tested",
+            "Pseudonymization applied",
+        ],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.data_sharing_detected is True
+    assert result.consent_requirements_present is True
+    assert result.retention_policy_defined is True
+    assert result.cross_border_transfers_flagged is True
+    assert result.gdpr_compliance_addressed is True
+    assert result.ccpa_compliance_addressed is True
+    assert result.data_minimization_practiced is True
+    assert result.right_to_deletion_implemented is True
+    assert result.breach_notification_planned is True
+    assert result.children_data_handled is True
+    assert result.sensitive_categories_processed is True
+    assert result.anonymization_applied is True
+    assert result.pseudonymization_applied is True
+
+
+def test_privacy_risk_score_no_sensitive_data():
+    """Test privacy risk score with no sensitive data processing."""
+    task = {
+        "description": "Implement public API documentation generator",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # No sensitive data = high baseline score
+    assert result.privacy_risk_score == 0.95
+
+
+def test_privacy_risk_score_sensitive_no_protection():
+    """Test privacy risk score with sensitive data but no protections."""
+    task = {
+        "description": "Collect PII and share with third parties",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # Sensitive data without protection = low score
+    assert result.privacy_risk_score < 0.4
+
+
+def test_privacy_risk_score_sensitive_with_protection():
+    """Test privacy risk score with sensitive data and comprehensive protections."""
+    task = {
+        "description": (
+            "Collect PII with user consent, data minimization, and right to deletion. "
+            "GDPR and CCPA compliant with retention policy and breach notification."
+        ),
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # Sensitive data with comprehensive protection = high score
+    assert result.privacy_risk_score > 0.8
+
+
+def test_privacy_risk_score_high_sensitivity_partial_protection():
+    """Test privacy risk score with high sensitivity and partial protections."""
+    task = {
+        "description": (
+            "Collect PII, share with third parties, process children's data, "
+            "and handle sensitive health data. Implement user consent."
+        ),
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # High sensitivity with only partial protection = low to moderate score
+    assert 0.15 < result.privacy_risk_score < 0.4
+
+
+def test_invalid_task_data_non_mapping():
+    """Test with invalid input (non-mapping type)."""
+    result = analyze_data_privacy_impact("not a mapping")
+
+    assert isinstance(result, DataPrivacyImpact)
+    assert result.pii_collection_identified is False
+    assert result.privacy_risk_score == 0.95
+
+
+def test_invalid_task_data_none():
+    """Test with None input."""
+    result = analyze_data_privacy_impact(None)
+
+    assert isinstance(result, DataPrivacyImpact)
+    assert result.pii_collection_identified is False
+
+
+def test_invalid_task_data_list():
+    """Test with list input instead of mapping."""
+    result = analyze_data_privacy_impact([{"key": "value"}])
+
+    assert isinstance(result, DataPrivacyImpact)
+    assert result.pii_collection_identified is False
+
+
+def test_task_data_with_nested_acceptance_criteria():
+    """Test extraction from nested acceptance criteria structure."""
+    task = {
+        "title": "Privacy improvements",
+        "acceptance_criteria": [
+            "Collect PII with user consent",
+            "Implement GDPR compliance",
+            "Apply data minimization",
+        ],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.consent_requirements_present is True
+    assert result.gdpr_compliance_addressed is True
+    assert result.data_minimization_practiced is True
+
+
+def test_validation_commands_checked():
+    """Test that validation commands are included in analysis."""
+    task = {
+        "title": "Privacy testing",
+        "validation_command": "pytest tests/test_pii_collection.py tests/test_consent.py",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.consent_requirements_present is True
+
+
+def test_case_insensitive_matching():
+    """Test that pattern matching is case-insensitive."""
+    task = {
+        "description": "COLLECT PII WITH USER CONSENT AND GDPR COMPLIANCE",
+        "acceptance_criteria": ["DATA MINIMIZATION and RIGHT TO DELETION"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.consent_requirements_present is True
+    assert result.gdpr_compliance_addressed is True
+    assert result.data_minimization_practiced is True
+    assert result.right_to_deletion_implemented is True
+
+
+def test_alternative_terminology_pii():
+    """Test alternative PII terminology is recognized."""
+    task = {
+        "description": "Store personal information including user email addresses",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+
+
+def test_alternative_terminology_consent():
+    """Test alternative consent terminology is recognized."""
+    task = {
+        "description": "Add opt-in mechanism for marketing preferences",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.consent_requirements_present is True
+
+
+def test_alternative_terminology_deletion():
+    """Test alternative deletion terminology is recognized."""
+    task = {
+        "description": "Implement right to be forgotten for user accounts",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.right_to_deletion_implemented is True
+
+
+def test_alternative_terminology_anonymization():
+    """Test alternative anonymization terminology is recognized."""
+    task = {
+        "description": "Apply data masking to redact personal identifiers",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.anonymization_applied is True
+
+
+def test_alternative_terminology_pseudonymization():
+    """Test alternative pseudonymization terminology is recognized."""
+    task = {
+        "description": "Use hashed identifiers for user tracking",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pseudonymization_applied is True
+
+
+def test_to_dict_method():
+    """Test DataPrivacyImpact.to_dict() serialization."""
+    impact = DataPrivacyImpact(
+        pii_collection_identified=True,
+        data_sharing_detected=True,
+        consent_requirements_present=True,
+        retention_policy_defined=False,
+        cross_border_transfers_flagged=False,
+        gdpr_compliance_addressed=True,
+        ccpa_compliance_addressed=False,
+        data_minimization_practiced=True,
+        right_to_deletion_implemented=True,
+        breach_notification_planned=False,
+        children_data_handled=False,
+        sensitive_categories_processed=False,
+        anonymization_applied=False,
+        pseudonymization_applied=False,
+    )
+
+    result = impact.to_dict()
+
+    assert isinstance(result, dict)
+    assert result["pii_collection_identified"] is True
+    assert result["data_sharing_detected"] is True
+    assert result["consent_requirements_present"] is True
+    assert result["retention_policy_defined"] is False
+    assert result["cross_border_transfers_flagged"] is False
+    assert result["gdpr_compliance_addressed"] is True
+    assert result["ccpa_compliance_addressed"] is False
+    assert result["data_minimization_practiced"] is True
+    assert result["right_to_deletion_implemented"] is True
+    assert result["breach_notification_planned"] is False
+    assert result["children_data_handled"] is False
+    assert result["sensitive_categories_processed"] is False
+    assert result["anonymization_applied"] is False
+    assert result["pseudonymization_applied"] is False
+    assert "privacy_risk_score" in result
+    assert isinstance(result["privacy_risk_score"], float)
+
+
+def test_multiple_fields_in_different_sections():
+    """Test detection across multiple task sections."""
+    task = {
+        "title": "Privacy compliance",
+        "description": "Collect PII",
+        "acceptance_criteria": ["User consent required"],
+        "requirements": ["GDPR compliance"],
+        "notes": ["Data minimization applied"],
+        "risks": ["No retention policy"],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.consent_requirements_present is True
+    assert result.gdpr_compliance_addressed is True
+    assert result.data_minimization_practiced is True
+    assert result.retention_policy_defined is True
+
+
+def test_validation_commands_as_list():
+    """Test validation_commands as list."""
+    task = {
+        "validation_commands": [
+            "pytest tests/test_pii_collection.py",
+            "pytest tests/test_gdpr.py",
+        ],
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.gdpr_compliance_addressed is True
+
+
+def test_no_false_positives_similar_words():
+    """Test that similar but different words don't trigger false positives."""
+    task = {
+        "description": "Collect logs for debugging. Delete old files.",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # "collect" and "delete" alone shouldn't trigger PII or deletion rights
+    assert result.pii_collection_identified is False
+    assert result.right_to_deletion_implemented is False
+
+
+def test_dataclass_immutability():
+    """Test that DataPrivacyImpact is frozen/immutable."""
+    impact = DataPrivacyImpact(pii_collection_identified=True)
+
+    with pytest.raises(AttributeError):
+        impact.pii_collection_identified = False
+
+
+def test_gdpr_article_references():
+    """Test GDPR article references are recognized."""
+    task = {
+        "description": "Implement Article 17 right to erasure",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.gdpr_compliance_addressed is True
+
+
+def test_ccpa_terminology_variations():
+    """Test CCPA terminology variations are recognized."""
+    task = {
+        "description": "Implement California Consumer Privacy Act requirements",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.ccpa_compliance_addressed is True
+
+
+def test_children_age_variations():
+    """Test various age thresholds for children's data."""
+    task_under_13 = {
+        "description": "Verify users are not under 13",
+    }
+    task_under_16 = {
+        "description": "Age verification for users under 16",
+    }
+    task_under_18 = {
+        "description": "Minors under 18 require parental consent",
+    }
+
+    assert analyze_data_privacy_impact(task_under_13).children_data_handled is True
+    assert analyze_data_privacy_impact(task_under_16).children_data_handled is True
+    assert analyze_data_privacy_impact(task_under_18).children_data_handled is True
+
+
+def test_sensitive_health_data():
+    """Test health data detection."""
+    task = {
+        "description": "Store medical records for patient care",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.sensitive_categories_processed is True
+
+
+def test_sensitive_biometric_data():
+    """Test biometric data detection."""
+    task = {
+        "description": "Collect biometric data for authentication",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.sensitive_categories_processed is True
+
+
+def test_sensitive_financial_data():
+    """Test financial data detection."""
+    task = {
+        "description": "Process financial data for payment transactions",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.sensitive_categories_processed is True
+
+
+def test_cross_border_eu_specific():
+    """Test EU-specific cross-border transfer terminology."""
+    task = {
+        "description": "Handle EU data transfer with adequacy decision",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.cross_border_transfers_flagged is True
+
+
+def test_retention_alternative_terminology():
+    """Test alternative retention terminology."""
+    task = {
+        "description": "Define data lifecycle with purge schedule",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.retention_policy_defined is True
+
+
+def test_breach_incident_response():
+    """Test incident response terminology for breach notification."""
+    task = {
+        "description": "Create security incident notification procedure",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.breach_notification_planned is True
+
+
+def test_string_field_instead_of_list():
+    """Test that string fields in list-based positions are handled."""
+    task = {
+        "acceptance_criteria": "Collect PII with user consent and GDPR compliance",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    assert result.pii_collection_identified is True
+    assert result.consent_requirements_present is True
+    assert result.gdpr_compliance_addressed is True
+
+
+def test_privacy_risk_score_with_critical_protections():
+    """Test that critical protections (consent, minimization, deletion) boost score."""
+    task = {
+        "description": (
+            "Collect PII with user consent, data minimization, and right to deletion"
+        ),
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # Should have high score due to all critical protections
+    assert result.privacy_risk_score > 0.9
+
+
+def test_privacy_risk_score_missing_critical_protections():
+    """Test score when sensitive data lacks critical protections."""
+    task = {
+        "description": "Collect PII with GDPR compliance",
+    }
+
+    result = analyze_data_privacy_impact(task)
+
+    # Missing critical protections = lower score
+    assert 0.2 < result.privacy_risk_score < 0.5
+
+
+def test_edge_case_children_apostrophe_variations():
+    """Test children's data with apostrophe variations."""
+    task_with_apostrophe = {
+        "description": "Handle children's privacy data",
+    }
+    task_without_apostrophe = {
+        "description": "Handle childrens privacy data",
+    }
+
+    assert analyze_data_privacy_impact(task_with_apostrophe).children_data_handled is True
+    assert analyze_data_privacy_impact(task_without_apostrophe).children_data_handled is True
+
+
+def test_edge_case_anonymization_vs_pseudonymization():
+    """Test that anonymization and pseudonymization are detected separately."""
+    task_anon = {
+        "description": "Anonymize data by de-identification",
+    }
+    task_pseudo = {
+        "description": "Pseudonymize data through tokenization",
+    }
+
+    result_anon = analyze_data_privacy_impact(task_anon)
+    result_pseudo = analyze_data_privacy_impact(task_pseudo)
+
+    assert result_anon.anonymization_applied is True
+    assert result_anon.pseudonymization_applied is False
+
+    assert result_pseudo.pseudonymization_applied is True
+    assert result_pseudo.anonymization_applied is False
