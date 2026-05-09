@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from blueprint.importers.execution_event_jsonl_importer import ExecutionEventJsonlImporter
     from blueprint.importers.manual_importer import ManualBriefImporter
     from blueprint.importers.meeting_notes_importer import MeetingNotesImporter
+    from blueprint.importers.notion_advanced import NotionAdvancedImporter
     from blueprint.importers.obsidian_importer import ObsidianImporter
     from blueprint.importers.plan_markdown_importer import PlanMarkdownImporter
     from blueprint.importers.slack_thread_importer import SlackThreadImporter
@@ -29,6 +30,7 @@ _EXPORTS = {
     "ExecutionEventJsonlImporter": "blueprint.importers.execution_event_jsonl_importer",
     "ManualBriefImporter": "blueprint.importers.manual_importer",
     "MeetingNotesImporter": "blueprint.importers.meeting_notes_importer",
+    "NotionAdvancedImporter": "blueprint.importers.notion_advanced",
     "ObsidianImporter": "blueprint.importers.obsidian_importer",
     "PlanMarkdownImporter": "blueprint.importers.plan_markdown_importer",
     "SlackThreadImporter": "blueprint.importers.slack_thread_importer",
@@ -56,6 +58,7 @@ __all__ = [
     "ExecutionEventJsonlImporter",
     "ManualBriefImporter",
     "MeetingNotesImporter",
+    "NotionAdvancedImporter",
     "ObsidianImporter",
     "PlanMarkdownImporter",
     "SlackThreadImporter",
