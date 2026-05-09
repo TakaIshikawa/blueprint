@@ -17,6 +17,7 @@ from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
 from blueprint.exporters.discord import DiscordExporter
+from blueprint.exporters.email import EmailExporter
 from blueprint.exporters.discord_digest import DiscordDigestExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.gantt import GanttExporter
@@ -425,6 +426,7 @@ __all__ = [
     "CsvTasksExporter",
     "DependencyMatrixExporter",
     "DiscordDigestExporter",
+    "EmailExporter",
     "ExportManifestExporter",
     "ExporterRegistration",
     "FileImpactMapExporter",
