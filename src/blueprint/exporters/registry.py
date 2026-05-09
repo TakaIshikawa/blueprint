@@ -8,6 +8,7 @@ from typing import Any
 
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
+from blueprint.exporters.docx_exporter import DOCXExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
@@ -39,6 +40,7 @@ from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.opsgenie_digest import OpsgenieDigestExporter
 from blueprint.exporters.pagerduty_digest import PagerDutyDigestExporter
+from blueprint.exporters.pdf_exporter import PDFExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.relay import RelayExporter
@@ -130,6 +132,8 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("vscode-tasks", VSCodeTasksExporter, "json", ".json"),
     ExporterRegistration("wave-schedule", WaveScheduleExporter, "json", ".json"),
     ExporterRegistration("youtrack-csv", YouTrackCsvExporter, "csv", ".csv"),
+    ExporterRegistration("pdf-export", PDFExporter, "pdf", ".pdf"),
+    ExporterRegistration("docx-export", DOCXExporter, "docx", ".docx"),
 )
 
 
