@@ -16,6 +16,7 @@ from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
+from blueprint.exporters.discord import DiscordExporter
 from blueprint.exporters.discord_digest import DiscordDigestExporter
 from blueprint.exporters.file_impact_map import FileImpactMapExporter
 from blueprint.exporters.gantt import GanttExporter
@@ -61,6 +62,7 @@ from blueprint.exporters.task_bundle import TaskBundleExporter
 from blueprint.exporters.taskfile import TaskfileExporter
 from blueprint.exporters.task_queue_jsonl import TaskQueueJsonlExporter
 from blueprint.exporters.task_roster import TaskRosterExporter
+from blueprint.exporters.teams import TeamsExporter
 from blueprint.exporters.teamwork_csv import TeamworkCsvExporter
 from blueprint.exporters.teams_digest import TeamsDigestExporter
 from blueprint.exporters.trello_json import TrelloJsonExporter
