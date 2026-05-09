@@ -6,7 +6,9 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from blueprint.importers.azure_devops_importer import AzureDevOpsImporter
     from blueprint.importers.adr_markdown_importer import AdrMarkdownImporter
+    from blueprint.importers.gitlab_importer import GitLabImporter
     from blueprint.importers.csv_backlog_importer import CsvBacklogImporter
     from blueprint.importers.execution_event_jsonl_importer import ExecutionEventJsonlImporter
     from blueprint.importers.manual_importer import ManualBriefImporter
@@ -20,7 +22,9 @@ if TYPE_CHECKING:
 
 
 _EXPORTS = {
+    "AzureDevOpsImporter": "blueprint.importers.azure_devops_importer",
     "AdrMarkdownImporter": "blueprint.importers.adr_markdown_importer",
+    "GitLabImporter": "blueprint.importers.gitlab_importer",
     "CsvBacklogImporter": "blueprint.importers.csv_backlog_importer",
     "ExecutionEventJsonlImporter": "blueprint.importers.execution_event_jsonl_importer",
     "ManualBriefImporter": "blueprint.importers.manual_importer",
@@ -45,7 +49,9 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "AzureDevOpsImporter",
     "AdrMarkdownImporter",
+    "GitLabImporter",
     "CsvBacklogImporter",
     "ExecutionEventJsonlImporter",
     "ManualBriefImporter",
