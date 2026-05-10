@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from blueprint.importers.toml_backlog_importer import TomlBacklogImporter
     from blueprint.importers.wrike import WrikeImporter
     from blueprint.importers.yaml_backlog_importer import YamlBacklogImporter
+    from blueprint.importers.taiga import TaigaImporter
+    from blueprint.importers.plane import PlaneImporter
 
 
 _EXPORTS = {
@@ -43,6 +45,8 @@ _EXPORTS = {
     "TomlBacklogImporter": "blueprint.importers.toml_backlog_importer",
     "WrikeImporter": "blueprint.importers.wrike",
     "YamlBacklogImporter": "blueprint.importers.yaml_backlog_importer",
+    "TaigaImporter": "blueprint.importers.taiga",
+    "PlaneImporter": "blueprint.importers.plane",
 }
 
 
@@ -74,4 +78,6 @@ __all__ = [
     "TomlBacklogImporter",
     "WrikeImporter",
     "YamlBacklogImporter",
+    "TaigaImporter",
+    "PlaneImporter",
 ]
