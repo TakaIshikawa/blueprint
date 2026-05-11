@@ -53,6 +53,38 @@ class SharedResource:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceAllocation:
+    allocation_id: str
+    resource_id: str
+    plan_id: str
+    amount: float
+    reason: str = ""
+    created_by: str = ""
+    created_at: str = field(default_factory=_now_iso)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceInvitation:
+    invitation_id: str
+    workspace_id: str
+    email: str
+    role: WorkspaceRole
+    status: str = "pending"
+    invited_by: str = ""
+    created_at: str = field(default_factory=_now_iso)
+    accepted_at: str | None = None
+    declined_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspacePolicyFinding:
+    code: str
+    severity: str
+    message: str
+    entity_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceTemplate:
     template_id: str
     name: str
@@ -140,9 +172,12 @@ __all__ = [
     "ApprovalWorkflow",
     "CalendarEvent",
     "CustomField",
+    "ResourceAllocation",
     "SharedResource",
     "TeamMember",
     "Workspace",
+    "WorkspaceInvitation",
+    "WorkspacePolicyFinding",
     "WorkspaceRole",
     "WorkspaceSettings",
     "WorkspaceTemplate",

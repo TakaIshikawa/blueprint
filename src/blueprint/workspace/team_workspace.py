@@ -11,11 +11,15 @@ from typing import Any
 
 from blueprint.workspace.workspace_model import (
     ActivityEvent,
+    ApprovalWorkflow,
     CalendarEvent,
     CustomField,
+    ResourceAllocation,
     SharedResource,
     TeamMember,
     Workspace,
+    WorkspaceInvitation,
+    WorkspacePolicyFinding,
     WorkspaceRole,
     WorkspaceSettings,
     WorkspaceTemplate,
@@ -30,6 +34,8 @@ class TeamWorkspace:
     def __init__(self) -> None:
         self._workspaces: dict[str, Workspace] = {}
         self._activity_feed: list[ActivityEvent] = []
+        self._invitations: dict[str, WorkspaceInvitation] = {}
+        self._resource_allocations: dict[str, ResourceAllocation] = {}
 
     # ------------------------------------------------------------------
     # Workspace CRUD
@@ -62,6 +68,40 @@ class TeamWorkspace:
 
     def list_workspaces(self) -> list[Workspace]:
         return list(self._workspaces.values())
+
+    def search_workspaces(
+        self,
+        *,
+        query: str = "",
+        owner_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        member_user_id: str | None = None,
+    ) -> list[Workspace]:
+        matches = list(self._workspaces.values())
+
+        if query:
+            needle = query.casefold()
+            matches = [
+                ws
+                for ws in matches
+                if needle in ws.name.casefold() or needle in ws.description.casefold()
+            ]
+        if owner_id is not None:
+            matches = [ws for ws in matches if ws.owner_id == owner_id]
+        if metadata:
+            matches = [
+                ws
+                for ws in matches
+                if all(ws.metadata.get(key) == value for key, value in metadata.items())
+            ]
+        if member_user_id is not None:
+            matches = [
+                ws
+                for ws in matches
+                if any(member.user_id == member_user_id for member in ws.members)
+            ]
+
+        return matches
 
     def delete_workspace(self, workspace_id: str) -> bool:
         return self._workspaces.pop(workspace_id, None) is not None
@@ -128,6 +168,90 @@ class TeamWorkspace:
         return list(ws.members) if ws else []
 
     # ------------------------------------------------------------------
+    # Invitations
+    # ------------------------------------------------------------------
+
+    def invite_member(
+        self,
+        workspace_id: str,
+        email: str,
+        role: WorkspaceRole = WorkspaceRole.MEMBER,
+        *,
+        invited_by: str = "",
+    ) -> WorkspaceInvitation | None:
+        if workspace_id not in self._workspaces:
+            return None
+        invitation = WorkspaceInvitation(
+            invitation_id=_gen_id("inv"),
+            workspace_id=workspace_id,
+            email=email,
+            role=role,
+            invited_by=invited_by,
+        )
+        self._invitations[invitation.invitation_id] = invitation
+        return invitation
+
+    def accept_invitation(self, invitation_id: str) -> WorkspaceInvitation | None:
+        invitation = self._invitations.get(invitation_id)
+        if invitation is None:
+            return None
+        if invitation.status != "pending":
+            return invitation
+
+        ws = self._workspaces.get(invitation.workspace_id)
+        if ws is None:
+            return None
+
+        if not any(m.user_id == invitation.email for m in ws.members):
+            member = TeamMember(
+                member_id=_gen_id("mem"),
+                user_id=invitation.email,
+                display_name=invitation.email,
+                email=invitation.email,
+                role=invitation.role,
+            )
+            updated_ws = replace(
+                ws,
+                members=[*ws.members, member],
+                updated_at=_now_iso(),
+            )
+            self._workspaces[ws.workspace_id] = updated_ws
+            self._record_activity(
+                ws.workspace_id,
+                invitation.email,
+                "invitation_accepted",
+                "member",
+                member.member_id,
+            )
+
+        accepted = replace(invitation, status="accepted", accepted_at=_now_iso())
+        self._invitations[invitation_id] = accepted
+        return accepted
+
+    def decline_invitation(self, invitation_id: str) -> WorkspaceInvitation | None:
+        invitation = self._invitations.get(invitation_id)
+        if invitation is None:
+            return None
+        if invitation.status != "pending":
+            return invitation
+        declined = replace(invitation, status="declined", declined_at=_now_iso())
+        self._invitations[invitation_id] = declined
+        return declined
+
+    def list_invitations(
+        self,
+        workspace_id: str | None = None,
+        *,
+        status: str | None = None,
+    ) -> list[WorkspaceInvitation]:
+        invitations = list(self._invitations.values())
+        if workspace_id is not None:
+            invitations = [i for i in invitations if i.workspace_id == workspace_id]
+        if status is not None:
+            invitations = [i for i in invitations if i.status == status]
+        return invitations
+
+    # ------------------------------------------------------------------
     # Shared resources
     # ------------------------------------------------------------------
 
@@ -157,6 +281,88 @@ class TeamWorkspace:
     def get_resources(self, workspace_id: str) -> list[SharedResource]:
         ws = self._workspaces.get(workspace_id)
         return list(ws.resources) if ws else []
+
+    def allocate_resource(
+        self,
+        workspace_id: str,
+        resource_id: str,
+        plan_id: str,
+        amount: float,
+        *,
+        reason: str = "",
+        created_by: str = "",
+    ) -> ResourceAllocation | None:
+        ws = self._workspaces.get(workspace_id)
+        if ws is None or amount <= 0:
+            return None
+
+        resource = next((r for r in ws.resources if r.resource_id == resource_id), None)
+        if resource is None or resource.allocated + amount > resource.total_capacity:
+            return None
+
+        allocation = ResourceAllocation(
+            allocation_id=_gen_id("alloc"),
+            resource_id=resource_id,
+            plan_id=plan_id,
+            amount=amount,
+            reason=reason,
+            created_by=created_by,
+        )
+        resources = [
+            replace(r, allocated=r.allocated + amount) if r.resource_id == resource_id else r
+            for r in ws.resources
+        ]
+        self._workspaces[workspace_id] = replace(ws, resources=resources, updated_at=_now_iso())
+        self._resource_allocations[allocation.allocation_id] = allocation
+        return allocation
+
+    def release_resource(self, workspace_id: str, allocation_id: str | None = None) -> bool:
+        if allocation_id is None:
+            allocation_id = workspace_id
+            allocation = self._resource_allocations.get(allocation_id)
+            if allocation is None:
+                return False
+            workspace_id = self._workspace_id_for_resource(allocation.resource_id) or ""
+
+        ws = self._workspaces.get(workspace_id)
+        allocation = self._resource_allocations.get(allocation_id)
+        if ws is None or allocation is None:
+            return False
+        if not any(r.resource_id == allocation.resource_id for r in ws.resources):
+            return False
+
+        resources = [
+            replace(r, allocated=max(0.0, r.allocated - allocation.amount))
+            if r.resource_id == allocation.resource_id
+            else r
+            for r in ws.resources
+        ]
+        self._workspaces[workspace_id] = replace(ws, resources=resources, updated_at=_now_iso())
+        del self._resource_allocations[allocation_id]
+        return True
+
+    def _workspace_id_for_resource(self, resource_id: str) -> str | None:
+        for workspace_id, ws in self._workspaces.items():
+            if any(resource.resource_id == resource_id for resource in ws.resources):
+                return workspace_id
+        return None
+
+    def list_resource_allocations(
+        self,
+        workspace_id: str | None = None,
+        *,
+        resource_id: str | None = None,
+    ) -> list[ResourceAllocation]:
+        allocations = list(self._resource_allocations.values())
+        if workspace_id is not None:
+            ws = self._workspaces.get(workspace_id)
+            if ws is None:
+                return []
+            resource_ids = {r.resource_id for r in ws.resources}
+            allocations = [a for a in allocations if a.resource_id in resource_ids]
+        if resource_id is not None:
+            allocations = [a for a in allocations if a.resource_id == resource_id]
+        return allocations
 
     # ------------------------------------------------------------------
     # Templates & custom fields
@@ -220,6 +426,71 @@ class TeamWorkspace:
         updated = replace(ws, settings=new_settings, updated_at=_now_iso())
         self._workspaces[workspace_id] = updated
         return updated
+
+    def evaluate_workspace_policies(self, workspace_id: str) -> list[WorkspacePolicyFinding]:
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return [
+                WorkspacePolicyFinding(
+                    code="workspace_not_found",
+                    severity="error",
+                    message="Workspace was not found.",
+                    entity_id=workspace_id,
+                )
+            ]
+
+        findings: list[WorkspacePolicyFinding] = []
+        domain = ws.settings.email_domain.strip().lower()
+        if domain:
+            domain = domain if domain.startswith("@") else f"@{domain}"
+            for member in ws.members:
+                if not member.email.lower().endswith(domain):
+                    findings.append(
+                        WorkspacePolicyFinding(
+                            code="member_email_domain_mismatch",
+                            severity="error",
+                            message="Member email does not match the configured domain.",
+                            entity_id=member.member_id,
+                        )
+                    )
+
+        if not any(m.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN} for m in ws.members):
+            findings.append(
+                WorkspacePolicyFinding(
+                    code="missing_owner_or_admin",
+                    severity="error",
+                    message="Workspace must have at least one owner or admin member.",
+                    entity_id=workspace_id,
+                )
+            )
+
+        if ws.settings.working_hours_start >= ws.settings.working_hours_end:
+            findings.append(
+                WorkspacePolicyFinding(
+                    code="invalid_working_hours",
+                    severity="error",
+                    message="Working hours start must be before working hours end.",
+                    entity_id=workspace_id,
+                )
+            )
+
+        if ws.settings.approval_workflow != ApprovalWorkflow.NONE:
+            approvers = (
+                ws.settings.metadata.get("approvers")
+                or ws.settings.metadata.get("approval_approvers")
+                or ws.settings.metadata.get("required_approvers")
+            )
+            if not approvers:
+                findings.append(
+                    WorkspacePolicyFinding(
+                        code="missing_approval_workflow_metadata",
+                        severity="error",
+                        message="Approval workflow metadata must include approvers.",
+                        entity_id=workspace_id,
+                    )
+                )
+
+        return findings
 
     # ------------------------------------------------------------------
     # Plans

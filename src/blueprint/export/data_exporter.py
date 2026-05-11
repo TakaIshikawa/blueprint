@@ -137,6 +137,15 @@ class ExportResult(BaseModel):
     created_at: str
 
 
+class ExportManifestValidationResult(BaseModel):
+    """Structured result from validating an export against its manifest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_valid: bool
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class UserDataExport(BaseModel):
     """GDPR-compliant user data export."""
 
@@ -887,6 +896,73 @@ class DataExporter:
     def get_progress(self, export_id: str) -> ExportProgress | None:
         return self._progress.get(export_id)
 
+    def validate_export_result(
+        self, result: ExportResult,
+    ) -> ExportManifestValidationResult:
+        """Validate a completed export against its manifest.
+
+        Normal integrity mismatches are returned as structured errors so
+        callers can report all failures at once before import or migration.
+        """
+        errors: list[dict[str, Any]] = []
+        manifest = result.manifest
+
+        actual_checksum = _checksum(result.data)
+        expected_checksum = manifest.checksums.get("sha256")
+        if expected_checksum != actual_checksum:
+            errors.append(
+                _validation_error(
+                    "checksum_mismatch",
+                    "checksums.sha256",
+                    expected_checksum,
+                    actual_checksum,
+                )
+            )
+
+        payload_schema_version = _extract_schema_version(result.data, result.format)
+        if payload_schema_version is not None and payload_schema_version != manifest.schema_version:
+            errors.append(
+                _validation_error(
+                    "schema_version_mismatch",
+                    "schema_version",
+                    manifest.schema_version,
+                    payload_schema_version,
+                )
+            )
+
+        if result.format != manifest.format:
+            errors.append(
+                _validation_error(
+                    "format_mismatch",
+                    "format",
+                    manifest.format,
+                    result.format,
+                )
+            )
+
+        if result.scope != manifest.scope:
+            errors.append(
+                _validation_error(
+                    "scope_mismatch",
+                    "scope",
+                    manifest.scope,
+                    result.scope,
+                )
+            )
+
+        actual_record_counts = _extract_record_counts(result)
+        if actual_record_counts != manifest.record_counts:
+            errors.append(
+                _validation_error(
+                    "record_counts_mismatch",
+                    "record_counts",
+                    manifest.record_counts,
+                    actual_record_counts,
+                )
+            )
+
+        return ExportManifestValidationResult(is_valid=not errors, errors=errors)
+
     # -- private helpers ---------------------------------------------------
 
     def _build_result(
@@ -941,6 +1017,69 @@ def _count_records(data: dict[str, Any]) -> dict[str, int]:
         elif isinstance(v, list):
             counts[k] = len(v)
     return counts
+
+
+def _validation_error(
+    code: str,
+    field: str,
+    expected: Any,
+    actual: Any,
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "field": field,
+        "expected": expected,
+        "actual": actual,
+    }
+
+
+def _extract_schema_version(data: bytes, fmt: str) -> str | None:
+    if fmt == DataExportFormat.JSON.value:
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        value = payload.get("schema_version")
+        return str(value) if value is not None else None
+
+    if fmt == DataExportFormat.SQL.value:
+        first_line = data.decode("utf-8", errors="ignore").splitlines()[0:1]
+        prefix = "-- Blueprint Data Export v"
+        if first_line and first_line[0].startswith(prefix):
+            return first_line[0][len(prefix):]
+
+    if fmt == DataExportFormat.PARQUET.value and len(data) >= 4:
+        try:
+            header_len = struct.unpack(">I", data[:4])[0]
+            header = json.loads(data[4 : 4 + header_len].decode("utf-8"))
+        except (struct.error, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        value = header.get("schema_version")
+        return str(value) if value is not None else None
+
+    if fmt == DataExportFormat.PROTOBUF.value and data.startswith(b"BPEX") and len(data) >= 6:
+        try:
+            version_len = struct.unpack(">H", data[4:6])[0]
+            return data[6 : 6 + version_len].decode("utf-8")
+        except (struct.error, UnicodeDecodeError):
+            return None
+
+    return None
+
+
+def _extract_record_counts(result: ExportResult) -> dict[str, int]:
+    if result.format == DataExportFormat.JSON.value:
+        try:
+            payload = json.loads(result.data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        data = payload.get("data")
+        if isinstance(data, dict):
+            return _count_records(data)
+
+    if sum(result.manifest.record_counts.values()) == result.record_count:
+        return dict(result.manifest.record_counts)
+    return {}
 
 
 def _filters_to_dict(filters: ExportFilters) -> dict[str, Any]:
