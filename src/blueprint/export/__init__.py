@@ -10,6 +10,7 @@ if TYPE_CHECKING:
         DataExporter,
         DataExportFormat,
         ExportFilters,
+        ExportFilterPreset,
         ExportJob,
         ExportJobStatus,
         ExportManifest,
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         ExportScope,
         InMemoryDataStore,
         UserDataExport,
+        parse_export_bundle,
     )
 
 _MODULE = "blueprint.export.data_exporter"
@@ -29,6 +31,7 @@ _EXPORTS = {
     "DataExporter": _MODULE,
     "DataExportFormat": _MODULE,
     "ExportFilters": _MODULE,
+    "ExportFilterPreset": _MODULE,
     "ExportJob": _MODULE,
     "ExportJobStatus": _MODULE,
     "ExportManifest": _MODULE,
@@ -40,6 +43,7 @@ _EXPORTS = {
     "ExportScope": _MODULE,
     "InMemoryDataStore": _MODULE,
     "UserDataExport": _MODULE,
+    "parse_export_bundle": _MODULE,
 }
 
 

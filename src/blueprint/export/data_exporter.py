@@ -1,12 +1,14 @@
 """Comprehensive data export API for migrations and integrations.
 
-Supports multiple export formats (JSON, CSV, SQL, Parquet, Protobuf),
+Supports multiple export formats (JSON, JSONL, CSV, SQL, Parquet, Protobuf),
 scopes (all, workspace, plan tree, filtered), incremental exports,
 streaming, and background job scheduling.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
 import hashlib
 import io
@@ -38,6 +40,7 @@ class DataExportFormat(str, Enum):
     """Supported export formats."""
 
     JSON = "json"
+    JSONL = "jsonl"
     CSV = "csv"
     SQL = "sql"
     PARQUET = "parquet"
@@ -186,6 +189,16 @@ class ExportProgress(BaseModel):
     status: str = ExportJobStatus.RUNNING.value
     started_at: str
     last_chunk_at: str | None = None
+
+
+class ExportFilterPreset(BaseModel):
+    """Named export filter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    description: str = ""
+    filters: ExportFilters
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +400,33 @@ def _serialize_json(data: dict[str, Any], options: ExportOptions) -> bytes:
     return json.dumps(payload, indent=2, default=str).encode("utf-8")
 
 
+def _serialize_jsonl(data: dict[str, Any], options: ExportOptions) -> bytes:
+    """Serialize data to JSON Lines, one object per exported record."""
+    lines: list[str] = []
+    processed = _apply_options(data, options)
+
+    for section_name, section in processed.items():
+        if isinstance(section, dict):
+            rows = list(section.values())
+        elif isinstance(section, list):
+            rows = section
+        else:
+            continue
+
+        for row in rows:
+            record = {
+                "section": section_name,
+                "schema_version": options.schema_version,
+                "data": row,
+            }
+            record_id = row.get("id") if isinstance(row, dict) else None
+            if record_id is not None:
+                record["id"] = record_id
+            lines.append(json.dumps(record, default=str, separators=(",", ":")))
+
+    return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+
+
 def _serialize_csv(data: dict[str, Any], options: ExportOptions) -> bytes:
     """Serialize data to CSV — one table per entity type, concatenated."""
     buf = io.StringIO()
@@ -548,6 +588,7 @@ def _serialize_protobuf(data: dict[str, Any], options: ExportOptions) -> bytes:
 
 _SERIALIZERS: dict[DataExportFormat, Any] = {
     DataExportFormat.JSON: _serialize_json,
+    DataExportFormat.JSONL: _serialize_jsonl,
     DataExportFormat.CSV: _serialize_csv,
     DataExportFormat.SQL: _serialize_sql,
     DataExportFormat.PARQUET: _serialize_parquet,
@@ -680,6 +721,7 @@ class DataExporter:
         self._store = store or InMemoryDataStore()
         self._jobs: dict[str, ExportJob] = {}
         self._progress: dict[str, ExportProgress] = {}
+        self._filter_presets: dict[str, ExportFilterPreset] = {}
 
     # -- public API --------------------------------------------------------
 
@@ -749,6 +791,64 @@ class DataExporter:
             exported_at=_now_iso(),
             anonymized=anonymize,
         )
+
+    def export_to_bundle(
+        self,
+        result: ExportResult,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Package an export result into a JSON-serializable bundle."""
+        return {
+            "manifest": result.manifest.model_dump(mode="json"),
+            "data": base64.b64encode(result.data).decode("ascii"),
+            "metadata": {
+                "export_id": result.export_id,
+                "format": result.format,
+                "scope": result.scope,
+                "record_count": result.record_count,
+                "created_at": result.created_at,
+                **(metadata or {}),
+            },
+        }
+
+    def register_filter_preset(
+        self,
+        name: str,
+        filters: ExportFilters,
+        description: str = "",
+    ) -> ExportFilterPreset:
+        """Register or overwrite a named export filter preset."""
+        preset = ExportFilterPreset(
+            name=name,
+            description=description,
+            filters=filters,
+        )
+        self._filter_presets[name] = preset
+        return preset
+
+    def get_filter_preset(self, name: str) -> ExportFilterPreset | None:
+        """Return a named filter preset, if registered."""
+        preset = self._filter_presets.get(name)
+        return preset.model_copy(deep=True) if preset is not None else None
+
+    def list_filter_presets(self) -> list[ExportFilterPreset]:
+        """List filter presets in stable name order."""
+        return [
+            preset.model_copy(deep=True)
+            for _, preset in sorted(self._filter_presets.items())
+        ]
+
+    def export_filter_preset(
+        self,
+        name: str,
+        fmt: DataExportFormat = DataExportFormat.JSON,
+        options: ExportOptions | None = None,
+    ) -> ExportResult:
+        """Export data through a registered filter preset."""
+        preset = self._filter_presets.get(name)
+        if preset is None:
+            raise ValueError(f"export filter preset {name!r} is not registered")
+        return self.export_all_data(fmt=fmt, filters=preset.filters, options=options)
 
     def schedule_export(
         self,
@@ -1042,6 +1142,17 @@ def _extract_schema_version(data: bytes, fmt: str) -> str | None:
         value = payload.get("schema_version")
         return str(value) if value is not None else None
 
+    if fmt == DataExportFormat.JSONL.value:
+        try:
+            for line in data.decode("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                value = payload.get("schema_version")
+                return str(value) if value is not None else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
     if fmt == DataExportFormat.SQL.value:
         first_line = data.decode("utf-8", errors="ignore").splitlines()[0:1]
         prefix = "-- Blueprint Data Export v"
@@ -1077,9 +1188,61 @@ def _extract_record_counts(result: ExportResult) -> dict[str, int]:
         if isinstance(data, dict):
             return _count_records(data)
 
+    if result.format == DataExportFormat.JSONL.value:
+        counts: dict[str, int] = {}
+        try:
+            lines = result.data.decode("utf-8").splitlines()
+            for line in lines:
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                section = payload.get("section")
+                if not isinstance(section, str):
+                    return {}
+                counts[section] = counts.get(section, 0) + 1
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        return counts
+
     if sum(result.manifest.record_counts.values()) == result.record_count:
         return dict(result.manifest.record_counts)
     return {}
+
+
+def parse_export_bundle(bundle: dict[str, Any]) -> ExportResult:
+    """Reconstruct an export result from a portable export bundle."""
+    if not isinstance(bundle, dict):
+        raise ValueError("export bundle must be a dictionary")
+
+    missing = [field for field in ("manifest", "data", "metadata") if field not in bundle]
+    if missing:
+        raise ValueError(f"export bundle missing required field: {missing[0]}")
+
+    manifest_raw = bundle["manifest"]
+    metadata = bundle["metadata"]
+    encoded_data = bundle["data"]
+    if not isinstance(manifest_raw, dict):
+        raise ValueError("export bundle manifest must be a dictionary")
+    if not isinstance(metadata, dict):
+        raise ValueError("export bundle metadata must be a dictionary")
+    if not isinstance(encoded_data, str):
+        raise ValueError("export bundle data must be a base64 string")
+
+    try:
+        data = base64.b64decode(encoded_data.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, binascii.Error) as exc:
+        raise ValueError("export bundle data is not valid base64") from exc
+
+    manifest = ExportManifest.model_validate(manifest_raw)
+    return ExportResult(
+        export_id=str(metadata.get("export_id") or manifest.export_id),
+        format=str(metadata.get("format") or manifest.format),
+        scope=str(metadata.get("scope") or manifest.scope),
+        data=data,
+        manifest=manifest,
+        record_count=int(metadata.get("record_count", sum(manifest.record_counts.values()))),
+        created_at=str(metadata.get("created_at") or manifest.timestamp),
+    )
 
 
 def _filters_to_dict(filters: ExportFilters) -> dict[str, Any]:
