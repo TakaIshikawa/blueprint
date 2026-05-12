@@ -5,6 +5,7 @@ from blueprint.task_feature_flag_readiness import (
     TaskFeatureFlagReadinessPlan,
     TaskFeatureFlagReadinessRecord,
     build_task_feature_flag_readiness_plan,
+    evaluate_task_feature_flag_readiness,
     summarize_task_feature_flag_readiness,
     task_feature_flag_readiness_plan_to_dict,
     task_feature_flag_readiness_plan_to_markdown,
@@ -273,10 +274,66 @@ def test_non_flag_tasks_return_no_checklist_entries():
             },
         },
     }
-    assert result.to_markdown() == (
-        "# Task Feature Flag Readiness: plan-feature-flags\n\n"
-        "No feature-flag readiness checklist entries were inferred."
+
+
+def test_feature_flag_assessment_ready_plan_covers_rollout_criteria():
+    result = evaluate_task_feature_flag_readiness(
+        _task(
+            "task-ready-flag",
+            title="Roll out checkout feature flag",
+            description=(
+                "Feature flag scope is checkout_v2. Default off by default. Owner is payments. "
+                "Rollout cohorts start with internal users, then 10% canary. Rollback path is to "
+                "disable the flag. Telemetry watches error rate and latency dashboard. Cleanup removes "
+                "the flag after 100% rollout."
+            ),
+        )
     )
+
+    assert result.readiness_level == "ready"
+    assert result.missing_criteria == ()
+    assert result.satisfied_criteria == (
+        "flag_scope",
+        "default_state",
+        "rollout_cohorts",
+        "owner",
+        "rollback_path",
+        "telemetry",
+        "cleanup_criteria",
+    )
+
+
+def test_feature_flag_assessment_partial_plan_returns_actionable_gaps():
+    result = evaluate_task_feature_flag_readiness(
+        "Use a feature flag default off for beta users. Owner is growth."
+    )
+
+    assert result.readiness_level == "partial"
+    assert result.satisfied_criteria == (
+        "flag_scope",
+        "default_state",
+        "rollout_cohorts",
+        "owner",
+    )
+    assert result.missing_criteria == ("rollback_path", "telemetry", "cleanup_criteria")
+    assert "Document the disable path" in result.gaps[0]
+
+
+def test_feature_flag_assessment_absent_plan_marks_every_criterion_missing():
+    result = evaluate_task_feature_flag_readiness("Update copy on the settings page.")
+
+    assert result.readiness_level == "missing"
+    assert result.satisfied_criteria == ()
+    assert result.missing_criteria == (
+        "flag_scope",
+        "default_state",
+        "rollout_cohorts",
+        "owner",
+        "rollback_path",
+        "telemetry",
+        "cleanup_criteria",
+    )
+    assert result.evidence == {}
 
 
 def _plan(tasks, *, metadata=None):

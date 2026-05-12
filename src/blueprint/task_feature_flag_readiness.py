@@ -14,6 +14,15 @@ from blueprint.validation_commands import flatten_validation_commands
 
 
 FeatureFlagReadinessLevel = Literal["ready", "needs_safeguards", "needs_owner"]
+FeatureFlagPlanCriterion = Literal[
+    "flag_scope",
+    "default_state",
+    "rollout_cohorts",
+    "owner",
+    "rollback_path",
+    "telemetry",
+    "cleanup_criteria",
+]
 FeatureFlagSignal = Literal[
     "feature_flag",
     "toggle",
@@ -76,6 +85,33 @@ _SIGNAL_ORDER: dict[FeatureFlagSignal, int] = {
     "experiment": 5,
     "beta_access": 6,
     "staged_enablement": 7,
+}
+_PLAN_CRITERIA: tuple[FeatureFlagPlanCriterion, ...] = (
+    "flag_scope",
+    "default_state",
+    "rollout_cohorts",
+    "owner",
+    "rollback_path",
+    "telemetry",
+    "cleanup_criteria",
+)
+_PLAN_PATTERNS: dict[FeatureFlagPlanCriterion, re.Pattern[str]] = {
+    "flag_scope": re.compile(r"\b(?:flag scope|flag key|feature flag|feature toggle|gated path|scope)\b", re.I),
+    "default_state": re.compile(r"\b(?:default(?:s)? (?:off|on|disabled|enabled)|off by default|disabled by default|on by default|enabled by default)\b", re.I),
+    "rollout_cohorts": re.compile(r"\b(?:cohort|segment|audience|internal users|beta users|canary|\d{1,3}\s*%|ramp|staged rollout)\b", re.I),
+    "owner": re.compile(r"\b(?:owner|owned by|responsible team|accountable|flag_owner|owner_team)\b", re.I),
+    "rollback_path": re.compile(r"\b(?:rollback|roll back|kill switch|disable(?: the)? flag|revert|backout)\b", re.I),
+    "telemetry": re.compile(r"\b(?:telemetry|metrics?|dashboard|monitor|alert|conversion|error rate|latency|guardrail)\b", re.I),
+    "cleanup_criteria": re.compile(r"\b(?:cleanup|clean up|sunset|remove flag|delete flag|flag removal|expiry|expiration|decommission)\b", re.I),
+}
+_PLAN_GAPS: dict[FeatureFlagPlanCriterion, str] = {
+    "flag_scope": "Define the flag key, guarded code path, and who can change the flag.",
+    "default_state": "State whether the flag starts off or on by default for each environment.",
+    "rollout_cohorts": "Define initial cohorts, expansion order, and promotion gates.",
+    "owner": "Assign a directly accountable flag owner.",
+    "rollback_path": "Document the disable path and any code revert fallback.",
+    "telemetry": "Name telemetry, dashboards, alerts, or guardrail metrics watched during rollout.",
+    "cleanup_criteria": "Set the condition or date for removing the flag after rollout.",
 }
 
 
@@ -161,6 +197,59 @@ class TaskFeatureFlagReadinessPlan:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True, slots=True)
+class TaskFeatureFlagReadinessAssessment:
+    """Criterion-level readiness assessment for one feature-flag rollout plan."""
+
+    readiness_level: Literal["ready", "partial", "missing"]
+    satisfied_criteria: tuple[FeatureFlagPlanCriterion, ...] = field(default_factory=tuple)
+    missing_criteria: tuple[FeatureFlagPlanCriterion, ...] = field(default_factory=tuple)
+    gaps: tuple[str, ...] = field(default_factory=tuple)
+    evidence: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible representation in stable key order."""
+        return {
+            "readiness_level": self.readiness_level,
+            "satisfied_criteria": list(self.satisfied_criteria),
+            "missing_criteria": list(self.missing_criteria),
+            "gaps": list(self.gaps),
+            "evidence": {key: list(value) for key, value in self.evidence.items()},
+        }
+
+
+def evaluate_task_feature_flag_readiness(
+    source: Mapping[str, Any] | ExecutionTask | str,
+) -> TaskFeatureFlagReadinessAssessment:
+    """Evaluate a feature-flag rollout plan for required readiness criteria."""
+    text_items = _assessment_texts(source)
+    evidence: dict[FeatureFlagPlanCriterion, list[str]] = {criterion: [] for criterion in _PLAN_CRITERIA}
+    for field, text in text_items:
+        for criterion, pattern in _PLAN_PATTERNS.items():
+            if pattern.search(text):
+                evidence[criterion].append(_evidence_snippet(field, text))
+
+    satisfied = tuple(criterion for criterion in _PLAN_CRITERIA if evidence[criterion])
+    missing = tuple(criterion for criterion in _PLAN_CRITERIA if not evidence[criterion])
+    if not satisfied:
+        level: Literal["ready", "partial", "missing"] = "missing"
+    elif missing:
+        level = "partial"
+    else:
+        level = "ready"
+    return TaskFeatureFlagReadinessAssessment(
+        readiness_level=level,
+        satisfied_criteria=satisfied,
+        missing_criteria=missing,
+        gaps=tuple(_PLAN_GAPS[criterion] for criterion in missing),
+        evidence={
+            criterion: tuple(_dedupe(values))
+            for criterion, values in evidence.items()
+            if values
+        },
+    )
+
+
 def build_task_feature_flag_readiness_plan(
     source: (
         Mapping[str, Any]
@@ -232,6 +321,19 @@ def summarize_task_feature_flag_readiness(
 ) -> TaskFeatureFlagReadinessPlan:
     """Compatibility alias for building feature flag readiness plans."""
     return build_task_feature_flag_readiness_plan(source)
+
+
+def _assessment_texts(source: Mapping[str, Any] | ExecutionTask | str) -> list[tuple[str, str]]:
+    if isinstance(source, str):
+        return [("body", source)]
+    if isinstance(source, ExecutionTask):
+        return _candidate_texts(source.model_dump(mode="python"))
+    if hasattr(source, "model_dump"):
+        value = source.model_dump(mode="python")
+        return _candidate_texts(dict(value)) if isinstance(value, Mapping) else []
+    if isinstance(source, Mapping):
+        return _candidate_texts(source)
+    return []
 
 
 def _task_record(
