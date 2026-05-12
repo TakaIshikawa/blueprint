@@ -18,6 +18,10 @@ from blueprint.workspace.workspace_model import (
     SharedResource,
     TeamMember,
     Workspace,
+    WorkspaceActivityDigest,
+    WorkspaceMemberCapacity,
+    WorkspaceMemberCapacityReport,
+    WorkspaceResourceCapacity,
     WorkspaceInvitation,
     WorkspacePolicyFinding,
     WorkspaceRole,
@@ -118,6 +122,7 @@ class TeamWorkspace:
         *,
         email: str = "",
         role: WorkspaceRole = WorkspaceRole.MEMBER,
+        metadata: dict[str, Any] | None = None,
     ) -> Workspace | None:
         ws = self._workspaces.get(workspace_id)
         if ws is None:
@@ -128,6 +133,7 @@ class TeamWorkspace:
             display_name=display_name,
             email=email,
             role=role,
+            metadata=metadata or {},
         )
         updated = replace(
             ws,
@@ -263,6 +269,7 @@ class TeamWorkspace:
         *,
         total_capacity: float = 0.0,
         unit: str = "",
+        metadata: dict[str, Any] | None = None,
     ) -> Workspace | None:
         ws = self._workspaces.get(workspace_id)
         if ws is None:
@@ -273,6 +280,7 @@ class TeamWorkspace:
             resource_type=resource_type,
             total_capacity=total_capacity,
             unit=unit,
+            metadata=metadata or {},
         )
         updated = replace(ws, resources=[*ws.resources, resource], updated_at=_now_iso())
         self._workspaces[workspace_id] = updated
@@ -536,6 +544,33 @@ class TeamWorkspace:
         events = [e for e in self._activity_feed if e.workspace_id == workspace_id]
         return events[-limit:]
 
+    def build_activity_digest(
+        self,
+        workspace_id: str,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        events = [
+            event
+            for event in self._activity_feed
+            if event.workspace_id == workspace_id and _within_window(event.timestamp, window_start, window_end)
+        ]
+        return _activity_digest(workspace_id, events, window_start=window_start, window_end=window_end)
+
+    def build_all_workspace_activity_digest(
+        self,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        events = [
+            event
+            for event in self._activity_feed
+            if _within_window(event.timestamp, window_start, window_end)
+        ]
+        return _activity_digest(None, events, window_start=window_start, window_end=window_end)
+
     # ------------------------------------------------------------------
     # Team calendar
     # ------------------------------------------------------------------
@@ -564,6 +599,42 @@ class TeamWorkspace:
         events.sort(key=lambda e: e.start_date)
         return events
 
+    def build_member_capacity_report(
+        self,
+        workspace_id: str,
+        plan_events: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> WorkspaceMemberCapacityReport | None:
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+        events = self.build_team_calendar(workspace_id, plan_events or {})
+        raw_events = [event for plan_id in ws.plan_ids for event in (plan_events or {}).get(plan_id, [])]
+        members = tuple(
+            WorkspaceMemberCapacity(
+                member_id=member.member_id,
+                user_id=member.user_id,
+                display_name=member.display_name,
+                email=member.email,
+                role=member.role.value,
+                capacity_metadata=_capacity_metadata(member.metadata),
+                calendar_event_count=_member_event_count(member, raw_events, events),
+            )
+            for member in sorted(ws.members, key=lambda item: (item.display_name, item.user_id, item.member_id))
+        )
+        resources = tuple(
+            WorkspaceResourceCapacity(
+                resource_id=resource.resource_id,
+                name=resource.name,
+                resource_type=resource.resource_type,
+                total_capacity=resource.total_capacity,
+                allocated=resource.allocated,
+                unit=resource.unit,
+                utilization_metadata=_utilization_metadata(resource.metadata),
+            )
+            for resource in sorted(ws.resources, key=lambda item: (item.name, item.resource_id))
+        )
+        return WorkspaceMemberCapacityReport(workspace_id=workspace_id, members=members, resources=resources)
+
     # ------------------------------------------------------------------
     # Export / import
     # ------------------------------------------------------------------
@@ -584,6 +655,78 @@ class TeamWorkspace:
         )
         self._workspaces[ws.workspace_id] = ws
         return ws
+
+
+def _activity_digest(
+    workspace_id: str | None,
+    events: list[ActivityEvent],
+    *,
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> WorkspaceActivityDigest:
+    sorted_events = sorted(events, key=lambda event: (event.timestamp, event.event_id))
+    return WorkspaceActivityDigest(
+        workspace_id=workspace_id,
+        total_event_count=len(sorted_events),
+        counts_by_action=_counts(event.action for event in sorted_events),
+        counts_by_actor=_counts(event.user_id for event in sorted_events),
+        counts_by_target_type=_counts(event.entity_type for event in sorted_events),
+        latest_activity_timestamp=sorted_events[-1].timestamp if sorted_events else None,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+
+def _counts(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def _within_window(timestamp: str, window_start: str | None, window_end: str | None) -> bool:
+    if window_start is not None and timestamp < window_start:
+        return False
+    if window_end is not None and timestamp > window_end:
+        return False
+    return True
+
+
+def _capacity_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    keys = ("capacity", "capacity_hours", "weekly_capacity", "assigned_capacity", "availability", "fte")
+    return {key: metadata[key] for key in sorted(keys) if key in metadata}
+
+
+def _utilization_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    keys = ("utilization", "utilized", "allocated_percent", "reserved", "available", "notes")
+    return {key: metadata[key] for key in sorted(keys) if key in metadata}
+
+
+def _member_event_count(
+    member: TeamMember,
+    raw_events: list[dict[str, Any]],
+    calendar_events: list[CalendarEvent],
+) -> int:
+    matched = 0
+    identifiers = {member.member_id, member.user_id, member.email, member.display_name}
+    for event in raw_events:
+        candidates = (
+            event.get("member_id"),
+            event.get("user_id"),
+            event.get("assignee"),
+            event.get("owner"),
+            event.get("actor"),
+            event.get("email"),
+        )
+        attendees = event.get("attendees") or event.get("members") or []
+        if isinstance(attendees, str):
+            attendees = [attendees]
+        if any(candidate in identifiers for candidate in candidates if candidate):
+            matched += 1
+        elif any(attendee in identifiers for attendee in attendees):
+            matched += 1
+    return matched if raw_events else 0
 
 
 __all__ = ["TeamWorkspace"]
