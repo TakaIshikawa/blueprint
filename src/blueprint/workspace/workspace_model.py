@@ -160,6 +160,13 @@ class WorkspaceMemberCapacity:
     capacity_metadata: dict[str, Any] = field(default_factory=dict)
     calendar_event_count: int = 0
 
+    @property
+    def assigned_capacity(self) -> Any:
+        for key in ("assigned_capacity", "capacity", "weekly_capacity", "fte"):
+            if key in self.capacity_metadata:
+                return self.capacity_metadata[key]
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "member_id": self.member_id,
@@ -168,6 +175,7 @@ class WorkspaceMemberCapacity:
             "email": self.email,
             "role": self.role,
             "capacity_metadata": dict(self.capacity_metadata),
+            "assigned_capacity": self.assigned_capacity,
             "calendar_event_count": self.calendar_event_count,
         }
 
@@ -182,6 +190,15 @@ class WorkspaceResourceCapacity:
     unit: str = ""
     utilization_metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def utilization(self) -> Any:
+        for key in ("utilization", "utilization_percent", "used_capacity", "utilized"):
+            if key in self.utilization_metadata:
+                return self.utilization_metadata[key]
+        if self.total_capacity:
+            return round(self.allocated / self.total_capacity, 4)
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "resource_id": self.resource_id,
@@ -191,6 +208,7 @@ class WorkspaceResourceCapacity:
             "allocated": self.allocated,
             "unit": self.unit,
             "utilization_metadata": dict(self.utilization_metadata),
+            "utilization": self.utilization,
         }
 
 

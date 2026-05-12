@@ -16,7 +16,6 @@ from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
-from blueprint.exporters.docx_exporter import DOCXExporter
 from blueprint.exporters.discord import DiscordExporter
 from blueprint.exporters.email import EmailExporter
 from blueprint.exporters.discord_digest import DiscordDigestExporter
@@ -42,7 +41,6 @@ from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.opsgenie_digest import OpsgenieDigestExporter
 from blueprint.exporters.pagerduty_digest import PagerDutyDigestExporter
-from blueprint.exporters.pdf_exporter import PDFExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.registry import (
@@ -431,7 +429,6 @@ __all__ = [
     "CriticalPathReportExporter",
     "CsvTasksExporter",
     "DependencyMatrixExporter",
-    "DOCXExporter",
     "DiscordDigestExporter",
     "EmailExporter",
     "ExportManifestExporter",
@@ -486,7 +483,6 @@ __all__ = [
     "PlanTenantIsolationMatrixRow",
     "PlanTrainingEnablementChecklist",
     "PlanTrainingEnablementChecklistItem",
-    "PDFExporter",
     "PlanSnapshotExporter",
     "RaciMatrixExporter",
     "RelayExporter",

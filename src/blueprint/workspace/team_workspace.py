@@ -550,7 +550,11 @@ class TeamWorkspace:
         *,
         window_start: str | None = None,
         window_end: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> WorkspaceActivityDigest:
+        window_start = window_start or since
+        window_end = window_end or until
         events = [
             event
             for event in self._activity_feed
@@ -563,7 +567,11 @@ class TeamWorkspace:
         *,
         window_start: str | None = None,
         window_end: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> WorkspaceActivityDigest:
+        window_start = window_start or since
+        window_end = window_end or until
         events = [
             event
             for event in self._activity_feed
@@ -699,7 +707,7 @@ def _capacity_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _utilization_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    keys = ("utilization", "utilized", "allocated_percent", "reserved", "available", "notes")
+    keys = ("utilization", "utilization_percent", "used_capacity", "utilized", "allocated_percent", "reserved", "available", "notes")
     return {key: metadata[key] for key in sorted(keys) if key in metadata}
 
 
@@ -714,6 +722,8 @@ def _member_event_count(
         candidates = (
             event.get("member_id"),
             event.get("user_id"),
+            event.get("assignee_id"),
+            event.get("owner_id"),
             event.get("assignee"),
             event.get("owner"),
             event.get("actor"),
