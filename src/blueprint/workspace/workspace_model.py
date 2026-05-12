@@ -127,6 +127,16 @@ class ActivityEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceActivityDigest:
+    workspace_id: str | None
+    total_event_count: int = 0
+    counts_by_action: dict[str, int] = field(default_factory=dict)
+    counts_by_actor: dict[str, int] = field(default_factory=dict)
+    counts_by_target_type: dict[str, int] = field(default_factory=dict)
+    latest_activity_timestamp: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CalendarEvent:
     event_id: str
     plan_id: str
@@ -176,6 +186,7 @@ __all__ = [
     "SharedResource",
     "TeamMember",
     "Workspace",
+    "WorkspaceActivityDigest",
     "WorkspaceInvitation",
     "WorkspacePolicyFinding",
     "WorkspaceRole",

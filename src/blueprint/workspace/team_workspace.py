@@ -18,6 +18,7 @@ from blueprint.workspace.workspace_model import (
     SharedResource,
     TeamMember,
     Workspace,
+    WorkspaceActivityDigest,
     WorkspaceInvitation,
     WorkspacePolicyFinding,
     WorkspaceRole,
@@ -536,6 +537,35 @@ class TeamWorkspace:
         events = [e for e in self._activity_feed if e.workspace_id == workspace_id]
         return events[-limit:]
 
+    def build_activity_digest(
+        self,
+        workspace_id: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        """Summarize activity for one workspace within an optional timestamp window."""
+        events = [
+            event
+            for event in self._activity_feed
+            if event.workspace_id == workspace_id and _within_window(event.timestamp, since, until)
+        ]
+        return _activity_digest(workspace_id, events)
+
+    def build_all_workspace_activity_digest(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        """Summarize activity across the manager activity feed."""
+        events = [
+            event
+            for event in self._activity_feed
+            if _within_window(event.timestamp, since, until)
+        ]
+        return _activity_digest(None, events)
+
     # ------------------------------------------------------------------
     # Team calendar
     # ------------------------------------------------------------------
@@ -584,6 +614,35 @@ class TeamWorkspace:
         )
         self._workspaces[ws.workspace_id] = ws
         return ws
+
+
+def _within_window(timestamp: str, since: str | None, until: str | None) -> bool:
+    if since is not None and timestamp < since:
+        return False
+    if until is not None and timestamp > until:
+        return False
+    return True
+
+
+def _activity_digest(
+    workspace_id: str | None,
+    events: list[ActivityEvent],
+) -> WorkspaceActivityDigest:
+    return WorkspaceActivityDigest(
+        workspace_id=workspace_id,
+        total_event_count=len(events),
+        counts_by_action=_counts(event.action for event in events),
+        counts_by_actor=_counts(event.user_id for event in events),
+        counts_by_target_type=_counts(event.entity_type for event in events),
+        latest_activity_timestamp=max((event.timestamp for event in events), default=None),
+    )
+
+
+def _counts(values: list[str] | Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 __all__ = ["TeamWorkspace"]
