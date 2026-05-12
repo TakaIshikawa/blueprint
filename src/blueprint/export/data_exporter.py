@@ -1033,6 +1033,78 @@ def _record_value(record: Any, key: str, default: Any = None) -> Any:
     return getattr(record, key, default)
 
 
+def build_export_validation_summary(
+    findings: Iterable[Any],
+    *,
+    blocking_severities: Iterable[str] = ("critical", "error"),
+) -> dict[str, Any]:
+    """Summarize export validation findings for report checks."""
+    normalized_findings = [_normalize_validation_finding(finding) for finding in findings]
+    severity_counts: dict[str, int] = {}
+    code_counts: dict[str, int] = {}
+    blocking_set = {_normalize_finding_text(severity) for severity in blocking_severities}
+    blocking_findings: list[dict[str, Any]] = []
+
+    for finding in normalized_findings:
+        severity = finding["severity"]
+        code = finding["code"]
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+        code_counts[code] = code_counts.get(code, 0) + 1
+        if severity in blocking_set:
+            blocking_findings.append(_compact_blocking_finding(finding))
+
+    blocking_findings.sort(
+        key=lambda finding: (
+            _validation_severity_rank(str(finding.get("severity", ""))),
+            str(finding.get("code", "")),
+            str(finding.get("location", "")),
+            str(finding.get("message", "")),
+        )
+    )
+
+    return {
+        "total": len(normalized_findings),
+        "passed": not blocking_findings,
+        "severity_counts": {
+            severity: severity_counts[severity] for severity in sorted(severity_counts)
+        },
+        "code_counts": {code: code_counts[code] for code in sorted(code_counts)},
+        "blocking_findings": blocking_findings,
+    }
+
+
+def _normalize_validation_finding(finding: Any) -> dict[str, Any]:
+    severity = _normalize_finding_text(_record_value(finding, "severity", default="info")) or "info"
+    code = _normalize_finding_text(_record_value(finding, "code", default="unknown")) or "unknown"
+    return {
+        "severity": severity,
+        "code": code,
+        "message": _record_value(finding, "message"),
+        "location": _record_value(finding, "location"),
+    }
+
+
+def _normalize_finding_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
+
+
+def _compact_blocking_finding(finding: Mapping[str, Any]) -> dict[str, Any]:
+    compact = {
+        "severity": finding["severity"],
+        "code": finding["code"],
+    }
+    if finding.get("message") not in (None, ""):
+        compact["message"] = str(finding["message"])
+    if finding.get("location") not in (None, ""):
+        compact["location"] = str(finding["location"])
+    return compact
+
+
+def _validation_severity_rank(severity: str) -> int:
+    ranks = {"critical": 0, "error": 1, "warning": 2, "info": 3}
+    return ranks.get(severity, 99)
+
+
 def _normalize_checksum_algorithm(algorithm: str) -> str:
     normalized = str(algorithm or "sha256").strip().lower().replace("-", "")
     if normalized not in {"sha256", "md5"}:
