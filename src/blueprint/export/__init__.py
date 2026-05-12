@@ -17,12 +17,14 @@ if TYPE_CHECKING:
         ExportManifestValidationResult,
         ExportOptions,
         ExportProgress,
+        ExportRedactionPolicy,
         ExportResult,
         ExportScheduleConfig,
         ExportScope,
         InMemoryDataStore,
         UserDataExport,
         parse_export_bundle,
+        summarize_delta,
     )
 
 _MODULE = "blueprint.export.data_exporter"
@@ -38,12 +40,14 @@ _EXPORTS = {
     "ExportManifestValidationResult": _MODULE,
     "ExportOptions": _MODULE,
     "ExportProgress": _MODULE,
+    "ExportRedactionPolicy": _MODULE,
     "ExportResult": _MODULE,
     "ExportScheduleConfig": _MODULE,
     "ExportScope": _MODULE,
     "InMemoryDataStore": _MODULE,
     "UserDataExport": _MODULE,
     "parse_export_bundle": _MODULE,
+    "summarize_delta": _MODULE,
 }
 
 

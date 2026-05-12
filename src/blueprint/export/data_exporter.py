@@ -188,6 +188,29 @@ def sanitize_export_destination(destination: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class ExportRedactionPolicy:
+    """Named field-level redaction policy for exported data."""
+
+    name: str
+    field_names: frozenset[str]
+    replacement_text: str = "REDACTED"
+    hash_replacements: bool = False
+
+    def __init__(
+        self,
+        name: str,
+        field_names: set[str] | frozenset[str] | list[str] | tuple[str, ...],
+        *,
+        replacement_text: str = "REDACTED",
+        hash_replacements: bool = False,
+    ) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "field_names", frozenset(str(field) for field in field_names))
+        object.__setattr__(self, "replacement_text", replacement_text)
+        object.__setattr__(self, "hash_replacements", hash_replacements)
+
+
+@dataclass(frozen=True, slots=True)
 class ExportOptions:
     """Controls what metadata and relations to include in an export."""
 
@@ -195,6 +218,7 @@ class ExportOptions:
     include_relationships: bool = True
     include_attachments: bool = False
     anonymize: bool = False
+    redaction_policy: ExportRedactionPolicy | None = None
     schema_version: str = SCHEMA_VERSION
 
 
@@ -775,6 +799,9 @@ def _apply_options(data: dict[str, Any], options: ExportOptions) -> dict[str, An
     if options.anonymize:
         result = _anonymize_data(result)
 
+    if options.redaction_policy is not None:
+        result = _apply_redaction_policy(result, options.redaction_policy)
+
     if not options.include_metadata:
         result = _strip_metadata(result)
 
@@ -799,6 +826,29 @@ def _walk_anonymize(obj: Any, sensitive: set[str]) -> Any:
     if isinstance(obj, list):
         return [_walk_anonymize(item, sensitive) for item in obj]
     return obj
+
+
+def _apply_redaction_policy(data: dict[str, Any], policy: ExportRedactionPolicy) -> dict[str, Any]:
+    """Apply a caller-defined redaction policy recursively."""
+    return _walk_redact(data, policy)
+
+
+def _walk_redact(obj: Any, policy: ExportRedactionPolicy) -> Any:
+    if isinstance(obj, dict):
+        return {
+            key: _redacted_value(value, policy) if key in policy.field_names else _walk_redact(value, policy)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_walk_redact(item, policy) for item in obj]
+    return obj
+
+
+def _redacted_value(value: Any, policy: ExportRedactionPolicy) -> str:
+    if policy.hash_replacements:
+        digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+        return f"{policy.replacement_text}{digest}"
+    return policy.replacement_text
 
 
 def _strip_metadata(data: dict[str, Any]) -> dict[str, Any]:
@@ -1395,6 +1445,55 @@ def parse_export_bundle(bundle: dict[str, Any]) -> ExportResult:
         record_count=int(metadata.get("record_count", sum(manifest.record_counts.values()))),
         created_at=str(metadata.get("created_at") or manifest.timestamp),
     )
+
+
+def summarize_delta(
+    before: dict[str, Any] | bytes | bytearray | ExportResult,
+    after: dict[str, Any] | bytes | bytearray | ExportResult,
+) -> dict[str, dict[str, int]]:
+    """Summarize added, removed, unchanged, and changed records by section."""
+    before_sections = _normalize_delta_payload(before)
+    after_sections = _normalize_delta_payload(after)
+    summary: dict[str, dict[str, int]] = {}
+
+    for section in sorted(set(before_sections) | set(after_sections)):
+        before_records = _delta_records(before_sections.get(section))
+        after_records = _delta_records(after_sections.get(section))
+        before_keys = set(before_records)
+        after_keys = set(after_records)
+        shared_keys = before_keys & after_keys
+
+        summary[section] = {
+            "added": len(after_keys - before_keys),
+            "removed": len(before_keys - after_keys),
+            "unchanged": sum(1 for key in shared_keys if before_records[key] == after_records[key]),
+            "changed": sum(1 for key in shared_keys if before_records[key] != after_records[key]),
+        }
+
+    return summary
+
+
+def _normalize_delta_payload(payload: dict[str, Any] | bytes | bytearray | ExportResult) -> dict[str, Any]:
+    if isinstance(payload, ExportResult):
+        payload = payload.data
+    if isinstance(payload, (bytes, bytearray)):
+        payload = json.loads(bytes(payload).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("delta payload must be a dictionary, JSON bytes, or ExportResult")
+    data = payload.get("data")
+    return data if isinstance(data, dict) else payload
+
+
+def _delta_records(section: Any) -> dict[str, Any]:
+    if isinstance(section, dict):
+        return {str(key): value for key, value in section.items()}
+    if isinstance(section, list):
+        records: dict[str, Any] = {}
+        for index, value in enumerate(section):
+            key = value.get("id") if isinstance(value, dict) else None
+            records[str(key) if key is not None else str(index)] = value
+        return records
+    return {}
 
 
 def _filters_to_dict(filters: ExportFilters) -> dict[str, Any]:
