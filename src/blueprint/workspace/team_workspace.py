@@ -18,6 +18,7 @@ from blueprint.workspace.workspace_model import (
     SharedResource,
     TeamMember,
     Workspace,
+    WorkspaceActivityDigest,
     WorkspaceInvitation,
     WorkspacePolicyFinding,
     WorkspaceRole,
@@ -536,6 +537,51 @@ class TeamWorkspace:
         events = [e for e in self._activity_feed if e.workspace_id == workspace_id]
         return events[-limit:]
 
+    def build_activity_digest(
+        self,
+        workspace_id: str,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        """Summarize recent activity for a single workspace."""
+        events = [event for event in self._activity_feed if event.workspace_id == workspace_id]
+        return self._activity_digest(events, workspace_id=workspace_id, window_start=window_start, window_end=window_end)
+
+    def build_all_workspace_activity_digest(
+        self,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        """Summarize recent activity across every workspace."""
+        return self._activity_digest(self._activity_feed, workspace_id=None, window_start=window_start, window_end=window_end)
+
+    def _activity_digest(
+        self,
+        events: list[ActivityEvent],
+        *,
+        workspace_id: str | None,
+        window_start: str | None,
+        window_end: str | None,
+    ) -> WorkspaceActivityDigest:
+        filtered = [
+            event
+            for event in events
+            if (window_start is None or event.timestamp >= window_start)
+            and (window_end is None or event.timestamp <= window_end)
+        ]
+        return WorkspaceActivityDigest(
+            workspace_id=workspace_id,
+            total_event_count=len(filtered),
+            counts_by_action=_count_by(filtered, "action"),
+            counts_by_actor=_count_by(filtered, "user_id"),
+            counts_by_target_type=_count_by(filtered, "entity_type"),
+            latest_activity_timestamp=max((event.timestamp for event in filtered), default=None),
+            window_start=window_start,
+            window_end=window_end,
+        )
+
     # ------------------------------------------------------------------
     # Team calendar
     # ------------------------------------------------------------------
@@ -584,6 +630,14 @@ class TeamWorkspace:
         )
         self._workspaces[ws.workspace_id] = ws
         return ws
+
+
+def _count_by(events: list[ActivityEvent], attr: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        key = str(getattr(event, attr, ""))
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 __all__ = ["TeamWorkspace"]
