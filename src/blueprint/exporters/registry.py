@@ -8,7 +8,6 @@ from typing import Any
 
 from blueprint.exporters.adr import ADRExporter
 from blueprint.exporters.agent_prompt_pack import AgentPromptPackExporter
-from blueprint.exporters.docx_exporter import DOCXExporter
 from blueprint.exporters.asana_csv import AsanaCsvExporter
 from blueprint.exporters.azure_devops_csv import AzureDevOpsCsvExporter
 from blueprint.exporters.calendar import CalendarExporter
@@ -40,7 +39,6 @@ from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.opsgenie_digest import OpsgenieDigestExporter
 from blueprint.exporters.pagerduty_digest import PagerDutyDigestExporter
-from blueprint.exporters.pdf_exporter import PDFExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.relay import RelayExporter
@@ -62,6 +60,18 @@ from blueprint.exporters.wave_schedule import WaveScheduleExporter
 from blueprint.exporters.youtrack_csv import YouTrackCsvExporter
 
 ExporterFactory = Callable[[], Any]
+
+
+def _create_docx_exporter() -> Any:
+    from blueprint.exporters.docx_exporter import DOCXExporter
+
+    return DOCXExporter()
+
+
+def _create_pdf_exporter() -> Any:
+    from blueprint.exporters.pdf_exporter import PDFExporter
+
+    return PDFExporter()
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,8 +142,8 @@ _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("vscode-tasks", VSCodeTasksExporter, "json", ".json"),
     ExporterRegistration("wave-schedule", WaveScheduleExporter, "json", ".json"),
     ExporterRegistration("youtrack-csv", YouTrackCsvExporter, "csv", ".csv"),
-    ExporterRegistration("pdf-export", PDFExporter, "pdf", ".pdf"),
-    ExporterRegistration("docx-export", DOCXExporter, "docx", ".docx"),
+    ExporterRegistration("pdf-export", _create_pdf_exporter, "pdf", ".pdf"),
+    ExporterRegistration("docx-export", _create_docx_exporter, "docx", ".docx"),
 )
 
 
@@ -179,6 +189,24 @@ def supported_target_aliases() -> dict[str, str]:
         for alias in (*registration.aliases, *_implicit_aliases(registration.target)):
             aliases[alias] = registration.target
     return aliases
+
+
+def exporter_catalog() -> tuple[dict[str, Any], ...]:
+    """Return structured metadata for supported export targets in display order."""
+    return tuple(
+        {
+            "target": registration.target,
+            "default_format": registration.default_format,
+            "extension": registration.extension,
+            "aliases": list((*registration.aliases, *_implicit_aliases(registration.target))),
+            "binary_like": _is_binary_like(registration),
+        }
+        for registration in _REGISTRATIONS
+    )
+
+
+def _is_binary_like(registration: ExporterRegistration) -> bool:
+    return registration.default_format in {"pdf", "docx"} or registration.extension in {".pdf", ".docx"}
 
 
 def resolve_target_name(target: str) -> str:

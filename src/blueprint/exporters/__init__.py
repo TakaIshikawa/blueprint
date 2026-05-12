@@ -16,7 +16,6 @@ from blueprint.exporters.coverage_matrix import CoverageMatrixExporter
 from blueprint.exporters.critical_path_report import CriticalPathReportExporter
 from blueprint.exporters.csv_tasks import CsvTasksExporter
 from blueprint.exporters.dependency_matrix import DependencyMatrixExporter
-from blueprint.exporters.docx_exporter import DOCXExporter
 from blueprint.exporters.discord import DiscordExporter
 from blueprint.exporters.email import EmailExporter
 from blueprint.exporters.discord_digest import DiscordDigestExporter
@@ -31,7 +30,6 @@ from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
-from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
@@ -39,7 +37,6 @@ from blueprint.exporters.notion_markdown import NotionMarkdownExporter
 from blueprint.exporters.openproject_csv import OpenProjectCsvExporter
 from blueprint.exporters.opsgenie_digest import OpsgenieDigestExporter
 from blueprint.exporters.pagerduty_digest import PagerDutyDigestExporter
-from blueprint.exporters.pdf_exporter import PDFExporter
 from blueprint.exporters.plan_snapshot import PlanSnapshotExporter
 from blueprint.exporters.raci_matrix import RaciMatrixExporter
 from blueprint.exporters.registry import (
@@ -428,10 +425,8 @@ __all__ = [
     "CriticalPathReportExporter",
     "CsvTasksExporter",
     "DependencyMatrixExporter",
-    "DOCXExporter",
     "DiscordDigestExporter",
     "EmailExporter",
-    "ExportManifestExporter",
     "ExporterRegistration",
     "FileImpactMapExporter",
     "GanttExporter",
@@ -483,7 +478,6 @@ __all__ = [
     "PlanTenantIsolationMatrixRow",
     "PlanTrainingEnablementChecklist",
     "PlanTrainingEnablementChecklistItem",
-    "PDFExporter",
     "PlanSnapshotExporter",
     "RaciMatrixExporter",
     "RelayExporter",
