@@ -79,6 +79,27 @@ class ExporterRegistration:
         return self.factory()
 
 
+@dataclass(frozen=True, slots=True)
+class ExporterCatalogEntry:
+    """Structured metadata for one canonical export target."""
+
+    target: str
+    default_format: str
+    extension: str
+    aliases: tuple[str, ...] = ()
+    binary_like: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible catalog record."""
+        return {
+            "target": self.target,
+            "default_format": self.default_format,
+            "extension": self.extension,
+            "aliases": list(self.aliases),
+            "binary_like": self.binary_like,
+        }
+
+
 _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("adr", ADRExporter, "markdown", ""),
     ExporterRegistration("agent-prompt-pack", AgentPromptPackExporter, "markdown", ""),
@@ -181,6 +202,25 @@ def supported_target_aliases() -> dict[str, str]:
     return aliases
 
 
+def supported_target_catalog() -> tuple[ExporterCatalogEntry, ...]:
+    """Return deterministic catalog metadata for canonical export targets."""
+    return tuple(
+        ExporterCatalogEntry(
+            target=registration.target,
+            default_format=registration.default_format,
+            extension=registration.extension,
+            aliases=tuple(_dedupe((*registration.aliases, *_implicit_aliases(registration.target)))),
+            binary_like=_is_binary_like(registration),
+        )
+        for registration in _REGISTRATIONS
+    )
+
+
+def supported_target_catalog_dicts() -> list[dict[str, Any]]:
+    """Return registry catalog metadata as JSON-compatible dictionaries."""
+    return [entry.to_dict() for entry in supported_target_catalog()]
+
+
 def resolve_target_name(target: str) -> str:
     """Resolve a target name or alias to its canonical registry target."""
     registration = _LOOKUP.get(target)
@@ -198,3 +238,17 @@ def get_exporter_registration(target: str) -> ExporterRegistration:
 def create_exporter(target: str) -> Any:
     """Create an exporter for a target name or alias."""
     return get_exporter_registration(target).create()
+
+
+def _is_binary_like(registration: ExporterRegistration) -> bool:
+    return registration.default_format in {"pdf", "docx"} or registration.extension in {".pdf", ".docx"}
+
+
+def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return tuple(result)
