@@ -32,13 +32,22 @@ def _parse_etags(header: str | None) -> set[str]:
     return {part.strip() for part in header.split(",") if part.strip()}
 
 
-def _matches(header: str | None, current_etag: str) -> bool:
+def _without_weak_prefix(etag: str) -> str:
+    return etag[2:] if etag.startswith("W/") else etag
+
+
+def _matches(header: str | None, current_etag: str, *, weak: bool = False) -> bool:
     tags = _parse_etags(header)
-    return "*" in tags or current_etag in tags
+    if "*" in tags:
+        return True
+    if weak:
+        comparable_current = _without_weak_prefix(current_etag)
+        return any(_without_weak_prefix(tag) == comparable_current for tag in tags)
+    return current_etag in tags
 
 
 def evaluate_if_none_match(header: str | None, current_etag: str) -> ConditionalDecision:
-    if _matches(header, current_etag):
+    if _matches(header, current_etag, weak=True):
         return ConditionalDecision(
             status="not_modified",
             status_code=304,
@@ -59,4 +68,3 @@ def evaluate_if_match(header: str | None, current_etag: str) -> ConditionalDecis
             reason="If-Match did not match current ETag",
         )
     return ConditionalDecision(status="ok", status_code=200, etag=current_etag)
-
