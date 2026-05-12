@@ -1105,6 +1105,64 @@ def _validation_severity_rank(severity: str) -> int:
     return ranks.get(severity, 99)
 
 
+def build_export_column_profile(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    expected_columns: Iterable[str] | None = None,
+    required_columns: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Profile exported row columns for compact export reports."""
+    normalized_rows = [
+        {str(column): value for column, value in dict(row).items()}
+        for row in rows
+    ]
+    row_count = len(normalized_rows)
+    observed_columns = sorted(
+        {str(column) for row in normalized_rows for column in row},
+    )
+    expected = _normalize_column_set(expected_columns)
+    required = _normalize_column_set(required_columns)
+    if required_columns is None and expected_columns is not None:
+        required = expected
+
+    missing_required_columns = sorted(required - set(observed_columns))
+    extra_columns = sorted(set(observed_columns) - expected) if expected_columns is not None else []
+
+    columns = {
+        column: _column_profile(normalized_rows, column, row_count)
+        for column in observed_columns
+    }
+
+    return {
+        "row_count": row_count,
+        "observed_columns": observed_columns,
+        "missing_required_columns": missing_required_columns,
+        "extra_columns": extra_columns,
+        "unexpected_columns": list(extra_columns),
+        "columns": columns,
+    }
+
+
+def _normalize_column_set(columns: Iterable[str] | None) -> set[str]:
+    if columns is None:
+        return set()
+    return {str(column) for column in columns}
+
+
+def _column_profile(
+    rows: list[dict[Any, Any]],
+    column: str,
+    row_count: int,
+) -> dict[str, Any]:
+    non_null_count = sum(1 for row in rows if row.get(column) is not None)
+    null_count = row_count - non_null_count
+    fill_rate = non_null_count / row_count if row_count else 0.0
+    return {
+        "null_count": null_count,
+        "fill_rate": fill_rate,
+    }
+
+
 def _normalize_checksum_algorithm(algorithm: str) -> str:
     normalized = str(algorithm or "sha256").strip().lower().replace("-", "")
     if normalized not in {"sha256", "md5"}:
