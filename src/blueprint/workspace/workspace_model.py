@@ -137,6 +137,35 @@ class WorkspaceActivityDigest:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceMemberCapacity:
+    member_id: str
+    user_id: str
+    display_name: str
+    email: str = ""
+    role: str = ""
+    assigned_capacity: Any = None
+    calendar_event_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceResourceCapacity:
+    resource_id: str
+    name: str
+    resource_type: str
+    total_capacity: float = 0.0
+    allocated: float = 0.0
+    unit: str = ""
+    utilization: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceMemberCapacityReport:
+    workspace_id: str
+    members: tuple[WorkspaceMemberCapacity, ...] = field(default_factory=tuple)
+    resources: tuple[WorkspaceResourceCapacity, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
 class CalendarEvent:
     event_id: str
     plan_id: str
@@ -188,6 +217,9 @@ __all__ = [
     "Workspace",
     "WorkspaceActivityDigest",
     "WorkspaceInvitation",
+    "WorkspaceMemberCapacity",
+    "WorkspaceMemberCapacityReport",
+    "WorkspaceResourceCapacity",
     "WorkspacePolicyFinding",
     "WorkspaceRole",
     "WorkspaceSettings",

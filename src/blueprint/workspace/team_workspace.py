@@ -20,6 +20,9 @@ from blueprint.workspace.workspace_model import (
     Workspace,
     WorkspaceActivityDigest,
     WorkspaceInvitation,
+    WorkspaceMemberCapacity,
+    WorkspaceMemberCapacityReport,
+    WorkspaceResourceCapacity,
     WorkspacePolicyFinding,
     WorkspaceRole,
     WorkspaceSettings,
@@ -119,6 +122,7 @@ class TeamWorkspace:
         *,
         email: str = "",
         role: WorkspaceRole = WorkspaceRole.MEMBER,
+        metadata: dict[str, Any] | None = None,
     ) -> Workspace | None:
         ws = self._workspaces.get(workspace_id)
         if ws is None:
@@ -129,6 +133,7 @@ class TeamWorkspace:
             display_name=display_name,
             email=email,
             role=role,
+            metadata=metadata or {},
         )
         updated = replace(
             ws,
@@ -264,6 +269,7 @@ class TeamWorkspace:
         *,
         total_capacity: float = 0.0,
         unit: str = "",
+        metadata: dict[str, Any] | None = None,
     ) -> Workspace | None:
         ws = self._workspaces.get(workspace_id)
         if ws is None:
@@ -274,6 +280,7 @@ class TeamWorkspace:
             resource_type=resource_type,
             total_capacity=total_capacity,
             unit=unit,
+            metadata=metadata or {},
         )
         updated = replace(ws, resources=[*ws.resources, resource], updated_at=_now_iso())
         self._workspaces[workspace_id] = updated
@@ -594,6 +601,44 @@ class TeamWorkspace:
         events.sort(key=lambda e: e.start_date)
         return events
 
+    def build_member_capacity_report(
+        self,
+        workspace_id: str,
+        plan_events: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> WorkspaceMemberCapacityReport | None:
+        """Summarize member and shared-resource capacity for one workspace."""
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+        event_counts = _member_event_counts(ws, plan_events or {})
+        members = tuple(
+            WorkspaceMemberCapacity(
+                member_id=member.member_id,
+                user_id=member.user_id,
+                display_name=member.display_name,
+                email=member.email,
+                role=member.role.value,
+                assigned_capacity=_capacity_metadata(member.metadata),
+                calendar_event_count=event_counts.get(member.member_id, 0)
+                + event_counts.get(member.user_id, 0)
+                + event_counts.get(member.email, 0),
+            )
+            for member in ws.members
+        )
+        resources = tuple(
+            WorkspaceResourceCapacity(
+                resource_id=resource.resource_id,
+                name=resource.name,
+                resource_type=resource.resource_type,
+                total_capacity=resource.total_capacity,
+                allocated=resource.allocated,
+                unit=resource.unit,
+                utilization=_resource_utilization(resource),
+            )
+            for resource in ws.resources
+        )
+        return WorkspaceMemberCapacityReport(workspace_id=workspace_id, members=members, resources=resources)
+
     # ------------------------------------------------------------------
     # Export / import
     # ------------------------------------------------------------------
@@ -643,6 +688,34 @@ def _counts(values: list[str] | Any) -> dict[str, int]:
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _capacity_metadata(metadata: dict[str, Any]) -> Any:
+    for key in ("assigned_capacity", "capacity", "weekly_capacity", "fte"):
+        if key in metadata:
+            return metadata[key]
+    return None
+
+
+def _resource_utilization(resource: SharedResource) -> Any:
+    for key in ("utilization", "utilization_percent", "used_capacity"):
+        if key in resource.metadata:
+            return resource.metadata[key]
+    if resource.total_capacity:
+        return round(resource.allocated / resource.total_capacity, 4)
+    return None
+
+
+def _member_event_counts(ws: Workspace, plan_events: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for plan_id in ws.plan_ids:
+        for event in plan_events.get(plan_id, []):
+            for key in ("member_id", "user_id", "assignee_id", "owner_id", "email"):
+                value = event.get(key)
+                if value:
+                    text = str(value)
+                    counts[text] = counts.get(text, 0) + 1
+    return counts
 
 
 __all__ = ["TeamWorkspace"]
