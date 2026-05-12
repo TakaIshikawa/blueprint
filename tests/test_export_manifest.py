@@ -7,8 +7,62 @@ from click.testing import CliRunner
 
 from blueprint import config as blueprint_config
 from blueprint.cli import cli
+from blueprint.export import DataExportFormat, build_export_manifest
 from blueprint.exporters.manifest import ExportManifestExporter
 from blueprint.store import Store, init_db
+
+
+def test_build_export_manifest_checksum_is_deterministic_for_same_rows():
+    rows = [
+        {"id": "task-1", "title": "Build", "priority": 2},
+        {"priority": 1, "title": "Ship", "id": "task-2"},
+    ]
+
+    first = build_export_manifest(
+        rows,
+        DataExportFormat.JSON,
+        generated_at="2026-01-02T03:04:05Z",
+        destination_label="s3://audit-exports/tasks.json",
+    )
+    second = build_export_manifest(
+        rows,
+        DataExportFormat.JSON,
+        generated_at="2026-02-03T04:05:06Z",
+        destination_label="s3://audit-exports/tasks.json",
+    )
+
+    assert first["checksum"] == second["checksum"]
+    assert first["format"] == "json"
+    assert first["generated_at"] == "2026-01-02T03:04:05Z"
+    assert first["record_count"] == 2
+    assert first["field_names"] == ["id", "priority", "title"]
+    assert first["destination_label"] == "s3://audit-exports/tasks.json"
+
+
+def test_build_export_manifest_handles_empty_exports():
+    manifest = build_export_manifest(
+        [],
+        "csv",
+        generated_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+    )
+
+    assert manifest == {
+        "checksum": hashlib.sha256(b"[]").hexdigest(),
+        "field_names": [],
+        "format": "csv",
+        "generated_at": "2026-01-02T03:04:05+00:00",
+        "record_count": 0,
+    }
+
+
+def test_build_export_manifest_omits_destination_metadata_when_not_provided():
+    manifest = build_export_manifest(
+        [{"id": "task-1", "title": "Build"}],
+        "jsonl",
+        generated_at="2026-01-02T03:04:05Z",
+    )
+
+    assert "destination_label" not in manifest
 
 
 def test_export_manifest_includes_existing_and_missing_files(tmp_path):

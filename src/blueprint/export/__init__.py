@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         ExportScope,
         InMemoryDataStore,
         UserDataExport,
+        build_export_manifest,
         parse_export_bundle,
         summarize_delta,
     )
@@ -46,6 +47,7 @@ _EXPORTS = {
     "ExportScope": _MODULE,
     "InMemoryDataStore": _MODULE,
     "UserDataExport": _MODULE,
+    "build_export_manifest": _MODULE,
     "parse_export_bundle": _MODULE,
     "summarize_delta": _MODULE,
 }

@@ -15,6 +15,7 @@ import io
 import json
 import struct
 import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -751,6 +752,73 @@ def _now_iso() -> str:
 
 def _checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def build_export_manifest(
+    rows: Iterable[Mapping[str, Any]],
+    export_format: DataExportFormat | str,
+    *,
+    generated_at: datetime | str | None = None,
+    destination_label: str | None = None,
+) -> dict[str, Any]:
+    """Build deterministic metadata for a completed row-oriented export."""
+    normalized_rows = [_normalize_manifest_value(dict(row)) for row in rows]
+    field_names = sorted(
+        {
+            str(field_name)
+            for row in normalized_rows
+            if isinstance(row, dict)
+            for field_name in row
+        }
+    )
+    generated_timestamp = (
+        generated_at.isoformat()
+        if isinstance(generated_at, datetime)
+        else generated_at or _now_iso()
+    )
+
+    manifest: dict[str, Any] = {
+        "format": _export_format_value(export_format),
+        "generated_at": generated_timestamp,
+        "record_count": len(normalized_rows),
+        "field_names": field_names,
+        "checksum": _manifest_rows_checksum(normalized_rows),
+    }
+    if destination_label is not None:
+        manifest["destination_label"] = destination_label
+    return manifest
+
+
+def _export_format_value(export_format: DataExportFormat | str) -> str:
+    return export_format.value if isinstance(export_format, DataExportFormat) else str(export_format)
+
+
+def _manifest_rows_checksum(rows: list[Any]) -> str:
+    payload = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _checksum(payload.encode("utf-8"))
+
+
+def _normalize_manifest_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalize_manifest_value(value[key])
+            for key in sorted(value, key=lambda item: str(item))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_manifest_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        normalized_items = [_normalize_manifest_value(item) for item in value]
+        return sorted(
+            normalized_items,
+            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"), default=str),
+        )
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def _parse_dt(value: Any) -> datetime:
