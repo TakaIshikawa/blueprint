@@ -79,6 +79,26 @@ class ExporterRegistration:
         return self.factory()
 
 
+@dataclass(frozen=True, slots=True)
+class ExporterCatalogEntry:
+    """Public catalog metadata for one canonical export target."""
+
+    target: str
+    default_format: str
+    extension: str
+    aliases: tuple[str, ...] = ()
+    binary_like: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "default_format": self.default_format,
+            "extension": self.extension,
+            "aliases": list(self.aliases),
+            "binary_like": self.binary_like,
+        }
+
+
 _REGISTRATIONS: tuple[ExporterRegistration, ...] = (
     ExporterRegistration("adr", ADRExporter, "markdown", ""),
     ExporterRegistration("agent-prompt-pack", AgentPromptPackExporter, "markdown", ""),
@@ -198,3 +218,26 @@ def get_exporter_registration(target: str) -> ExporterRegistration:
 def create_exporter(target: str) -> Any:
     """Create an exporter for a target name or alias."""
     return get_exporter_registration(target).create()
+
+
+def supported_target_catalog() -> tuple[ExporterCatalogEntry, ...]:
+    """Return deterministic public metadata for supported export targets."""
+    return tuple(
+        ExporterCatalogEntry(
+            target=registration.target,
+            default_format=registration.default_format,
+            extension=registration.extension,
+            aliases=tuple(dict.fromkeys((*registration.aliases, *_implicit_aliases(registration.target)))),
+            binary_like=_is_binary_like(registration),
+        )
+        for registration in _REGISTRATIONS
+    )
+
+
+def supported_target_catalog_dicts() -> list[dict[str, Any]]:
+    """Return export target catalog entries as JSON-compatible dictionaries."""
+    return [entry.to_dict() for entry in supported_target_catalog()]
+
+
+def _is_binary_like(registration: ExporterRegistration) -> bool:
+    return registration.default_format in {"pdf", "docx"} or registration.extension in {".pdf", ".docx"}

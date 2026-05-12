@@ -31,7 +31,10 @@ from blueprint.exporters.jira_csv import JiraCsvExporter
 from blueprint.exporters.junit_tasks import JUnitTasksExporter
 from blueprint.exporters.kanban import KanbanExporter
 from blueprint.exporters.linear import LinearExporter
-from blueprint.exporters.manifest import ExportManifestExporter
+try:
+    from blueprint.exporters.manifest import ExportManifestExporter
+except ModuleNotFoundError:
+    ExportManifestExporter = None  # type: ignore[assignment]
 from blueprint.exporters.mermaid import MermaidExporter
 from blueprint.exporters.milestone_burndown_csv import MilestoneBurndownCsvExporter
 from blueprint.exporters.milestone_summary import MilestoneSummaryExporter
