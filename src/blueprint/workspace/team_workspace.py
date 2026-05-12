@@ -18,6 +18,7 @@ from blueprint.workspace.workspace_model import (
     SharedResource,
     TeamMember,
     Workspace,
+    WorkspaceActivityDigest,
     WorkspaceInvitation,
     WorkspacePolicyFinding,
     WorkspaceRole,
@@ -536,6 +537,33 @@ class TeamWorkspace:
         events = [e for e in self._activity_feed if e.workspace_id == workspace_id]
         return events[-limit:]
 
+    def build_activity_digest(
+        self,
+        workspace_id: str,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        events = [
+            event
+            for event in self._activity_feed
+            if event.workspace_id == workspace_id and _within_window(event.timestamp, window_start, window_end)
+        ]
+        return _activity_digest(workspace_id, events, window_start=window_start, window_end=window_end)
+
+    def build_all_workspace_activity_digest(
+        self,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> WorkspaceActivityDigest:
+        events = [
+            event
+            for event in self._activity_feed
+            if _within_window(event.timestamp, window_start, window_end)
+        ]
+        return _activity_digest(None, events, window_start=window_start, window_end=window_end)
+
     # ------------------------------------------------------------------
     # Team calendar
     # ------------------------------------------------------------------
@@ -584,6 +612,42 @@ class TeamWorkspace:
         )
         self._workspaces[ws.workspace_id] = ws
         return ws
+
+
+def _activity_digest(
+    workspace_id: str | None,
+    events: list[ActivityEvent],
+    *,
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> WorkspaceActivityDigest:
+    sorted_events = sorted(events, key=lambda event: (event.timestamp, event.event_id))
+    return WorkspaceActivityDigest(
+        workspace_id=workspace_id,
+        total_event_count=len(sorted_events),
+        counts_by_action=_counts(event.action for event in sorted_events),
+        counts_by_actor=_counts(event.user_id for event in sorted_events),
+        counts_by_target_type=_counts(event.entity_type for event in sorted_events),
+        latest_activity_timestamp=sorted_events[-1].timestamp if sorted_events else None,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+
+def _counts(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def _within_window(timestamp: str, window_start: str | None, window_end: str | None) -> bool:
+    if window_start is not None and timestamp < window_start:
+        return False
+    if window_end is not None and timestamp > window_end:
+        return False
+    return True
 
 
 __all__ = ["TeamWorkspace"]
