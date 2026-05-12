@@ -38,6 +38,23 @@ class RateLimitEvaluation(BaseModel):
     policy_id: str
 
 
+def build_rate_limit_headers(evaluation: RateLimitEvaluation) -> dict[str, str]:
+    """Build HTTP-style rate limit headers from a policy evaluation."""
+    reset_at = evaluation.reset_at
+    if reset_at.tzinfo is None:
+        reset_at = reset_at.replace(tzinfo=timezone.utc)
+    reset_at = reset_at.astimezone(timezone.utc)
+
+    headers = {
+        "X-RateLimit-Policy": evaluation.policy_id,
+        "X-RateLimit-Remaining": str(evaluation.remaining),
+        "X-RateLimit-Reset": reset_at.isoformat().replace("+00:00", "Z"),
+    }
+    if not evaluation.allowed and evaluation.retry_after_seconds is not None:
+        headers["Retry-After"] = str(evaluation.retry_after_seconds)
+    return headers
+
+
 class InMemorySlidingWindowRateLimiter:
     """In-memory sliding-window limiter suitable for deterministic tests."""
 
@@ -93,4 +110,3 @@ class InMemorySlidingWindowRateLimiter:
             reset_at=current + shortest,
             policy_id=policy.policy_id,
         )
-

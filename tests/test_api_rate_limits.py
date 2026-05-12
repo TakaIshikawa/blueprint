@@ -2,8 +2,10 @@ from datetime import datetime, timezone
 
 from blueprint.api.rate_limits import (
     InMemorySlidingWindowRateLimiter,
+    RateLimitEvaluation,
     RateLimitPolicy,
     RequestIdentity,
+    build_rate_limit_headers,
 )
 
 
@@ -41,3 +43,50 @@ def test_limiter_can_be_reset():
 
     assert limiter.evaluate(policy, identity, now=now).allowed is True
 
+
+def test_build_rate_limit_headers_for_allowed_evaluation_omits_retry_after():
+    evaluation = RateLimitEvaluation(
+        allowed=True,
+        remaining=4,
+        reset_at=datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc),
+        policy_id="default",
+    )
+
+    headers = build_rate_limit_headers(evaluation)
+
+    assert headers == {
+        "X-RateLimit-Policy": "default",
+        "X-RateLimit-Remaining": "4",
+        "X-RateLimit-Reset": "2026-01-01T12:30:00Z",
+    }
+    assert evaluation.retry_after_seconds is None
+
+
+def test_build_rate_limit_headers_for_blocked_evaluation_includes_retry_after():
+    evaluation = RateLimitEvaluation(
+        allowed=False,
+        remaining=0,
+        reset_at=datetime(2026, 1, 1, 21, 30, tzinfo=timezone.utc),
+        retry_after_seconds=45,
+        policy_id="strict",
+    )
+
+    headers = build_rate_limit_headers(evaluation)
+
+    assert headers["X-RateLimit-Policy"] == "strict"
+    assert headers["X-RateLimit-Remaining"] == "0"
+    assert headers["X-RateLimit-Reset"] == "2026-01-01T21:30:00Z"
+    assert headers["Retry-After"] == "45"
+
+
+def test_build_rate_limit_headers_normalizes_reset_to_utc():
+    evaluation = RateLimitEvaluation(
+        allowed=True,
+        remaining=2,
+        reset_at=datetime.fromisoformat("2026-01-01T21:30:00+09:00"),
+        policy_id="tokyo",
+    )
+
+    headers = build_rate_limit_headers(evaluation)
+
+    assert headers["X-RateLimit-Reset"] == "2026-01-01T12:30:00Z"

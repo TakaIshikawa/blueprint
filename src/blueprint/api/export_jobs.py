@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from typing import Any
 
@@ -96,6 +97,17 @@ class ExportJobResponse(BaseModel):
     data_size_bytes: int = Field(ge=0)
 
 
+class ExportJobResultResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    export_id: str
+    status: str
+    manifest: ExportManifestSummary | None = None
+    data_size_bytes: int | None = Field(default=None, ge=0)
+    encoded_data: str | None = None
+    encoding: str | None = None
+
+
 class ExportJobFacade:
     """Small facade that translates API request models into exporter calls."""
 
@@ -149,6 +161,19 @@ class ExportJobFacade:
             return {"export_id": export_id, "status": "not_found"}
         return {"export_id": export_id, "status": ExportJobStatus.COMPLETED.value}
 
+    def get_result(self, export_id: str) -> ExportJobResultResponse:
+        result = self._results.get(export_id)
+        if result is None:
+            return ExportJobResultResponse(export_id=export_id, status="not_found")
+        return ExportJobResultResponse(
+            export_id=result.export_id,
+            status=ExportJobStatus.COMPLETED.value,
+            manifest=manifest_summary(result),
+            data_size_bytes=len(result.data),
+            encoded_data=base64.b64encode(result.data).decode("ascii"),
+            encoding="base64",
+        )
+
     def get_manifest_summary(self, export_id: str) -> ExportManifestSummary | None:
         result = self._results.get(export_id)
         return manifest_summary(result) if result else None
@@ -172,4 +197,3 @@ def validation_error_payload(exc: Exception) -> dict[str, Any]:
         "message": str(exc),
         "details": {},
     }
-
