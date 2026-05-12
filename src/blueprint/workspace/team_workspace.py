@@ -6,6 +6,7 @@ templates, default settings, activity feeds, and team calendars.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
@@ -396,6 +397,49 @@ class TeamWorkspace:
         updated = replace(ws, templates=[*ws.templates, tmpl], updated_at=_now_iso())
         self._workspaces[workspace_id] = updated
         return updated
+
+    def instantiate_template(
+        self,
+        workspace_id: str,
+        template_id: str,
+        *,
+        overrides: dict[str, Any] | None = None,
+        plan_id: str | None = None,
+        add_to_workspace: bool = False,
+    ) -> dict[str, Any] | None:
+        """Create a plan scaffold from a workspace template."""
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+
+        template = next(
+            (
+                item
+                for item in ws.templates
+                if item.template_id == template_id or item.name == template_id
+            ),
+            None,
+        )
+        if template is None:
+            return None
+
+        generated_plan_id = plan_id or _gen_id("plan")
+        scaffold = deepcopy(template.template_data)
+        scaffold.update(overrides or {})
+        scaffold["id"] = generated_plan_id
+        scaffold["workspace_id"] = workspace_id
+        scaffold["template_id"] = template.template_id
+        scaffold.setdefault("template_name", template.name)
+
+        if add_to_workspace and generated_plan_id not in ws.plan_ids:
+            updated = replace(
+                ws,
+                plan_ids=[*ws.plan_ids, generated_plan_id],
+                updated_at=_now_iso(),
+            )
+            self._workspaces[workspace_id] = updated
+
+        return scaffold
 
     def add_custom_field(
         self,
