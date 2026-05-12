@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 from pydantic import ValidationError
 
@@ -41,9 +43,35 @@ def test_facade_creates_immediate_export_result_and_manifest_summary():
     assert facade.get_status(response.export_id)["status"] == "completed"
 
 
+def test_facade_returns_completed_export_result_payload():
+    facade = ExportJobFacade(store=_store())
+    created = facade.create_export({"format": "json", "scope": "all", "destination": "memory://export"})
+
+    result = facade.get_result(created.export_id)
+
+    assert result.export_id == created.export_id
+    assert result.status == "completed"
+    assert result.manifest == created.manifest
+    assert result.data_size_bytes == created.data_size_bytes
+    assert result.encoding == "base64"
+    assert result.encoded_data is not None
+    assert len(base64.b64decode(result.encoded_data.encode("ascii"), validate=True)) == created.data_size_bytes
+
+
+def test_facade_returns_not_found_result_payload_for_missing_export():
+    facade = ExportJobFacade(store=_store())
+
+    result = facade.get_result("missing-export")
+
+    assert result.model_dump(exclude_none=True) == {
+        "export_id": "missing-export",
+        "status": "not_found",
+    }
+    assert facade.get_status("missing-export") == result.model_dump(exclude_none=True)
+
+
 def test_invalid_format_or_scope_produce_api_facing_validation_errors():
     with pytest.raises(ValidationError):
         CreateExportRequest(format="xml")
     with pytest.raises(ValidationError):
         CreateExportRequest(scope="tenant")
-
