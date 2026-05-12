@@ -151,6 +151,64 @@ class WorkspaceActivityDigest:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceMemberCapacity:
+    member_id: str
+    user_id: str
+    display_name: str
+    email: str = ""
+    role: str = ""
+    capacity_metadata: dict[str, Any] = field(default_factory=dict)
+    calendar_event_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "member_id": self.member_id,
+            "user_id": self.user_id,
+            "display_name": self.display_name,
+            "email": self.email,
+            "role": self.role,
+            "capacity_metadata": dict(self.capacity_metadata),
+            "calendar_event_count": self.calendar_event_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceResourceCapacity:
+    resource_id: str
+    name: str
+    resource_type: str
+    total_capacity: float = 0.0
+    allocated: float = 0.0
+    unit: str = ""
+    utilization_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "resource_id": self.resource_id,
+            "name": self.name,
+            "resource_type": self.resource_type,
+            "total_capacity": self.total_capacity,
+            "allocated": self.allocated,
+            "unit": self.unit,
+            "utilization_metadata": dict(self.utilization_metadata),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceMemberCapacityReport:
+    workspace_id: str
+    members: tuple[WorkspaceMemberCapacity, ...] = field(default_factory=tuple)
+    resources: tuple[WorkspaceResourceCapacity, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "workspace_id": self.workspace_id,
+            "members": [member.to_dict() for member in self.members],
+            "resources": [resource.to_dict() for resource in self.resources],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CalendarEvent:
     event_id: str
     plan_id: str
@@ -201,6 +259,9 @@ __all__ = [
     "TeamMember",
     "Workspace",
     "WorkspaceActivityDigest",
+    "WorkspaceMemberCapacity",
+    "WorkspaceMemberCapacityReport",
+    "WorkspaceResourceCapacity",
     "WorkspaceInvitation",
     "WorkspacePolicyFinding",
     "WorkspaceRole",
