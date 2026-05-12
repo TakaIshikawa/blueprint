@@ -957,6 +957,82 @@ def build_export_checksum_summary(
     }
 
 
+def build_export_delivery_summary(results: Iterable[Any]) -> dict[str, Any]:
+    """Summarize delivery outcomes for exported destinations."""
+    status_counts: dict[str, int] = {}
+    failed_destinations: list[str] = []
+    latest_delivered_at: str | None = None
+    total = delivered = failed = pending = retryable = 0
+
+    for index, result in enumerate(results):
+        total += 1
+        status = _normalize_delivery_status(_record_value(result, "status"))
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        if status == "delivered":
+            delivered += 1
+            delivered_at = _delivery_timestamp(result)
+            if delivered_at is not None and (
+                latest_delivered_at is None or delivered_at > latest_delivered_at
+            ):
+                latest_delivered_at = delivered_at
+        elif status == "failed":
+            failed += 1
+            failed_destinations.append(_delivery_destination_identifier(result, index))
+        elif status == "pending":
+            pending += 1
+
+        if bool(_record_value(result, "retryable", default=False)):
+            retryable += 1
+
+    return {
+        "total": total,
+        "delivered": delivered,
+        "failed": failed,
+        "pending": pending,
+        "retryable": retryable,
+        "status_counts": {status: status_counts[status] for status in sorted(status_counts)},
+        "failed_destinations": sorted(failed_destinations),
+        "latest_delivered_at": latest_delivered_at,
+    }
+
+
+def _normalize_delivery_status(value: Any) -> str:
+    status = str(value or "pending").strip().lower().replace("-", "_")
+    if status in {"delivered", "success", "succeeded", "completed", "complete"}:
+        return "delivered"
+    if status in {"failed", "failure", "error"}:
+        return "failed"
+    if status in {"pending", "queued", "running", "in_progress", "retrying", "scheduled"}:
+        return "pending"
+    return status or "pending"
+
+
+def _delivery_timestamp(result: Any) -> str | None:
+    for key in ("delivered_at", "completed_at", "timestamp", "updated_at"):
+        value = _record_value(result, key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+    return None
+
+
+def _delivery_destination_identifier(result: Any, index: int) -> str:
+    for key in ("destination_id", "destination", "name", "id", "url", "path"):
+        value = _record_value(result, key)
+        if value not in (None, ""):
+            return str(value)
+    return f"destination-{index + 1}"
+
+
+def _record_value(record: Any, key: str, default: Any = None) -> Any:
+    if isinstance(record, Mapping):
+        return record.get(key, default)
+    return getattr(record, key, default)
+
+
 def _normalize_checksum_algorithm(algorithm: str) -> str:
     normalized = str(algorithm or "sha256").strip().lower().replace("-", "")
     if normalized not in {"sha256", "md5"}:
