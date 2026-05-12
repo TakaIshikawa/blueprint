@@ -20,7 +20,10 @@ from blueprint.workspace.workspace_model import (
     Workspace,
     WorkspaceActivityDigest,
     WorkspaceInvitation,
+    WorkspaceMemberCapacity,
+    WorkspaceMemberCapacityReport,
     WorkspacePolicyFinding,
+    WorkspaceResourceCapacity,
     WorkspaceRole,
     WorkspaceSettings,
     WorkspaceTemplate,
@@ -610,6 +613,46 @@ class TeamWorkspace:
         events.sort(key=lambda e: e.start_date)
         return events
 
+    def build_member_capacity_report(
+        self,
+        workspace_id: str,
+        plan_events: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> WorkspaceMemberCapacityReport | None:
+        """Build a deterministic member and resource capacity report."""
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+        calendar_events = self.build_team_calendar(workspace_id, plan_events or {})
+        member_rows = tuple(
+            WorkspaceMemberCapacity(
+                member_id=member.member_id,
+                user_id=member.user_id,
+                display_name=member.display_name,
+                email=member.email,
+                role=member.role,
+                assigned_capacity_metadata=_capacity_metadata(member.metadata),
+                calendar_event_count=_member_calendar_count(member, calendar_events),
+            )
+            for member in sorted(ws.members, key=lambda item: (item.display_name, item.user_id, item.member_id))
+        )
+        resource_rows = tuple(
+            WorkspaceResourceCapacity(
+                resource_id=resource.resource_id,
+                name=resource.name,
+                resource_type=resource.resource_type,
+                total_capacity=resource.total_capacity,
+                allocated=resource.allocated,
+                unit=resource.unit,
+                utilization_metadata=_utilization_metadata(resource),
+            )
+            for resource in sorted(ws.resources, key=lambda item: (item.name, item.resource_id))
+        )
+        return WorkspaceMemberCapacityReport(
+            workspace_id=workspace_id,
+            members=member_rows,
+            resources=resource_rows,
+        )
+
     # ------------------------------------------------------------------
     # Export / import
     # ------------------------------------------------------------------
@@ -638,6 +681,34 @@ def _count_by(events: list[ActivityEvent], attr: str) -> dict[str, int]:
         key = str(getattr(event, attr, ""))
         counts[key] = counts.get(key, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _capacity_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    for key in ("assigned_capacity", "capacity", "workload_capacity"):
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            return dict(sorted(value.items()))
+    return {}
+
+
+def _utilization_metadata(resource: SharedResource) -> dict[str, Any]:
+    metadata = resource.metadata.get("utilization")
+    result = dict(sorted(metadata.items())) if isinstance(metadata, dict) else {}
+    if resource.total_capacity:
+        result.setdefault("allocated_ratio", round(resource.allocated / resource.total_capacity, 4))
+    return result
+
+
+def _member_calendar_count(member: TeamMember, events: list[CalendarEvent]) -> int:
+    if not events:
+        return 0
+    needles = {member.user_id, member.email, member.display_name}
+    count = 0
+    for event in events:
+        haystack = f"{event.title} {event.event_type}".casefold()
+        if any(needle and needle.casefold() in haystack for needle in needles):
+            count += 1
+    return count
 
 
 __all__ = ["TeamWorkspace"]
