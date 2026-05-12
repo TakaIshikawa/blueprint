@@ -23,14 +23,47 @@ from blueprint.plan_cache_invalidation_readiness_matrix import (
 ApiContractCompatibilityReadiness = Literal["ready", "partial", "blocked"]
 
 _READINESS_ORDER: dict[ApiContractCompatibilityReadiness, int] = {"blocked": 0, "partial": 1, "ready": 2}
-_COMPATIBILITY_RE = re.compile(r"\b(?:api|endpoint|sdk|graphql|schema|webhook|contract|breaking|backward|compatib|version|openapi|client|consumer)\b", re.I)
+_SURFACE_RE = re.compile(
+    r"\b(?:api|endpoint|route|rest|sdk|client library|graphql|schema|mutation|query|webhook|"
+    r"openapi|swagger|protobuf|grpc|contract)\b",
+    re.I,
+)
+_CHANGE_RE = re.compile(
+    r"\b(?:change|add|remove|rename|deprecat|breaking|compatible|contract|schema|field|"
+    r"response|request|payload|version|migration|backward|backwards)\b",
+    re.I,
+)
 _SIGNALS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
-    ("versioning", "Missing versioning strategy.", re.compile(r"\b(?:version|v[0-9]+|semver|compatibility window|media type|header version)\b", re.I)),
-    ("backward_compatibility", "Missing backward compatibility plan.", re.compile(r"\b(?:backward|backwards|compatible|non-breaking|additive|deprecated field|optional field)\b", re.I)),
-    ("schema_examples", "Missing schema examples.", re.compile(r"\b(?:schema|openapi|swagger|graphql type|example|sample payload|contract fixture)\b", re.I)),
-    ("consumer_testing", "Missing consumer testing.", re.compile(r"\b(?:consumer tests?|contract tests?|pact|sdk tests?|integration tests?|client tests?|downstream tests?)\b", re.I)),
-    ("changelog_notes", "Missing changelog notes.", re.compile(r"\b(?:changelog|release note|migration guide|docs|developer portal|announcement)\b", re.I)),
-    ("rollout_guardrails", "Missing rollout guardrails.", re.compile(r"\b(?:rollout|canary|feature flag|guardrail|rollback|monitor|alert|traffic split)\b", re.I)),
+    (
+        "versioning",
+        "Missing versioning strategy.",
+        re.compile(r"\b(?:version|v[0-9]+|semver|compatibility window|media type|header version|sunset|deprecation window)\b", re.I),
+    ),
+    (
+        "backward_compatibility",
+        "Missing backward compatibility plan.",
+        re.compile(r"\b(?:backward|backwards|compatible|non[- ]breaking|additive|deprecated field|optional field|legacy client|old client|preserve)\b", re.I),
+    ),
+    (
+        "schema_examples",
+        "Missing schema examples.",
+        re.compile(r"\b(?:schema|openapi|swagger|graphql type|graphql schema|example|sample payload|request example|response example|contract fixture|fixture)\b", re.I),
+    ),
+    (
+        "consumer_testing",
+        "Missing consumer testing.",
+        re.compile(r"\b(?:consumer tests?|consumer contract|contract tests?|pact|sdk tests?|integration tests?|client tests?|downstream tests?|compatibility tests?)\b", re.I),
+    ),
+    (
+        "changelog_notes",
+        "Missing changelog notes.",
+        re.compile(r"\b(?:changelog|release notes?|migration guide|docs|developer docs|developer portal|announcement|upgrade notes)\b", re.I),
+    ),
+    (
+        "rollout_guardrails",
+        "Missing rollout guardrails.",
+        re.compile(r"\b(?:rollout|canary|feature flag|guardrail|rollback|monitor|alert|traffic split|gradual|kill switch|dual[- ]run|shadow)\b", re.I),
+    ),
 )
 
 
@@ -38,6 +71,7 @@ _SIGNALS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
 class PlanApiContractCompatibilityRow:
     task_id: str
     title: str
+    surfaces: tuple[str, ...] = field(default_factory=tuple)
     versioning: str = "missing"
     backward_compatibility: str = "missing"
     schema_examples: str = "missing"
@@ -53,6 +87,7 @@ class PlanApiContractCompatibilityRow:
         return {
             "task_id": self.task_id,
             "title": self.title,
+            "surfaces": list(self.surfaces),
             "versioning": self.versioning,
             "backward_compatibility": self.backward_compatibility,
             "schema_examples": self.schema_examples,
@@ -96,18 +131,28 @@ class PlanApiContractCompatibilityMatrix:
         if self.plan_id:
             title = f"{title}: {self.plan_id}"
         counts = self.summary.get("readiness_counts", {})
-        lines = [title, "", f"Summary: {self.summary.get('compatibility_task_count', 0)} of {self.summary.get('task_count', 0)} tasks require API contract compatibility review (blocked: {counts.get('blocked', 0)}, partial: {counts.get('partial', 0)}, ready: {counts.get('ready', 0)})."]
+        lines = [
+            title,
+            "",
+            f"Summary: {self.summary.get('compatibility_task_count', 0)} of {self.summary.get('task_count', 0)} tasks require API contract compatibility review (blocked: {counts.get('blocked', 0)}, partial: {counts.get('partial', 0)}, ready: {counts.get('ready', 0)}).",
+        ]
         if not self.rows:
             lines.extend(["", "No API contract compatibility rows were inferred."])
             return "\n".join(lines)
-        lines.extend(["", "| Task | Title | Versioning | Backward Compatibility | Schema Examples | Consumer Testing | Changelog | Rollout | Readiness | Score | Gaps | Evidence |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"])
+        lines.extend(
+            [
+                "",
+                "| Task | Title | Surfaces | Versioning | Backward Compatibility | Schema Examples | Consumer Testing | Changelog | Rollout | Readiness | Score | Gaps | Evidence |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
         for row in self.rows:
             lines.append(
                 "| "
-                f"{_markdown_cell(row.task_id)} | {_markdown_cell(row.title)} | {row.versioning} | {row.backward_compatibility} | "
-                f"{row.schema_examples} | {row.consumer_testing} | {row.changelog_notes} | {row.rollout_guardrails} | "
-                f"{row.readiness} | {row.readiness_score:.2f} | {_markdown_cell('; '.join(row.gaps) or 'none')} | "
-                f"{_markdown_cell('; '.join(row.evidence) or 'none')} |"
+                f"{_markdown_cell(row.task_id)} | {_markdown_cell(row.title)} | {_markdown_cell(', '.join(row.surfaces))} | "
+                f"{row.versioning} | {row.backward_compatibility} | {row.schema_examples} | {row.consumer_testing} | "
+                f"{row.changelog_notes} | {row.rollout_guardrails} | {row.readiness} | {row.readiness_score:.2f} | "
+                f"{_markdown_cell('; '.join(row.gaps) or 'none')} | {_markdown_cell('; '.join(row.evidence) or 'none')} |"
             )
         return "\n".join(lines)
 
@@ -191,15 +236,22 @@ def _row(task: Mapping[str, Any], index: int) -> PlanApiContractCompatibilityRow
     title = _optional_text(task.get("title")) or task_id
     texts = _candidate_texts(task)
     context = " ".join(text for _, text in texts)
-    if not _COMPATIBILITY_RE.search(context):
+    if not (_SURFACE_RE.search(context) and _CHANGE_RE.search(context)):
         return None
     statuses = {name: _status(pattern, texts) for name, _, pattern in _SIGNALS}
     gaps = tuple(message for name, message, _ in _SIGNALS if statuses[name] == "missing")
     present = sum(1 for value in statuses.values() if value == "present")
-    evidence = tuple(_dedupe(_evidence_snippet(field, text) for field, text in texts if _COMPATIBILITY_RE.search(text) or any(pattern.search(text) for _, _, pattern in _SIGNALS)))
+    evidence = tuple(
+        _dedupe(
+            _evidence_snippet(field, text)
+            for field, text in texts
+            if _SURFACE_RE.search(text) or _CHANGE_RE.search(text) or any(pattern.search(text) for _, _, pattern in _SIGNALS)
+        )
+    )
     return PlanApiContractCompatibilityRow(
         task_id=task_id,
         title=title,
+        surfaces=_surfaces(context),
         gaps=gaps,
         readiness=_readiness(statuses),
         readiness_score=round(present / len(_SIGNALS), 2),
@@ -213,15 +265,37 @@ def _status(pattern: re.Pattern[str], texts: Iterable[tuple[str, str]]) -> str:
 
 
 def _readiness(statuses: Mapping[str, str]) -> ApiContractCompatibilityReadiness:
-    if statuses["backward_compatibility"] == "missing" or statuses["schema_examples"] == "missing":
+    if statuses["backward_compatibility"] == "missing" or statuses["consumer_testing"] == "missing":
         return "blocked"
     if any(value == "missing" for value in statuses.values()):
         return "partial"
     return "ready"
 
 
-def _summary(task_count: int, rows: Iterable[PlanApiContractCompatibilityRow], skipped: Iterable[str]) -> dict[str, Any]:
+def _surfaces(context: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for name, pattern in (
+        ("endpoint", r"\b(?:api|endpoint|route|rest)\b"),
+        ("sdk", r"\b(?:sdk|client library|generated client)\b"),
+        ("graphql", r"\b(?:graphql|mutation|query)\b"),
+        ("webhook", r"\b(?:webhook|callback)\b"),
+        ("schema", r"\b(?:openapi|swagger|schema|protobuf|grpc)\b"),
+    ):
+        if re.search(pattern, context, re.I):
+            values.append(name)
+    return _dedupe(values) or ("api",)
+
+
+def _summary(
+    task_count: int,
+    rows: Iterable[PlanApiContractCompatibilityRow],
+    skipped: Iterable[str],
+) -> dict[str, Any]:
     row_list = list(rows)
+    surface_counts: dict[str, int] = {}
+    for row in row_list:
+        for surface in row.surfaces:
+            surface_counts[surface] = surface_counts.get(surface, 0) + 1
     return {
         "task_count": task_count,
         "row_count": len(row_list),
@@ -229,4 +303,22 @@ def _summary(task_count: int, rows: Iterable[PlanApiContractCompatibilityRow], s
         "no_compatibility_task_count": len(tuple(skipped)),
         "readiness_counts": {readiness: sum(1 for row in row_list if row.readiness == readiness) for readiness in _READINESS_ORDER},
         "gap_counts": {gap: sum(1 for row in row_list if gap in row.gaps) for gap in sorted({gap for row in row_list for gap in row.gaps})},
+        "surface_counts": dict(sorted(surface_counts.items())),
+        "average_readiness_score": round(sum(row.readiness_score for row in row_list) / len(row_list), 2) if row_list else 0.0,
     }
+
+
+__all__ = [
+    "ApiContractCompatibilityReadiness",
+    "PlanApiContractCompatibilityMatrix",
+    "PlanApiContractCompatibilityRow",
+    "analyze_plan_api_contract_compatibility_matrix",
+    "build_plan_api_contract_compatibility_matrix",
+    "derive_plan_api_contract_compatibility_matrix",
+    "extract_plan_api_contract_compatibility_matrix",
+    "generate_plan_api_contract_compatibility_matrix",
+    "plan_api_contract_compatibility_matrix_to_dict",
+    "plan_api_contract_compatibility_matrix_to_dicts",
+    "plan_api_contract_compatibility_matrix_to_markdown",
+    "summarize_plan_api_contract_compatibility_matrix",
+]
