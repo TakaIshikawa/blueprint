@@ -6,6 +6,7 @@ templates, default settings, activity feeds, and team calendars.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import replace
 from enum import Enum
@@ -721,6 +722,13 @@ class TeamWorkspace:
             return None
         return workspace_configuration_snapshot(ws)
 
+    def build_integration_inventory(self, workspace_id: str) -> dict[str, Any] | None:
+        """Return configured integration readiness without exposing secret values."""
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+        return workspace_integration_inventory(ws)
+
     def import_workspace(self, data: dict[str, Any]) -> Workspace:
         ws = Workspace(
             workspace_id=data.get("workspace_id", _gen_id("ws")),
@@ -788,6 +796,125 @@ def workspace_configuration_snapshot(
             },
         }
     )
+
+
+def workspace_integration_inventory(
+    workspace: Workspace,
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a deterministic inventory of configured workspace integrations."""
+    entries = [
+        _integration_inventory_entry(record, index)
+        for index, record in enumerate(_workspace_integration_records(workspace))
+    ]
+    entries.sort(
+        key=lambda entry: (
+            entry["integration_type"],
+            entry["integration_id"],
+            entry["owner"],
+        )
+    )
+    return _json_safe(
+        {
+            "inventory_type": "workspace_integration_inventory",
+            "generated_at": generated_at or _now_iso(),
+            "workspace_id": workspace.workspace_id,
+            "integration_count": len(entries),
+            "readiness_counts": {
+                status: sum(1 for entry in entries if entry["readiness_status"] == status)
+                for status in ("disabled", "missing_required_settings", "ready")
+            },
+            "integrations": entries,
+        }
+    )
+
+
+def _workspace_integration_records(workspace: Workspace) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for source in (workspace.metadata, workspace.settings.metadata):
+        raw_records = source.get("integrations") or source.get("workspace_integrations")
+        if isinstance(raw_records, Mapping):
+            for key in sorted(raw_records, key=str):
+                raw_record = raw_records[key]
+                if isinstance(raw_record, Mapping):
+                    record = dict(raw_record)
+                    record.setdefault("integration_id", str(key))
+                    records.append(record)
+        elif isinstance(raw_records, (list, tuple)):
+            records.extend(dict(item) for item in raw_records if isinstance(item, Mapping))
+    return records
+
+
+def _integration_inventory_entry(record: Mapping[str, Any], index: int) -> dict[str, Any]:
+    integration_id = _integration_value(
+        record,
+        ("integration_id", "id", "name", "slug"),
+        f"integration-{index + 1}",
+    )
+    integration_type = _integration_value(
+        record,
+        ("integration_type", "type", "provider", "service"),
+        "unknown",
+    )
+    owner = _integration_value(record, ("owner", "owner_id", "configured_by"), "")
+    enabled = _integration_enabled(record)
+    missing_required_settings = _missing_required_integration_settings(record)
+    if not enabled:
+        readiness_status = "disabled"
+    elif missing_required_settings:
+        readiness_status = "missing_required_settings"
+    else:
+        readiness_status = "ready"
+
+    return {
+        "integration_id": integration_id,
+        "integration_type": integration_type,
+        "enabled": enabled,
+        "owner": owner,
+        "missing_required_settings": missing_required_settings,
+        "readiness_status": readiness_status,
+    }
+
+
+def _integration_value(
+    record: Mapping[str, Any],
+    keys: tuple[str, ...],
+    default: str,
+) -> str:
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return default
+
+
+def _integration_enabled(record: Mapping[str, Any]) -> bool:
+    value = record.get("enabled", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+    return bool(value)
+
+
+def _missing_required_integration_settings(record: Mapping[str, Any]) -> list[str]:
+    required = record.get("required_settings") or record.get("required") or []
+    if isinstance(required, str):
+        required_names = [required]
+    elif isinstance(required, (list, tuple, set, frozenset)):
+        required_names = [str(item) for item in required if str(item)]
+    else:
+        required_names = []
+
+    settings = record.get("settings")
+    if not isinstance(settings, Mapping):
+        settings = record.get("config")
+    configured = settings if isinstance(settings, Mapping) else record
+    missing = [
+        name
+        for name in required_names
+        if configured.get(name) in (None, "")
+    ]
+    return sorted(set(missing))
 
 
 def _activity_digest(
@@ -891,4 +1018,4 @@ def _member_event_count(
     return matched if raw_events else 0
 
 
-__all__ = ["TeamWorkspace", "workspace_configuration_snapshot"]
+__all__ = ["TeamWorkspace", "workspace_configuration_snapshot", "workspace_integration_inventory"]
