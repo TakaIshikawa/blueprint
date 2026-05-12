@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterator
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,6 +65,121 @@ class ExportJobStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class ExportFormatCapability(BaseModel):
+    """Describes operational behavior for one export format."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: str
+    mime_type: str
+    file_extension: str
+    line_oriented: bool = False
+    binary: bool = False
+    supports_manifest_record_count_validation: bool = True
+
+
+_FORMAT_CAPABILITIES: dict[DataExportFormat, ExportFormatCapability] = {
+    DataExportFormat.JSON: ExportFormatCapability(
+        format=DataExportFormat.JSON.value,
+        mime_type="application/json",
+        file_extension=".json",
+        line_oriented=False,
+        binary=False,
+        supports_manifest_record_count_validation=True,
+    ),
+    DataExportFormat.JSONL: ExportFormatCapability(
+        format=DataExportFormat.JSONL.value,
+        mime_type="application/x-ndjson",
+        file_extension=".jsonl",
+        line_oriented=True,
+        binary=False,
+        supports_manifest_record_count_validation=True,
+    ),
+    DataExportFormat.CSV: ExportFormatCapability(
+        format=DataExportFormat.CSV.value,
+        mime_type="text/csv",
+        file_extension=".csv",
+        line_oriented=True,
+        binary=False,
+        supports_manifest_record_count_validation=False,
+    ),
+    DataExportFormat.SQL: ExportFormatCapability(
+        format=DataExportFormat.SQL.value,
+        mime_type="application/sql",
+        file_extension=".sql",
+        line_oriented=True,
+        binary=False,
+        supports_manifest_record_count_validation=False,
+    ),
+    DataExportFormat.PARQUET: ExportFormatCapability(
+        format=DataExportFormat.PARQUET.value,
+        mime_type="application/vnd.apache.parquet",
+        file_extension=".parquet",
+        line_oriented=False,
+        binary=True,
+        supports_manifest_record_count_validation=True,
+    ),
+    DataExportFormat.PROTOBUF: ExportFormatCapability(
+        format=DataExportFormat.PROTOBUF.value,
+        mime_type="application/x-protobuf",
+        file_extension=".pb",
+        line_oriented=False,
+        binary=True,
+        supports_manifest_record_count_validation=True,
+    ),
+}
+
+
+def get_export_format_capability(fmt: DataExportFormat | str) -> ExportFormatCapability:
+    """Return the capability descriptor for one export format."""
+
+    export_format = fmt if isinstance(fmt, DataExportFormat) else DataExportFormat(fmt)
+    return _FORMAT_CAPABILITIES[export_format].model_copy(deep=True)
+
+
+def list_export_format_capabilities() -> list[ExportFormatCapability]:
+    """List all format capabilities in stable enum order."""
+
+    return [get_export_format_capability(fmt) for fmt in DataExportFormat]
+
+
+_SENSITIVE_DESTINATION_QUERY_KEYS = {
+    "access_key",
+    "access_key_id",
+    "api_key",
+    "client_secret",
+    "credential",
+    "key",
+    "password",
+    "secret",
+    "signature",
+    "sig",
+    "token",
+}
+_REDACTED = "REDACTED"
+
+
+def sanitize_export_destination(destination: str) -> str:
+    """Redact secrets from export destination strings deterministically."""
+
+    if not isinstance(destination, str) or not destination:
+        return destination
+
+    try:
+        parsed = urlsplit(destination)
+    except ValueError:
+        return destination
+    if not parsed.scheme or not parsed.netloc:
+        return destination
+
+    try:
+        netloc = _sanitize_url_netloc(parsed)
+    except ValueError:
+        return destination
+    query = _sanitize_url_query(parsed.query)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, query, parsed.fragment))
 
 
 # ---------------------------------------------------------------------------
@@ -1117,6 +1233,42 @@ def _count_records(data: dict[str, Any]) -> dict[str, int]:
         elif isinstance(v, list):
             counts[k] = len(v)
     return counts
+
+
+def _sanitize_url_netloc(parsed: Any) -> str:
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    if parsed.username is None and parsed.password is None:
+        return host
+
+    userinfo = _REDACTED
+    if parsed.password is not None:
+        userinfo = f"{_REDACTED}:{_REDACTED}"
+    return f"{userinfo}@{host}"
+
+
+def _sanitize_url_query(query: str) -> str:
+    if not query:
+        return ""
+    redacted = [
+        (key, _REDACTED if _is_sensitive_destination_query_key(key) else value)
+        for key, value in parse_qsl(query, keep_blank_values=True)
+    ]
+    return urlencode(redacted, doseq=True)
+
+
+def _is_sensitive_destination_query_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return (
+        normalized in _SENSITIVE_DESTINATION_QUERY_KEYS
+        or normalized.endswith("_token")
+        or normalized.endswith("_key")
+        or normalized.endswith("_secret")
+        or normalized.endswith("_signature")
+    )
 
 
 def _validation_error(

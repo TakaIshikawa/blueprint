@@ -539,9 +539,25 @@ class TeamWorkspace:
         self._activity_feed.append(event)
 
     def get_activity_feed(
-        self, workspace_id: str, *, limit: int = 50
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 50,
+        user_id: str | None = None,
+        action: str | None = None,
+        entity_type: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[ActivityEvent]:
         events = [e for e in self._activity_feed if e.workspace_id == workspace_id]
+        if user_id is not None:
+            events = [e for e in events if e.user_id == user_id]
+        if action is not None:
+            events = [e for e in events if e.action == action]
+        if entity_type is not None:
+            events = [e for e in events if e.entity_type == entity_type]
+        if since is not None or until is not None:
+            events = [e for e in events if _within_window(e.timestamp, since, until)]
         return events[-limit:]
 
     def build_activity_digest(
