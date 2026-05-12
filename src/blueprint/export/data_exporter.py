@@ -929,6 +929,149 @@ def _checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def build_export_checksum_summary(
+    outputs: Iterable[Mapping[str, Any]],
+    *,
+    algorithm: str = "sha256",
+) -> dict[str, Any]:
+    """Build deterministic checksum metadata for exported outputs.
+
+    Output mappings may be row-like records or file descriptors.  File
+    descriptors can provide byte content via ``data``, ``content``, ``bytes``,
+    ``body``, or ``payload``; otherwise a precomputed checksum under
+    ``checksum`` or the selected algorithm key is used when present.
+    """
+    checksum_algorithm = _normalize_checksum_algorithm(algorithm)
+    entries = [
+        _export_checksum_entry(output, index, checksum_algorithm)
+        for index, output in enumerate(outputs)
+    ]
+    entries.sort(key=lambda entry: (entry["output_id"], entry["name"], entry["checksum"]))
+    combined_payload = json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {
+        "algorithm": checksum_algorithm,
+        "output_count": len(entries),
+        "total_size_bytes": sum(entry["size_bytes"] for entry in entries),
+        "checksums": entries,
+        "combined_checksum": _digest_bytes(combined_payload.encode("utf-8"), checksum_algorithm),
+    }
+
+
+def _normalize_checksum_algorithm(algorithm: str) -> str:
+    normalized = str(algorithm or "sha256").strip().lower().replace("-", "")
+    if normalized not in {"sha256", "md5"}:
+        raise ValueError("checksum algorithm must be one of: md5, sha256")
+    return normalized
+
+
+def _export_checksum_entry(
+    output: Mapping[str, Any],
+    index: int,
+    algorithm: str,
+) -> dict[str, Any]:
+    normalized = _normalize_manifest_value(dict(output))
+    output_id = _output_identifier(output, index)
+    name = _output_name(output, output_id)
+    content = _output_content_bytes(output)
+    if content is None:
+        checksum = _precomputed_output_checksum(output, algorithm)
+        size_bytes = _declared_output_size(output)
+        if checksum is None:
+            content = json.dumps(
+                normalized,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            checksum = _digest_bytes(content, algorithm)
+            size_bytes = len(content)
+    else:
+        checksum = _digest_bytes(content, algorithm)
+        size_bytes = len(content)
+
+    return {
+        "output_id": output_id,
+        "name": name,
+        "size_bytes": size_bytes,
+        "checksum": checksum,
+    }
+
+
+def _output_identifier(output: Mapping[str, Any], index: int) -> str:
+    for key in ("output_id", "file_id", "id", "path", "filename", "name"):
+        value = output.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return f"output-{index + 1}"
+
+
+def _output_name(output: Mapping[str, Any], fallback: str) -> str:
+    for key in ("name", "filename", "path", "output_id", "id"):
+        value = output.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return fallback
+
+
+def _output_content_bytes(output: Mapping[str, Any]) -> bytes | None:
+    for key in ("data", "content", "bytes", "body", "payload"):
+        if key not in output:
+            continue
+        value = output[key]
+        if value is None:
+            continue
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, bytearray):
+            return bytes(value)
+        if isinstance(value, str):
+            return value.encode("utf-8")
+        normalized = _normalize_manifest_value(value)
+        return json.dumps(
+            normalized,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    return None
+
+
+def _precomputed_output_checksum(output: Mapping[str, Any], algorithm: str) -> str | None:
+    checksums = output.get("checksums")
+    if isinstance(checksums, Mapping):
+        value = checksums.get(algorithm)
+        if value not in (None, ""):
+            return str(value)
+    for key in (algorithm, "checksum"):
+        value = output.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _declared_output_size(output: Mapping[str, Any]) -> int:
+    for key in ("size_bytes", "byte_size", "bytes", "size"):
+        value = output.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = int(value)
+            except ValueError:
+                continue
+            if parsed >= 0:
+                return parsed
+    return 0
+
+
+def _digest_bytes(data: bytes, algorithm: str) -> str:
+    if algorithm == "md5":
+        return hashlib.md5(data).hexdigest()
+    return hashlib.sha256(data).hexdigest()
+
+
 def build_export_manifest(
     rows: Iterable[Mapping[str, Any]],
     export_format: DataExportFormat | str,
