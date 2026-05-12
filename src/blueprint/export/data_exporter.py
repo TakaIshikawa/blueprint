@@ -188,6 +188,29 @@ def sanitize_export_destination(destination: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class ExportRedactionPolicy:
+    """Named field-level redaction policy for exported data."""
+
+    name: str
+    field_names: frozenset[str]
+    replacement_text: str = "REDACTED"
+    hash_replacements: bool = False
+
+    def __init__(
+        self,
+        name: str,
+        field_names: set[str] | frozenset[str] | list[str] | tuple[str, ...],
+        *,
+        replacement_text: str = "REDACTED",
+        hash_replacements: bool = False,
+    ) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "field_names", frozenset(str(field) for field in field_names))
+        object.__setattr__(self, "replacement_text", replacement_text)
+        object.__setattr__(self, "hash_replacements", hash_replacements)
+
+
+@dataclass(frozen=True, slots=True)
 class ExportOptions:
     """Controls what metadata and relations to include in an export."""
 
@@ -195,6 +218,7 @@ class ExportOptions:
     include_relationships: bool = True
     include_attachments: bool = False
     anonymize: bool = False
+    redaction_policy: ExportRedactionPolicy | None = None
     schema_version: str = SCHEMA_VERSION
 
 
@@ -775,6 +799,9 @@ def _apply_options(data: dict[str, Any], options: ExportOptions) -> dict[str, An
     if options.anonymize:
         result = _anonymize_data(result)
 
+    if options.redaction_policy is not None:
+        result = _apply_redaction_policy(result, options.redaction_policy)
+
     if not options.include_metadata:
         result = _strip_metadata(result)
 
@@ -799,6 +826,29 @@ def _walk_anonymize(obj: Any, sensitive: set[str]) -> Any:
     if isinstance(obj, list):
         return [_walk_anonymize(item, sensitive) for item in obj]
     return obj
+
+
+def _apply_redaction_policy(data: dict[str, Any], policy: ExportRedactionPolicy) -> dict[str, Any]:
+    """Apply a caller-defined redaction policy recursively."""
+    return _walk_redact(data, policy)
+
+
+def _walk_redact(obj: Any, policy: ExportRedactionPolicy) -> Any:
+    if isinstance(obj, dict):
+        return {
+            key: _redacted_value(value, policy) if key in policy.field_names else _walk_redact(value, policy)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_walk_redact(item, policy) for item in obj]
+    return obj
+
+
+def _redacted_value(value: Any, policy: ExportRedactionPolicy) -> str:
+    if policy.hash_replacements:
+        digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+        return f"{policy.replacement_text}{digest}"
+    return policy.replacement_text
 
 
 def _strip_metadata(data: dict[str, Any]) -> dict[str, Any]:
