@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from blueprint.export.data_exporter import (
         DataExporter,
+        ExportCompression,
+        ExportCompressionOption,
         DataExportFormat,
         ExportFilters,
         ExportFilterPreset,
@@ -24,6 +26,8 @@ if TYPE_CHECKING:
         InMemoryDataStore,
         UserDataExport,
         build_export_manifest,
+        get_export_compression_options,
+        normalize_export_compression,
         parse_export_bundle,
         summarize_delta,
     )
@@ -32,6 +36,8 @@ _MODULE = "blueprint.export.data_exporter"
 
 _EXPORTS = {
     "DataExporter": _MODULE,
+    "ExportCompression": _MODULE,
+    "ExportCompressionOption": _MODULE,
     "DataExportFormat": _MODULE,
     "ExportFilters": _MODULE,
     "ExportFilterPreset": _MODULE,
@@ -48,6 +54,8 @@ _EXPORTS = {
     "InMemoryDataStore": _MODULE,
     "UserDataExport": _MODULE,
     "build_export_manifest": _MODULE,
+    "get_export_compression_options": _MODULE,
+    "normalize_export_compression": _MODULE,
     "parse_export_bundle": _MODULE,
     "summarize_delta": _MODULE,
 }

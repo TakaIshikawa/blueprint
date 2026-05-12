@@ -49,6 +49,14 @@ class DataExportFormat(str, Enum):
     PROTOBUF = "protobuf"
 
 
+class ExportCompression(str, Enum):
+    """Supported export compression modes."""
+
+    NONE = "none"
+    GZIP = "gzip"
+    ZIP = "zip"
+
+
 class ExportScope(str, Enum):
     """Supported export scopes."""
 
@@ -79,6 +87,17 @@ class ExportFormatCapability(BaseModel):
     line_oriented: bool = False
     binary: bool = False
     supports_manifest_record_count_validation: bool = True
+
+
+class ExportCompressionOption(BaseModel):
+    """Describes one compression mode supported for an export format."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: str
+    compression: str
+    file_extension_suffix: str
+    mime_type: str
 
 
 _FORMAT_CAPABILITIES: dict[DataExportFormat, ExportFormatCapability] = {
@@ -133,6 +152,118 @@ _FORMAT_CAPABILITIES: dict[DataExportFormat, ExportFormatCapability] = {
 }
 
 
+_COMPRESSION_OPTIONS: dict[DataExportFormat, tuple[ExportCompressionOption, ...]] = {
+    DataExportFormat.JSON: (
+        ExportCompressionOption(
+            format=DataExportFormat.JSON.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="application/json",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.JSON.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.JSON.value,
+            compression=ExportCompression.ZIP.value,
+            file_extension_suffix=".zip",
+            mime_type="application/zip",
+        ),
+    ),
+    DataExportFormat.JSONL: (
+        ExportCompressionOption(
+            format=DataExportFormat.JSONL.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="application/x-ndjson",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.JSONL.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.JSONL.value,
+            compression=ExportCompression.ZIP.value,
+            file_extension_suffix=".zip",
+            mime_type="application/zip",
+        ),
+    ),
+    DataExportFormat.CSV: (
+        ExportCompressionOption(
+            format=DataExportFormat.CSV.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="text/csv",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.CSV.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.CSV.value,
+            compression=ExportCompression.ZIP.value,
+            file_extension_suffix=".zip",
+            mime_type="application/zip",
+        ),
+    ),
+    DataExportFormat.SQL: (
+        ExportCompressionOption(
+            format=DataExportFormat.SQL.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="application/sql",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.SQL.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.SQL.value,
+            compression=ExportCompression.ZIP.value,
+            file_extension_suffix=".zip",
+            mime_type="application/zip",
+        ),
+    ),
+    DataExportFormat.PARQUET: (
+        ExportCompressionOption(
+            format=DataExportFormat.PARQUET.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="application/vnd.apache.parquet",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.PARQUET.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+    ),
+    DataExportFormat.PROTOBUF: (
+        ExportCompressionOption(
+            format=DataExportFormat.PROTOBUF.value,
+            compression=ExportCompression.NONE.value,
+            file_extension_suffix="",
+            mime_type="application/x-protobuf",
+        ),
+        ExportCompressionOption(
+            format=DataExportFormat.PROTOBUF.value,
+            compression=ExportCompression.GZIP.value,
+            file_extension_suffix=".gz",
+            mime_type="application/gzip",
+        ),
+    ),
+}
+
+
 def get_export_format_capability(fmt: DataExportFormat | str) -> ExportFormatCapability:
     """Return the capability descriptor for one export format."""
 
@@ -144,6 +275,50 @@ def list_export_format_capabilities() -> list[ExportFormatCapability]:
     """List all format capabilities in stable enum order."""
 
     return [get_export_format_capability(fmt) for fmt in DataExportFormat]
+
+
+def get_export_compression_options(fmt: DataExportFormat | str) -> list[ExportCompressionOption]:
+    """Return supported compression options for one export format."""
+
+    export_format = fmt if isinstance(fmt, DataExportFormat) else DataExportFormat(fmt)
+    return [
+        option.model_copy(deep=True)
+        for option in _COMPRESSION_OPTIONS[export_format]
+    ]
+
+
+def normalize_export_compression(
+    fmt: DataExportFormat | str,
+    compression: ExportCompression | str | None = None,
+) -> ExportCompression:
+    """Normalize and validate a requested compression mode for an export format."""
+
+    export_format = fmt if isinstance(fmt, DataExportFormat) else DataExportFormat(fmt)
+    normalized = _normalize_compression_value(compression)
+    supported = {
+        option.compression
+        for option in _COMPRESSION_OPTIONS[export_format]
+    }
+    if normalized.value not in supported:
+        supported_text = ", ".join(sorted(supported))
+        raise ValueError(
+            f"compression {normalized.value!r} is not supported for "
+            f"export format {export_format.value!r}; supported values: {supported_text}"
+        )
+    return normalized
+
+
+def _normalize_compression_value(
+    compression: ExportCompression | str | None,
+) -> ExportCompression:
+    if compression is None:
+        return ExportCompression.NONE
+    if isinstance(compression, ExportCompression):
+        return compression
+    value = str(compression).strip().lower()
+    if not value:
+        return ExportCompression.NONE
+    return ExportCompression(value)
 
 
 _SENSITIVE_DESTINATION_QUERY_KEYS = {
