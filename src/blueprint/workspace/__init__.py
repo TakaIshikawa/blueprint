@@ -6,7 +6,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from blueprint.workspace.team_workspace import TeamWorkspace
+    from blueprint.workspace.team_workspace import TeamWorkspace, workspace_configuration_snapshot
     from blueprint.workspace.workspace_model import (
         ActivityEvent,
         ApprovalWorkflow,
@@ -32,6 +32,7 @@ _MODEL_MODULE = "blueprint.workspace.workspace_model"
 
 _EXPORTS = {
     "TeamWorkspace": _MANAGER_MODULE,
+    "workspace_configuration_snapshot": _MANAGER_MODULE,
     "ActivityEvent": _MODEL_MODULE,
     "ApprovalWorkflow": _MODEL_MODULE,
     "CalendarEvent": _MODEL_MODULE,

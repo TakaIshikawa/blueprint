@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from enum import Enum
 from typing import Any
 
 from blueprint.workspace.workspace_model import (
@@ -713,6 +714,13 @@ class TeamWorkspace:
             return None
         return ws.to_dict()
 
+    def build_configuration_snapshot(self, workspace_id: str) -> dict[str, Any] | None:
+        """Return a portable workspace configuration summary without member details."""
+        ws = self._workspaces.get(workspace_id)
+        if ws is None:
+            return None
+        return workspace_configuration_snapshot(ws)
+
     def import_workspace(self, data: dict[str, Any]) -> Workspace:
         ws = Workspace(
             workspace_id=data.get("workspace_id", _gen_id("ws")),
@@ -723,6 +731,63 @@ class TeamWorkspace:
         )
         self._workspaces[ws.workspace_id] = ws
         return ws
+
+
+def workspace_configuration_snapshot(
+    workspace: Workspace,
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a JSON-ready workspace configuration snapshot.
+
+    The snapshot intentionally avoids per-member identifiers, emails, names, and
+    metadata while retaining aggregate role counts for diagnostics.
+    """
+    settings = workspace.settings
+    feature_flags = _feature_flags(workspace)
+    configuration_identifiers = {
+        "template_ids": [template.template_id for template in workspace.templates],
+        "custom_field_ids": [field.field_id for field in workspace.custom_fields],
+        "resource_ids": [resource.resource_id for resource in workspace.resources],
+        "plan_ids": list(workspace.plan_ids),
+    }
+
+    return _json_safe(
+        {
+            "snapshot_type": "workspace_configuration",
+            "generated_at": generated_at or _now_iso(),
+            "workspace": {
+                "workspace_id": workspace.workspace_id,
+                "name": workspace.name,
+                "description": workspace.description,
+                "owner_id": workspace.owner_id,
+                "created_at": workspace.created_at,
+                "updated_at": workspace.updated_at,
+            },
+            "member_counts": {
+                "total": len(workspace.members),
+                "by_role": _counts(member.role.value for member in workspace.members),
+            },
+            "configuration_identifiers": configuration_identifiers,
+            "settings": {
+                "working_hours_start": settings.working_hours_start,
+                "working_hours_end": settings.working_hours_end,
+                "timezone": settings.timezone,
+                "holidays": list(settings.holidays),
+                "approval_workflow": settings.approval_workflow.value,
+                "slack_channel": settings.slack_channel,
+                "email_domain": settings.email_domain,
+                "metadata": deepcopy(settings.metadata),
+            },
+            "feature_flags": feature_flags,
+            "counts": {
+                "templates": len(workspace.templates),
+                "custom_fields": len(workspace.custom_fields),
+                "resources": len(workspace.resources),
+                "plans": len(workspace.plan_ids),
+            },
+        }
+    )
 
 
 def _activity_digest(
@@ -771,6 +836,33 @@ def _utilization_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: metadata[key] for key in sorted(keys) if key in metadata}
 
 
+def _feature_flags(workspace: Workspace) -> dict[str, Any]:
+    flags: dict[str, Any] = {}
+    for source in (workspace.metadata, workspace.settings.metadata):
+        raw_flags = source.get("feature_flags", {})
+        if isinstance(raw_flags, dict):
+            flags.update(raw_flags)
+        elif isinstance(raw_flags, (list, tuple, set)):
+            flags.update({str(flag): True for flag in raw_flags})
+    return {key: flags[key] for key in sorted(flags)}
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, set):
+        return sorted((_json_safe(item) for item in value), key=str)
+    return str(value)
+
+
 def _member_event_count(
     member: TeamMember,
     raw_events: list[dict[str, Any]],
@@ -799,4 +891,4 @@ def _member_event_count(
     return matched if raw_events else 0
 
 
-__all__ = ["TeamWorkspace"]
+__all__ = ["TeamWorkspace", "workspace_configuration_snapshot"]
