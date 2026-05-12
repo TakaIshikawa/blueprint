@@ -1447,6 +1447,55 @@ def parse_export_bundle(bundle: dict[str, Any]) -> ExportResult:
     )
 
 
+def summarize_delta(
+    before: dict[str, Any] | bytes | bytearray | ExportResult,
+    after: dict[str, Any] | bytes | bytearray | ExportResult,
+) -> dict[str, dict[str, int]]:
+    """Summarize added, removed, unchanged, and changed records by section."""
+    before_sections = _normalize_delta_payload(before)
+    after_sections = _normalize_delta_payload(after)
+    summary: dict[str, dict[str, int]] = {}
+
+    for section in sorted(set(before_sections) | set(after_sections)):
+        before_records = _delta_records(before_sections.get(section))
+        after_records = _delta_records(after_sections.get(section))
+        before_keys = set(before_records)
+        after_keys = set(after_records)
+        shared_keys = before_keys & after_keys
+
+        summary[section] = {
+            "added": len(after_keys - before_keys),
+            "removed": len(before_keys - after_keys),
+            "unchanged": sum(1 for key in shared_keys if before_records[key] == after_records[key]),
+            "changed": sum(1 for key in shared_keys if before_records[key] != after_records[key]),
+        }
+
+    return summary
+
+
+def _normalize_delta_payload(payload: dict[str, Any] | bytes | bytearray | ExportResult) -> dict[str, Any]:
+    if isinstance(payload, ExportResult):
+        payload = payload.data
+    if isinstance(payload, (bytes, bytearray)):
+        payload = json.loads(bytes(payload).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("delta payload must be a dictionary, JSON bytes, or ExportResult")
+    data = payload.get("data")
+    return data if isinstance(data, dict) else payload
+
+
+def _delta_records(section: Any) -> dict[str, Any]:
+    if isinstance(section, dict):
+        return {str(key): value for key, value in section.items()}
+    if isinstance(section, list):
+        records: dict[str, Any] = {}
+        for index, value in enumerate(section):
+            key = value.get("id") if isinstance(value, dict) else None
+            records[str(key) if key is not None else str(index)] = value
+        return records
+    return {}
+
+
 def _filters_to_dict(filters: ExportFilters) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if filters.workspace_id:

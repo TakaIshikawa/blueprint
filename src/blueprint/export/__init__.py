@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         InMemoryDataStore,
         UserDataExport,
         parse_export_bundle,
+        summarize_delta,
     )
 
 _MODULE = "blueprint.export.data_exporter"
@@ -46,6 +47,7 @@ _EXPORTS = {
     "InMemoryDataStore": _MODULE,
     "UserDataExport": _MODULE,
     "parse_export_bundle": _MODULE,
+    "summarize_delta": _MODULE,
 }
 
 
