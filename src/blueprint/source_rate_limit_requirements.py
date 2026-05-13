@@ -14,7 +14,16 @@ from blueprint.domain.models import SourceBrief
 RateLimitRequirementType = Literal[
     "rate_limit",
     "quota",
+    "quota_window",
     "throttling",
+    "scope_key",
+    "burst_behavior",
+    "retry_after_backoff",
+    "exemption_rules",
+    "error_contract",
+    "telemetry",
+    "owner",
+    "unresolved_gap",
     "burst",
     "retry_after",
     "tenant_scope",
@@ -25,7 +34,16 @@ RateLimitConfidence = Literal["high", "medium", "low"]
 _REQUIREMENT_ORDER: tuple[RateLimitRequirementType, ...] = (
     "rate_limit",
     "quota",
+    "quota_window",
     "throttling",
+    "scope_key",
+    "burst_behavior",
+    "retry_after_backoff",
+    "exemption_rules",
+    "error_contract",
+    "telemetry",
+    "owner",
+    "unresolved_gap",
     "burst",
     "retry_after",
     "tenant_scope",
@@ -51,7 +69,8 @@ _RETRY_VALUE_RE = re.compile(
 _SCOPE_RE = re.compile(
     r"\b(?P<scope>per[- ]tenant|per tenant|tenant[- ]level|tenant scoped|by tenant|"
     r"per[- ]user|per user|user[- ]level|user scoped|by user|per account|account[- ]level|"
-    r"per workspace|workspace[- ]level)\b",
+    r"per workspace|workspace[- ]level|per api[- ]?key|api[- ]?key scoped|per ip|ip[- ]level|"
+    r"per organization|per org|org[- ]level)\b",
     re.I,
 )
 _RATE_LIMIT_CONTEXT_RE = re.compile(
@@ -72,9 +91,55 @@ _REQUIREMENT_PATTERNS: dict[RateLimitRequirementType, re.Pattern[str]] = {
         r"daily cap|monthly cap|limit budget|credits?)\b",
         re.I,
     ),
+    "quota_window": re.compile(
+        r"\b(?:\d[\d,.\s]*(?:requests?|reqs?|calls?|api calls?|tokens?|messages?|jobs?|events?|writes?|reads?)\s*"
+        r"(?:/|per\s+)(?:second|sec|minute|min|hour|hr|day|month)|"
+        r"(?:fixed|rolling|sliding|reset|quota|rate limit|burst) window|per[- ](?:second|minute|hour|day|month))\b",
+        re.I,
+    ),
     "throttling": re.compile(
         r"\b(?:throttle|throttles|throttled|throttling|shed load|slow down clients?|"
         r"backpressure|too many requests|http\s*429|429s?)\b",
+        re.I,
+    ),
+    "scope_key": re.compile(
+        r"\b(?:scope key|partition key|counter key|rate limit key|quota key|bucket key|"
+        r"per[- ](?:tenant|user|account|workspace|api[- ]?key|ip|org(?:anization)?)|"
+        r"(?:tenant|user|account|workspace|api[- ]?key|ip|org(?:anization)?)[- ](?:scoped|level))\b",
+        re.I,
+    ),
+    "burst_behavior": re.compile(
+        r"\b(?:burst|bursts|bursting|burst capacity|burst window|short spikes?|token bucket|leaky bucket|smoothing)\b",
+        re.I,
+    ),
+    "retry_after_backoff": re.compile(
+        r"\b(?:retry[- ]after|retry after|backoff|back off|exponential backoff|jitter|"
+        r"retry window|cooldown|cool[- ]down|client retry)\b",
+        re.I,
+    ),
+    "exemption_rules": re.compile(
+        r"\b(?:exemptions?|exempt|bypass|allowlist|whitelist|internal traffic|service[- ]to[- ]service|"
+        r"admin override|support override|trusted client|machine traffic)\b",
+        re.I,
+    ),
+    "error_contract": re.compile(
+        r"\b(?:http\s*429|429s?|too many requests|rate[- ]limit headers?|x[- ]ratelimit|"
+        r"ratelimit[- ](?:limit|remaining|reset)|retry[- ]after header|problem details|error contract|"
+        r"quota exceeded response|client[- ]facing error)\b",
+        re.I,
+    ),
+    "telemetry": re.compile(
+        r"\b(?:telemetry|metrics?|logs?|traces?|alerts?|dashboards?|observability|audit events?|"
+        r"limit hit|quota exceeded metric|throttle metric|429 rate)\b",
+        re.I,
+    ),
+    "owner": re.compile(
+        r"\b(?:owner|owning team|responsible team|dr[io]|sre|platform team|api team|support owner|"
+        r"product owner|on[- ]call)\b",
+        re.I,
+    ),
+    "unresolved_gap": re.compile(
+        r"\b(?:tbd|todo|unresolved|unknown|not yet defined|needs decision|open question|gap|missing)\b",
         re.I,
     ),
     "burst": re.compile(r"\b(?:burst|bursts|bursting|burst capacity|burst window|spikes?)\b", re.I),
@@ -96,7 +161,16 @@ _REQUIREMENT_PATTERNS: dict[RateLimitRequirementType, re.Pattern[str]] = {
 _PLANNING_NOTES: dict[RateLimitRequirementType, str] = {
     "rate_limit": "Define server-side enforcement, client messaging, and observability for limit hits.",
     "quota": "Define quota accounting, reset windows, upgrade or exception paths, and customer-visible balances.",
+    "quota_window": "Specify numeric quota, window type, reset timing, and whether enforcement is fixed or rolling.",
     "throttling": "Plan throttled responses, client retry behavior, load-shedding thresholds, and alerts.",
+    "scope_key": "Define the exact key used for counters and fairness, such as tenant, user, API key, IP, or workspace.",
+    "burst_behavior": "Document burst capacity, burst window, smoothing behavior, and abuse safeguards.",
+    "retry_after_backoff": "Specify Retry-After or backoff semantics, response headers, and client retry tests.",
+    "exemption_rules": "Document internal traffic, allowlist, bypass, and override rules with auditability.",
+    "error_contract": "Define client-facing 429 or quota-exceeded response shape, headers, and error codes.",
+    "telemetry": "Add metrics, logs, traces, dashboards, and alerts for allowed, throttled, and exempted requests.",
+    "owner": "Name the accountable product, platform, SRE, support, or API owner for limit policy changes.",
+    "unresolved_gap": "Resolve open rate-limit decisions before implementation planning proceeds.",
     "burst": "Document burst capacity, burst window, smoothing behavior, and abuse safeguards.",
     "retry_after": "Specify Retry-After or backoff semantics, response headers, and client retry tests.",
     "tenant_scope": "Confirm tenant/account/workspace limit attribution, isolation, and admin visibility.",
@@ -139,6 +213,8 @@ class SourceRateLimitRequirement:
     evidence: tuple[str, ...] = field(default_factory=tuple)
     confidence: RateLimitConfidence = "medium"
     planning_note: str = ""
+    owner: str | None = None
+    unresolved_gaps: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
@@ -150,6 +226,8 @@ class SourceRateLimitRequirement:
             "evidence": list(self.evidence),
             "confidence": self.confidence,
             "planning_note": self.planning_note,
+            "owner": self.owner,
+            "unresolved_gaps": list(self.unresolved_gaps),
         }
 
 
@@ -314,6 +392,7 @@ class _Candidate:
     source_field: str
     evidence: str
     confidence: RateLimitConfidence
+    owner: str | None = None
 
 
 def _source_payload(
@@ -349,13 +428,14 @@ def _source_id(payload: Mapping[str, Any]) -> str | None:
 def _requirement_candidates(payload: Mapping[str, Any]) -> list[_Candidate]:
     candidates: list[_Candidate] = []
     for source_field, segment in _candidate_segments(payload):
-        if not _is_rate_limit_signal(segment):
-            continue
         requirement_types = _requirement_types(segment)
+        if not requirement_types and not _is_rate_limit_signal(segment):
+            continue
         if not requirement_types:
             continue
         value = _value(segment)
         scope = _scope(segment)
+        owner = _owner(segment)
         if source_field == "title" and not value and not scope:
             continue
         evidence = _evidence_snippet(source_field, segment)
@@ -364,11 +444,12 @@ def _requirement_candidates(payload: Mapping[str, Any]) -> list[_Candidate]:
             candidates.append(
                 _Candidate(
                     requirement_type=requirement_type,
-                    value=value if requirement_type not in {"tenant_scope", "user_scope"} else None,
+                    value=value if requirement_type not in {"tenant_scope", "user_scope", "owner"} else None,
                     limit_scope=scope,
                     source_field=source_field,
                     evidence=evidence,
                     confidence=confidence,
+                    owner=owner,
                 )
             )
     return candidates
@@ -390,6 +471,7 @@ def _merge_candidates(candidates: Iterable[_Candidate]) -> list[SourceRateLimitR
         )
         value = _best_value(items)
         limit_scope = _best_scope(items)
+        owner = _best_owner(items)
         requirements.append(
             SourceRateLimitRequirement(
                 requirement_type=requirement_type,
@@ -399,6 +481,12 @@ def _merge_candidates(candidates: Iterable[_Candidate]) -> list[SourceRateLimitR
                 evidence=tuple(_dedupe_evidence(item.evidence for item in items))[:4],
                 confidence=confidence,
                 planning_note=_PLANNING_NOTES[requirement_type],
+                owner=owner,
+                unresolved_gaps=(
+                    tuple(_dedupe_evidence(item.evidence for item in items))[:4]
+                    if requirement_type == "unresolved_gap"
+                    else ()
+                ),
             )
         )
     return sorted(
@@ -425,6 +513,11 @@ def _best_value(items: Iterable[_Candidate]) -> str | None:
 def _best_scope(items: Iterable[_Candidate]) -> str | None:
     scopes = sorted({item.limit_scope for item in items if item.limit_scope})
     return scopes[0] if scopes else None
+
+
+def _best_owner(items: Iterable[_Candidate]) -> str | None:
+    owners = sorted({item.owner for item in items if item.owner}, key=lambda value: value.casefold())
+    return owners[0] if owners else None
 
 
 def _candidate_segments(payload: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -509,6 +602,23 @@ def _scope(text: str) -> str | None:
             return "account"
         if "workspace" in value:
             return "workspace"
+        if "api key" in value:
+            return "api_key"
+        if "ip" in value:
+            return "ip"
+        if "organization" in value or "org" in value:
+            return "organization"
+    return None
+
+
+def _owner(text: str) -> str | None:
+    patterns = (
+        r"\b(?:owner|owning team|responsible team|dri)\s*(?:is|:|-)?\s*(?P<owner>[A-Z][A-Za-z0-9 _/-]{1,40})",
+        r"\b(?P<owner>(?:platform|api|sre|support|product|security|infra)(?: team| engineering| owner))\b",
+    )
+    for pattern in patterns:
+        if match := re.search(pattern, text, re.I):
+            return _clean_text(match.group("owner")).rstrip(".")
     return None
 
 
@@ -536,6 +646,27 @@ def _confidence(
 
 
 def _summary(requirements: tuple[SourceRateLimitRequirement, ...]) -> dict[str, Any]:
+    present = {requirement.requirement_type for requirement in requirements}
+    expected = (
+        "quota_window",
+        "scope_key",
+        "burst_behavior",
+        "retry_after_backoff",
+        "exemption_rules",
+        "error_contract",
+        "telemetry",
+        "owner",
+    )
+    unresolved_gaps = [
+        _PLANNING_NOTES[requirement_type]
+        for requirement_type in expected
+        if requirements and requirement_type not in present
+    ]
+    unresolved_gaps.extend(
+        gap
+        for requirement in requirements
+        for gap in requirement.unresolved_gaps
+    )
     return {
         "requirement_count": len(requirements),
         "requirement_types": [requirement.requirement_type for requirement in requirements],
@@ -556,6 +687,8 @@ def _summary(requirements: tuple[SourceRateLimitRequirement, ...]) -> dict[str, 
         "scopes": sorted(
             {requirement.limit_scope for requirement in requirements if requirement.limit_scope}
         ),
+        "owners": sorted({requirement.owner for requirement in requirements if requirement.owner}),
+        "unresolved_gaps": list(_dedupe_evidence(unresolved_gaps)),
     }
 
 

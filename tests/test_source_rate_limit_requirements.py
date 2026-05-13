@@ -21,12 +21,15 @@ def test_extracts_explicit_quotas_rate_limits_retry_after_and_scopes():
         _source_brief(
             summary=(
                 "Public API must enforce 100 requests per minute per tenant. "
-                "Return HTTP 429 with Retry-After header of 30 seconds."
+                "Return HTTP 429 with Retry-After header of 30 seconds and a problem details error contract. "
+                "Internal traffic is exempt only through an audited allowlist."
             ),
             source_payload={
                 "acceptance_criteria": [
                     "Daily quota is 10,000 API calls per day per user.",
                     "Burst capacity allows 500 requests per minute for short spikes.",
+                    "Telemetry must include metrics, logs, dashboards, and alerts for limit hits.",
+                    "Owner is Platform API team.",
                 ],
             },
         )
@@ -36,19 +39,62 @@ def test_extracts_explicit_quotas_rate_limits_retry_after_and_scopes():
 
     assert isinstance(result, SourceRateLimitRequirementsReport)
     assert all(isinstance(record, SourceRateLimitRequirement) for record in result.records)
-    assert {"rate_limit", "quota", "burst", "retry_after", "tenant_scope", "user_scope"} <= set(
-        by_type
-    )
+    assert {
+        "rate_limit",
+        "quota",
+        "quota_window",
+        "scope_key",
+        "burst_behavior",
+        "retry_after_backoff",
+        "exemption_rules",
+        "error_contract",
+        "telemetry",
+        "owner",
+        "burst",
+        "retry_after",
+        "tenant_scope",
+        "user_scope",
+    } <= set(by_type)
     assert by_type["rate_limit"].value == "100 requests per minute"
     assert by_type["rate_limit"].limit_scope == "tenant"
     assert by_type["quota"].value == "10,000 API calls per day"
     assert by_type["quota"].limit_scope == "user"
     assert by_type["retry_after"].value == "Retry-After header of 30 seconds"
+    assert by_type["owner"].owner == "Platform API team"
     assert any(
         "100 requests per minute per tenant" in item for item in by_type["rate_limit"].evidence
     )
     assert result.summary["requirement_type_counts"]["retry_after"] == 1
     assert result.summary["scopes"] == ["tenant", "user"]
+    assert result.summary["owners"] == ["Platform API team"]
+    assert result.summary["unresolved_gaps"] == []
+
+
+def test_plain_text_and_sourcebrief_inputs_extract_equivalent_requirements():
+    text = (
+        "Rate limit checkout API to 100 requests per minute per tenant. "
+        "Burst behavior allows 200 requests per minute for short spikes. "
+        "Retry-After header is 30 seconds with exponential backoff guidance. "
+        "Internal service-to-service traffic is exempt through an audited allowlist. "
+        "Client-facing error contract returns HTTP 429 problem details. "
+        "Telemetry includes metrics, logs, dashboards, and alerts. "
+        "Owner is Platform API team."
+    )
+    source_result = build_source_rate_limit_requirements(_source_brief(summary=text))
+    text_result = build_source_rate_limit_requirements(text)
+
+    source_records = [
+        {key: value for key, value in record.to_dict().items() if key not in {"source_field", "evidence"}}
+        for record in source_result.records
+    ]
+    text_records = [
+        {key: value for key, value in record.to_dict().items() if key not in {"source_field", "evidence"}}
+        for record in text_result.records
+    ]
+
+    assert source_records == text_records
+    assert source_result.summary["requirement_types"] == text_result.summary["requirement_types"]
+    assert source_result.summary["unresolved_gaps"] == []
 
 
 def test_infers_throttling_and_retry_concerns_without_numeric_limits():
@@ -133,6 +179,8 @@ def test_sourcebrief_model_input_aliases_serialization_and_no_source_mutation():
         "evidence",
         "confidence",
         "planning_note",
+        "owner",
+        "unresolved_gaps",
     ]
 
 
