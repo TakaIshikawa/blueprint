@@ -657,7 +657,7 @@ class VelocityTracker:
         velocities = []
 
         current = start
-        while current <= end:
+        while current < end:
             week_end = min(current + timedelta(days=7), end)
             vel = self.calculate_velocity(
                 (current, week_end),
@@ -696,7 +696,7 @@ class VelocityTracker:
         current = start
         sprint_num = 1
 
-        while current <= end:
+        while current < end:
             sprint_end = min(current + timedelta(days=14), end)
             vel = self.calculate_velocity(
                 (current, sprint_end),
