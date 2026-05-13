@@ -22,6 +22,7 @@ ContentModerationRequirementCategory = Literal[
     "safety_escalation",
 ]
 ContentModerationRequirementConfidence = Literal["high", "medium", "low"]
+ContentModerationReadiness = Literal["ready", "needs_detail"]
 _T = TypeVar("_T")
 
 _CATEGORY_ORDER: tuple[ContentModerationRequirementCategory, ...] = (
@@ -38,6 +39,42 @@ _CONFIDENCE_ORDER: dict[ContentModerationRequirementConfidence, int] = {
     "high": 0,
     "medium": 1,
     "low": 2,
+}
+_READINESS_ORDER: tuple[ContentModerationReadiness, ...] = ("ready", "needs_detail")
+_MISSING_BY_CATEGORY: dict[ContentModerationRequirementCategory, tuple[str, ...]] = {
+    "user_generated_content": ("content_types", "visibility_state", "entry_point"),
+    "abuse_reporting": ("report_reason", "intake_state", "sla"),
+    "automated_detection": ("detection_signal", "threshold", "human_handoff"),
+    "human_review_queue": ("reviewer_owner", "decision_action", "sla"),
+    "policy_taxonomy": ("policy_categories", "severity", "enforcement_action"),
+    "appeal_flow": ("eligibility", "appeal_window", "second_reviewer"),
+    "audit_history": ("actor_timestamp", "policy_basis", "retention"),
+    "safety_escalation": ("trigger", "responder", "external_handoff"),
+}
+_DETAIL_PATTERNS: dict[str, re.Pattern[str]] = {
+    "content_types": re.compile(r"\b(?:posts?|comments?|messages?|media|uploads?|reviews?|profiles?)\b", re.I),
+    "visibility_state": re.compile(r"\b(?:visible|hidden|published|removed|rejected|approved|quarantined|pre[- ]?moderation)\b", re.I),
+    "entry_point": re.compile(r"\b(?:content menu|upload flow|composer|profile|message|post|comment|in-app)\b", re.I),
+    "report_reason": re.compile(r"\b(?:report reason|reason code|category|flag reason|abuse type)\b", re.I),
+    "intake_state": re.compile(r"\b(?:intake|queue|triage|open|pending|state|case)\b", re.I),
+    "sla": re.compile(r"\b(?:sla|within \d+|\d+\s*(?:minutes?|hours?|days?)|target)\b", re.I),
+    "detection_signal": re.compile(r"\b(?:toxicity|spam|classifier|keyword|hash|nudity|risk score|signal)\b", re.I),
+    "threshold": re.compile(r"\b(?:threshold|score|confidence|severity|above \d+|risk)\b", re.I),
+    "human_handoff": re.compile(r"\b(?:human review|manual review|review queue|moderator|handoff)\b", re.I),
+    "reviewer_owner": re.compile(r"\b(?:reviewer|moderator|trust and safety|operations|owner|assigned)\b", re.I),
+    "decision_action": re.compile(r"\b(?:approve|reject|remove|takedown|ban|suspend|warn|enforcement action)\b", re.I),
+    "policy_categories": re.compile(r"\b(?:harassment|hate speech|spam|self[- ]harm|violent|adult|illegal|policy categories|labels?)\b", re.I),
+    "severity": re.compile(r"\b(?:severity|critical|high|medium|low|level|risk)\b", re.I),
+    "enforcement_action": re.compile(r"\b(?:remove|takedown|ban|suspend|warn|reject|approve|enforcement action)\b", re.I),
+    "eligibility": re.compile(r"\b(?:eligible|eligibility|authors?|users?|request|contest|appeal)\b", re.I),
+    "appeal_window": re.compile(r"\b(?:within \d+|\d+\s*(?:days?|hours?)|window|until|deadline)\b", re.I),
+    "second_reviewer": re.compile(r"\b(?:second review|second reviewer|independent reviewer|appeal reviewer|different reviewer)\b", re.I),
+    "actor_timestamp": re.compile(r"\b(?:who|actor|reviewer|timestamp|time|reviewed by)\b", re.I),
+    "policy_basis": re.compile(r"\b(?:policy basis|policy|reason|violation|category|label)\b", re.I),
+    "retention": re.compile(r"\b(?:retention|retain|kept for|\d+\s*(?:days?|months?|years?))\b", re.I),
+    "trigger": re.compile(r"\b(?:credible threat|self[- ]harm|child safety|urgent|trigger|high[- ]risk|law enforcement)\b", re.I),
+    "responder": re.compile(r"\b(?:trust and safety|responder|legal|law enforcement|on-call|owner)\b", re.I),
+    "external_handoff": re.compile(r"\b(?:law enforcement|legal|crisis|external|handoff|escalation)\b", re.I),
 }
 _SPACE_RE = re.compile(r"\s+")
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
@@ -56,7 +93,7 @@ _MODERATION_CONTEXT_RE = re.compile(
     r"post(?:s|ed)?|comment(?:s)?|message(?:s)?|media uploads?|upload(?:s|ed)?|"
     r"review queue|human review|policy enforcement|policy taxonomy|appeal(?:s)?|"
     r"automated detection|classifier|toxicity|spam|harassment|hate speech|self harm|"
-    r"safety escalation|law enforcement|audit history|decision history|enforcement history)\b",
+    r"safety escalation|law enforcement|audit history|audit trail|decision history|enforcement history)\b",
     re.I,
 )
 _STRUCTURED_FIELD_RE = re.compile(
@@ -193,6 +230,12 @@ class SourceContentModerationRequirement:
     confidence: ContentModerationRequirementConfidence = "medium"
     suggested_owner: str = "product"
     suggested_planning_note: str = ""
+    missing_details: tuple[str, ...] = field(default_factory=tuple)
+    readiness: ContentModerationReadiness = "needs_detail"
+
+    @property
+    def missing_detail_guidance(self) -> str | None:
+        return "; ".join(self.missing_details) if self.missing_details else None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible representation in stable key order."""
@@ -205,6 +248,9 @@ class SourceContentModerationRequirement:
             "confidence": self.confidence,
             "suggested_owner": self.suggested_owner,
             "suggested_planning_note": self.suggested_planning_note,
+            "missing_details": list(self.missing_details),
+            "missing_detail_guidance": self.missing_detail_guidance,
+            "readiness": self.readiness,
         }
 
 
@@ -266,8 +312,8 @@ class SourceContentModerationRequirementsReport:
                 "",
                 "## Requirements",
                 "",
-                "| Source Brief | Category | Confidence | Owner | Source Field Paths | Evidence | Planning Note |",
-                "| --- | --- | --- | --- | --- | --- | --- |",
+                "| Source Brief | Category | Confidence | Readiness | Owner | Missing Details | Source Field Paths | Evidence | Planning Note |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for requirement in self.requirements:
@@ -276,7 +322,9 @@ class SourceContentModerationRequirementsReport:
                 f"{_markdown_cell(requirement.source_brief_id or '')} | "
                 f"{requirement.category} | "
                 f"{requirement.confidence} | "
+                f"{requirement.readiness} | "
                 f"{_markdown_cell(requirement.suggested_owner)} | "
+                f"{_markdown_cell('; '.join(requirement.missing_details))} | "
                 f"{_markdown_cell('; '.join(requirement.source_field_paths))} | "
                 f"{_markdown_cell('; '.join(requirement.evidence))} | "
                 f"{_markdown_cell(requirement.suggested_planning_note)} |"
@@ -533,6 +581,13 @@ def _merge_candidates(
         confidence = min(
             (item.confidence for item in items), key=lambda value: _CONFIDENCE_ORDER[value]
         )
+        searchable = " ".join([*(item.evidence for item in items), *(term for item in items for term in item.matched_terms)])
+        missing_details = tuple(
+            detail
+            for detail in _MISSING_BY_CATEGORY[category]
+            if not _DETAIL_PATTERNS[detail].search(searchable)
+        )
+        readiness: ContentModerationReadiness = "ready" if not missing_details else "needs_detail"
         requirements.append(
             SourceContentModerationRequirement(
                 source_brief_id=source_brief_id,
@@ -543,6 +598,8 @@ def _merge_candidates(
                 confidence=confidence,
                 suggested_owner=_OWNER_BY_CATEGORY[category],
                 suggested_planning_note=_PLANNING_NOTE_BY_CATEGORY[category],
+                missing_details=missing_details,
+                readiness=readiness,
             )
         )
     return requirements
@@ -660,6 +717,11 @@ def _summary(
             owner: sum(1 for requirement in requirements if requirement.suggested_owner == owner)
             for owner in sorted(_dedupe(_OWNER_BY_CATEGORY.values()), key=str.casefold)
         },
+        "readiness_counts": {
+            readiness: sum(1 for requirement in requirements if requirement.readiness == readiness)
+            for readiness in _READINESS_ORDER
+        },
+        "missing_detail_count": sum(len(requirement.missing_details) for requirement in requirements),
         "categories": [requirement.category for requirement in requirements],
         "status": "ready_for_planning" if requirements else "no_moderation_language",
     }
@@ -763,6 +825,7 @@ def _dedupe(values: Iterable[_T]) -> list[_T]:
 __all__ = [
     "ContentModerationRequirementCategory",
     "ContentModerationRequirementConfidence",
+    "ContentModerationReadiness",
     "SourceContentModerationRequirement",
     "SourceContentModerationRequirementsReport",
     "build_source_content_moderation_requirements",
