@@ -47,8 +47,8 @@ def test_high_risk_warmup_without_load_controls_sorts_first():
     assert isinstance(by_id["task-high"], TaskCacheWarmupReadinessRecord)
     assert by_id["task-high"].risk_level == "high"
     assert {"warming_job", "primed_keys"} <= set(by_id["task-high"].signals)
-    assert "load_shedding" in by_id["task-high"].missing_safeguards
-    assert "cache_miss_fallback" in by_id["task-high"].missing_safeguards
+    assert "capacity_limits" in by_id["task-high"].missing_safeguards
+    assert "failure_handling" in by_id["task-high"].missing_safeguards
     assert result.summary["risk_counts"] == {"high": 1, "medium": 1, "low": 0}
 
 
@@ -61,10 +61,11 @@ def test_medium_risk_partial_safeguards_and_summary_counts():
                     title="Refresh materialized views",
                     description="Materialized view refresh precomputes analytics projections.",
                     acceptance_criteria=[
-                        "Warmup backfill plan chunks the rebuild by account.",
-                        "Stale data guard uses a source version watermark.",
-                        "Load shedding rate limits refresh batches.",
-                        "Cache miss fallback uses the uncached path.",
+                        "Key selection scopes product cache keys by account.",
+                        "Freshness source uses source version watermark.",
+                        "Warmup schedule runs nightly cron batches.",
+                        "Capacity limits rate limit refresh batches.",
+                        "Failure handling retries batches and uses the uncached path.",
                     ],
                 )
             ]
@@ -75,14 +76,16 @@ def test_medium_risk_partial_safeguards_and_summary_counts():
     assert record.risk_level == "medium"
     assert set(record.signals) == {"precomputed_projection", "materialized_view"}
     assert record.safeguards == (
-        "warmup_backfill_plan",
-        "stale_data_guard",
-        "load_shedding",
-        "cache_miss_fallback",
+        "key_selection",
+        "freshness_source",
+        "warmup_schedule",
+        "capacity_limits",
+        "failure_handling",
     )
     assert record.present_safeguards == record.safeguards
     assert record.missing_safeguards == (
         "observability",
+        "validation_commands",
         "rollback_or_disable_switch",
         "owner_evidence",
     )
@@ -99,11 +102,13 @@ def test_low_risk_fully_covered_warmup():
                     title="Hydrate startup cache",
                     description="Startup cache hydration prewarms product availability cache.",
                     acceptance_criteria=[
-                        "Warmup backfill plan supports checkpointed backfill and resume.",
-                        "Stale data guard checks source version and max age.",
-                        "Load shedding uses batch size, queue limit, and circuit breaker.",
-                        "Cache miss fallback uses database fallback and lazy recompute.",
+                        "Key selection includes product availability cache keys and tenant key scope.",
+                        "Freshness source checks source version and max age.",
+                        "Warmup schedule runs after deploy and supports checkpointed backfill and resume.",
+                        "Capacity limits use batch size, queue limit, and circuit breaker.",
+                        "Failure handling uses database fallback and lazy recompute.",
                         "Observability emits warmup success metrics, miss rate, stale rate, and alerts.",
+                        "Validation commands run smoke tests that assert warmed entries.",
                         "Rollback or disable switch uses a feature flag kill switch.",
                         "Owner evidence names the platform on-call service owner.",
                     ],
@@ -139,10 +144,10 @@ def test_unrelated_task_empty_state_and_markdown_are_stable():
             "- Cache warmup task count: 0",
             "- Missing safeguard count: 0",
             "- Risk counts: high 0, medium 0, low 0",
-            (
-                "- Signal counts: warming_job 0, precomputed_projection 0, materialized_view 0, "
-                "primed_keys 0, startup_cache_hydration 0"
-            ),
+                (
+                    "- Signal counts: warming_job 0, precomputed_projection 0, backfill_cache 0, "
+                    "materialized_view 0, primed_keys 0, preload 0, startup_cache_hydration 0"
+                ),
             "",
             "No task cache warmup readiness records were inferred.",
             "",
@@ -165,11 +170,13 @@ def test_metadata_evidence_paths_and_path_signals_are_preserved():
                     ],
                     metadata={
                         "warmup": {
-                            "backfill_plan": "Backfill plan chunks product cache warmup by tenant.",
-                            "stale_data_guard": "Freshness check validates source version watermark.",
-                            "load_shedding": "Warmup budget and throttle protect Redis.",
-                            "fallback": "Cache miss fallback uses on-demand compute.",
+                            "key_selection": "Key selection chunks product cache warmup by tenant keys.",
+                            "freshness_source": "Freshness source validates source version watermark.",
+                            "schedule": "Warmup schedule uses a post-deploy window.",
+                            "capacity_limits": "Warmup budget and throttle protect Redis.",
+                            "failure_handling": "Failure handling uses on-demand compute fallback.",
                             "observability": "Dashboard tracks warmup success and queue depth.",
+                            "validation": "Validation commands assert warmed product entries.",
                             "disable": "Feature flag can disable warmup.",
                             "owner": "Search platform on-call owns the warmer.",
                         }
@@ -183,8 +190,8 @@ def test_metadata_evidence_paths_and_path_signals_are_preserved():
     assert {"warming_job", "materialized_view", "primed_keys"} <= set(record.signals)
     assert record.risk_level == "low"
     assert any(item == "files_or_modules: src/cache/warmup/product_key_priming.py" for item in record.evidence)
-    assert any("metadata.warmup.backfill_plan:" in item for item in record.evidence)
-    assert any("metadata.warmup.stale_data_guard:" in item for item in record.evidence)
+    assert any("metadata.warmup.key_selection:" in item for item in record.evidence)
+    assert any("metadata.warmup.freshness_source:" in item for item in record.evidence)
 
 
 def test_serialization_aliases_model_inputs_and_no_mutation_are_stable():

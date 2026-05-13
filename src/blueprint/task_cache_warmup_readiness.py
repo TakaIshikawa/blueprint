@@ -15,16 +15,20 @@ from blueprint.validation_commands import flatten_validation_commands
 CacheWarmupSignal = Literal[
     "warming_job",
     "precomputed_projection",
+    "backfill_cache",
     "materialized_view",
     "primed_keys",
+    "preload",
     "startup_cache_hydration",
 ]
 CacheWarmupSafeguard = Literal[
-    "warmup_backfill_plan",
-    "stale_data_guard",
-    "load_shedding",
-    "cache_miss_fallback",
+    "key_selection",
+    "freshness_source",
+    "warmup_schedule",
+    "capacity_limits",
+    "failure_handling",
     "observability",
+    "validation_commands",
     "rollback_or_disable_switch",
     "owner_evidence",
 ]
@@ -36,16 +40,20 @@ _RISK_ORDER: dict[CacheWarmupRiskLevel, int] = {"high": 0, "medium": 1, "low": 2
 _SIGNAL_ORDER: tuple[CacheWarmupSignal, ...] = (
     "warming_job",
     "precomputed_projection",
+    "backfill_cache",
     "materialized_view",
     "primed_keys",
+    "preload",
     "startup_cache_hydration",
 )
 _SAFEGUARD_ORDER: tuple[CacheWarmupSafeguard, ...] = (
-    "warmup_backfill_plan",
-    "stale_data_guard",
-    "load_shedding",
-    "cache_miss_fallback",
+    "key_selection",
+    "freshness_source",
+    "warmup_schedule",
+    "capacity_limits",
+    "failure_handling",
     "observability",
+    "validation_commands",
     "rollback_or_disable_switch",
     "owner_evidence",
 )
@@ -61,6 +69,11 @@ _SIGNAL_PATTERNS: dict[CacheWarmupSignal, re.Pattern[str]] = {
         r"precalculated|pre-calculated|precompute|precomputes|precomputing)\b",
         re.I,
     ),
+    "backfill_cache": re.compile(
+        r"\b(?:backfill cache|cache backfill|backfilled cache|backfilling cache|bulk cache fill|"
+        r"bulk cache warmup|rehydrate cache|cache rehydration)\b",
+        re.I,
+    ),
     "materialized_view": re.compile(
         r"\b(?:materialized view|materialized views|materialised view|materialised views|"
         r"mv refresh|refresh materialized|refresh materialised)\b",
@@ -69,6 +82,11 @@ _SIGNAL_PATTERNS: dict[CacheWarmupSignal, re.Pattern[str]] = {
     "primed_keys": re.compile(
         r"\b(?:prime cache|primed cache|prime keys|primed keys|seed cache|seeded cache|"
         r"populate cache keys|cache priming|redis key priming|hot keys)\b",
+        re.I,
+    ),
+    "preload": re.compile(
+        r"\b(?:preload cache|cache preload|preloaded cache|preload(?:ing)? entries|"
+        r"load cache ahead|eager cache load|cache preloading)\b",
         re.I,
     ),
     "startup_cache_hydration": re.compile(
@@ -81,34 +99,47 @@ _SIGNAL_PATTERNS: dict[CacheWarmupSignal, re.Pattern[str]] = {
 _PATH_PATTERNS: dict[CacheWarmupSignal, re.Pattern[str]] = {
     "warming_job": re.compile(r"warmups?|warm[-_]?up|warming|prewarm|warmer", re.I),
     "precomputed_projection": re.compile(r"precomput|projection|rollups?|summary[_-]?table|read[_-]?model", re.I),
+    "backfill_cache": re.compile(r"backfill|rehydrat|bulk[_-]?cache[_-]?fill", re.I),
     "materialized_view": re.compile(r"materiali[sz]ed[_-]?views?|mv[_-]?refresh|mviews?", re.I),
     "primed_keys": re.compile(r"prim(?:e|ing)|seed[_-]?cache|hot[_-]?keys", re.I),
+    "preload": re.compile(r"preload|eager[_-]?load", re.I),
     "startup_cache_hydration": re.compile(r"startup|bootstrap|cold[_-]?start|hydration|hydrate", re.I),
 }
 _SAFEGUARD_PATTERNS: dict[CacheWarmupSafeguard, re.Pattern[str]] = {
-    "warmup_backfill_plan": re.compile(
-        r"\b(?:warmup backfill plan|backfill plan|backfill window|bulk backfill|migration plan|"
-        r"rebuild plan|rehydration plan|resume backfill|checkpoint(?:ed)? backfill)\b",
+    "key_selection": re.compile(
+        r"\b(?:key selection|cache key selection|selected keys|key scope|hot keys|cache keys|"
+        r"tenant keys|account keys|workspace keys|key allowlist|key pattern|key cardinality)\b",
         re.I,
     ),
-    "stale_data_guard": re.compile(
-        r"\b(?:stale data guard|staleness guard|freshness check|freshness guard|max age|version check|"
-        r"etag|watermark|source version|serve stale|stale[- ]while[- ]revalidate)\b",
+    "freshness_source": re.compile(
+        r"\b(?:freshness source|source of truth|freshness check|freshness guard|stale data guard|"
+        r"source version|version check|watermark|max age|etag|updated_at|origin data|canonical source)\b",
         re.I,
     ),
-    "load_shedding": re.compile(
-        r"\b(?:load shedding|shed load|rate limit|throttle|throttling|concurrency limit|batch size|"
-        r"queue limit|warmup budget|load cap|capacity limit|circuit breaker|pause warmup)\b",
+    "warmup_schedule": re.compile(
+        r"\b(?:warmup schedule|warming schedule|schedule|scheduled|cron|cadence|run window|"
+        r"pre[- ]deploy warm|post[- ]deploy warm|backfill window|batch window|warming job schedule)\b",
         re.I,
     ),
-    "cache_miss_fallback": re.compile(
-        r"\b(?:cache miss fallback|miss fallback|fallback path|origin fallback|database fallback|"
+    "capacity_limits": re.compile(
+        r"\b(?:capacity limit|capacity limits|load shedding|shed load|rate limit|throttle|throttling|"
+        r"concurrency limit|batch size|queue limit|warmup budget|load cap|circuit breaker|pause warmup)\b",
+        re.I,
+    ),
+    "failure_handling": re.compile(
+        r"\b(?:failure handling|partial failure|retry|retries|backoff|resume|checkpoint|"
+        r"cache miss fallback|miss fallback|fallback path|origin fallback|database fallback|"
         r"degraded mode|lazy recompute|on[- ]demand compute|uncached path|bypass cache)\b",
         re.I,
     ),
     "observability": re.compile(
         r"\b(?:observability|metrics?|monitoring|alerts?|dashboard|logs?|tracing|cache hit rate|"
         r"miss rate|warmup success|warmup failure|stale rate|queue depth|latency)\b",
+        re.I,
+    ),
+    "validation_commands": re.compile(
+        r"\b(?:validation command|validation commands|validate|verification|smoke test|integration test|"
+        r"test command|pytest|checksums?|assert warmed|warmup check|dry run)\b",
         re.I,
     ),
     "rollback_or_disable_switch": re.compile(
@@ -123,11 +154,13 @@ _SAFEGUARD_PATTERNS: dict[CacheWarmupSafeguard, re.Pattern[str]] = {
     ),
 }
 _SAFEGUARD_CHECKS: dict[CacheWarmupSafeguard, str] = {
-    "warmup_backfill_plan": "Document how warmup or precomputation backfills are chunked, resumed, and completed.",
-    "stale_data_guard": "Add freshness, version, watermark, or max-age checks before serving warmed data.",
-    "load_shedding": "Bound warmup load with rate limits, concurrency caps, batch sizes, budgets, or circuit breakers.",
-    "cache_miss_fallback": "Exercise fallback behavior when warmed entries are absent or precomputation fails.",
+    "key_selection": "Define cache key selection, scope, key patterns, cardinality, and tenant or account boundaries.",
+    "freshness_source": "Identify the freshness source, source of truth, version, watermark, or max-age checks.",
+    "warmup_schedule": "Document the warmup schedule, cadence, run window, and deploy or batch timing.",
+    "capacity_limits": "Bound warmup load with rate limits, concurrency caps, batch sizes, budgets, or circuit breakers.",
+    "failure_handling": "Define retries, resume behavior, fallback paths, and partial-failure handling for warmup.",
     "observability": "Track warmup success, failures, stale rates, queue depth, latency, and cache hit or miss rates.",
+    "validation_commands": "Add validation commands, smoke tests, dry runs, or checks proving entries warmed correctly.",
     "rollback_or_disable_switch": "Provide a rollback, feature flag, kill switch, or pause path for the warmup mechanism.",
     "owner_evidence": "Identify the owning team or on-call path for operating the warmup task.",
 }
@@ -416,9 +449,9 @@ def _risk_level(
 ) -> CacheWarmupRiskLevel:
     if not missing:
         return "low"
-    if "load_shedding" in missing or "cache_miss_fallback" in missing:
+    if "capacity_limits" in missing or "failure_handling" in missing:
         return "high"
-    if any(signal in signals for signal in ("materialized_view", "startup_cache_hydration", "primed_keys")):
+    if any(signal in signals for signal in ("materialized_view", "startup_cache_hydration", "primed_keys", "backfill_cache")):
         return "medium"
     return "medium"
 
