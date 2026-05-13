@@ -138,6 +138,9 @@ def test_duplicate_evidence_merges_predictably_and_serialization_helpers_are_sta
         "confidence",
         "suggested_owner",
         "suggested_planning_note",
+        "missing_details",
+        "missing_detail_guidance",
+        "readiness",
     ]
     assert markdown.startswith(
         "# Source Content Moderation Requirements Report: moderation-duplicates"
@@ -184,6 +187,8 @@ def test_empty_invalid_and_unrelated_inputs_return_stable_empty_reports():
             "product": 0,
             "trust_and_safety": 0,
         },
+        "readiness_counts": {"ready": 0, "needs_detail": 0},
+        "missing_detail_count": 0,
         "categories": [],
         "status": "no_moderation_language",
     }
@@ -194,6 +199,31 @@ def test_empty_invalid_and_unrelated_inputs_return_stable_empty_reports():
     assert blank_text.summary == expected_summary
     assert unrelated.summary == expected_summary
     assert "No source content moderation requirements were inferred" in empty.to_markdown()
+
+
+def test_readiness_marks_vague_moderation_mentions_as_needing_policy_detail():
+    vague = build_source_content_moderation_requirements(
+        _source_brief(summary="Moderation must support reports, review queue, appeals, takedown, SLA, and audit trail.")
+    )
+    detailed = build_source_content_moderation_requirements(
+        _source_brief(
+            summary=(
+                "Users must report abuse with a report reason into an open triage queue within 4 hours. "
+                "Moderators need a review queue owned by Trust and Safety with approve, remove, takedown, ban, and suspend actions within 8 hours. "
+                "Authors can appeal eligible decisions within 14 days with second reviewer review. "
+                "Audit trail must record reviewer actor, timestamp, policy basis with 365 days retention."
+            )
+        )
+    )
+
+    assert {record.readiness for record in vague.records} == {"needs_detail"}
+    assert vague.summary["missing_detail_count"] > 0
+    by_category = {record.category: record for record in detailed.records}
+    assert by_category["abuse_reporting"].readiness == "ready"
+    assert by_category["human_review_queue"].readiness == "ready"
+    assert by_category["appeal_flow"].readiness == "ready"
+    assert by_category["audit_history"].readiness == "ready"
+    assert detailed.summary["readiness_counts"]["ready"] >= 4
 
 
 def _source_brief(
